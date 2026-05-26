@@ -1,0 +1,17 @@
+/bin/
+/tmp/
+*.test
+*.out
+vendor/
+
+.idea/
+.vscode/
+
+# Local env / coverage
+.env
+*.env.local
+coverage.out
+coverage.html
+
+# OS noise
+.DS_Store
