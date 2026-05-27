@@ -1,6 +1,6 @@
 # Publisher protocol guide
 
-The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint.
+The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
 
 ## Verbs
 
@@ -60,9 +60,11 @@ rimsky-publisher-conformance --endpoint grpc://my-publisher:9100 \
 
 ## Bundled implementations
 
-- `sensors/sensor-cron` — cron firing.
-- `sensors/sensor-http` — HTTP-poll with body-hash watermark.
-- `sensors/sensor-object-store` — object-store list with `name` or `last_modified` watermark.
-- `sensors/sensor-webhook` — inbound webhook receiver.
+Sensors are one kind of publisher. The four reference sensors are no longer in rimsky's tree — they moved to the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/sensors`):
 
-See [publisher](../../.ok-planner/design/concepts/publisher.md), [publisher-subscription](../../.ok-planner/design/concepts/publisher-subscription.md), [sensor](../../.ok-planner/design/concepts/sensor.md).
+- `sensor-cron` — cron firing.
+- `sensor-http` — HTTP-poll with body-hash watermark.
+- `sensor-object-store` — object-store list with `name` or `last_modified` watermark.
+- `sensor-webhook` — inbound webhook receiver.
+
+See [publisher](../concepts/publisher.md), [publisher-subscription](../concepts/publisher-subscription.md), [sensor](../concepts/sensor.md).

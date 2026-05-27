@@ -1,12 +1,13 @@
 ---
 concept: example
-definition: |
-  A valid fixture.
-proto_symbol: (none)
-config_field: (none)
-api_surface: (none)
-related: []
-deprecated_terms: []
+status: as-is
+aliases: []
+references:
+  - _discover/2026-05-10-example.md
 ---
 
 # Example
+
+## What it is
+
+A valid fixture using the four-key concept frontmatter.

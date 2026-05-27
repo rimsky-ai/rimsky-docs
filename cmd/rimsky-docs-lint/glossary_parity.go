@@ -11,20 +11,23 @@ import (
 	"os/exec"
 )
 
+// runGlossaryParity shells out to the glossary binary in check mode. The
+// glossary binary derives its `-catalog` from RIMSKY_REPO, so we only pass
+// `-output` and `-check=true`; non-zero exit means docs/glossary.md drifted
+// from the source concept catalog.
 func runGlossaryParity(args []string) error {
 	fs := flag.NewFlagSet("glossary-parity", flag.ContinueOnError)
-	// Concept catalog lives in rimsky's `.ok-planner/design/concepts/`;
-	// the glossary lives in this repo at `../docs/glossary.md`.
-	defaultConcepts := os.Getenv("RIMSKY_REPO") + "/.ok-planner/design/concepts"
 	outputPath := fs.String("output", "../docs/glossary.md", "path to existing glossary file (relative to exec cwd)")
-	conceptsDir := fs.String("concepts-dir", defaultConcepts, "path to concept files (defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts)")
-	execCwd := fs.String("exec-cwd", ".", "cwd for the inner `go run ./rimsky-docs-glossary` (default: current dir of this lint binary, which is rimsky-docs/cmd/)")
+	// repoRoot is the cwd for the inner `go run ./rimsky-docs-glossary`.
+	// Default "." resolves the module path from the lint binary's own cwd
+	// (rimsky-docs/cmd/). Tests override it to point at the module root.
+	repoRoot := fs.String("repo-root", ".", "cwd for the inner `go run ./rimsky-docs-glossary` (default: current dir, i.e. rimsky-docs/cmd/)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	cmd := exec.Command("go", "run", "./rimsky-docs-glossary",
-		"-concepts-dir="+*conceptsDir, "-output="+*outputPath, "-check=true")
-	cmd.Dir = *execCwd
+		"-output="+*outputPath, "-check=true")
+	cmd.Dir = *repoRoot
 	cmd.Env = append(os.Environ(), "RIMSKY_REPO="+os.Getenv("RIMSKY_REPO"))
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

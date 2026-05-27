@@ -19,5 +19,5 @@ Check the executor trace and the named-source values (`{{nodes.<source>.attribut
 
 ## See also
 
-- [`../../concepts/attributes.md`](../../concepts/attributes.md)
+- [`../../concepts/attribute.md`](../../concepts/attribute.md)
 - [`../../concepts/node.md`](../../concepts/node.md)

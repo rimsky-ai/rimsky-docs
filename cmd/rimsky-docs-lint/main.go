@@ -2,9 +2,15 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// main.go — rimsky-docs-lint. Six subcommands enforce structural integrity
-// of the public-documentation surface (docs/concepts/, docs/protocols/,
-// docs/agents/, docs/humans/, docs/glossary.md, docs/vocabulary.md).
+// main.go — rimsky-docs-lint. Five structural lints enforce the integrity of
+// the public-documentation surface (docs/concepts/, docs/protocols/,
+// docs/agents/, docs/humans/, docs/glossary.md): frontmatter (concept +
+// error-file frontmatter shape), glossary-parity (docs/glossary.md matches the
+// rimsky concept catalog), citation-drift (every `concept:<slug>` reference
+// resolves to a published concept page), llms-txt-validity (llms.txt
+// well-formed), and link-validity (every relative markdown link resolves on
+// disk). These check mechanical correctness only — word choice and
+// user-facing clarity are the doc-writing agents' judgment, not linted.
 package main
 
 import (
@@ -21,11 +27,10 @@ type subcommand struct {
 var subcommands = []subcommand{
 	{"frontmatter", runFrontmatter, "validate frontmatter shape on all concept files and error files"},
 	{"glossary-parity", runGlossaryParity, "verify docs/glossary.md matches generator output"},
-	{"vocabulary", runVocabulary, "scan public surface for forbidden terms"},
-	{"citation-drift", runCitationDrift, "verify @source: citations match canonical definitions"},
-	{"public-anchor-validity", runPublicAnchorValidity, "verify proto_symbol / config_field / api_surface anchors"},
+	{"citation-drift", runCitationDrift, "verify every `concept:<slug>` reference resolves to a published concept page"},
 	{"llms-txt-validity", runLLMSTxtValidity, "verify llms.txt is well-formed and links resolve"},
-	{"all", runAll, "run all six lints; exits non-zero if any fail"},
+	{"link-validity", runLinkValidity, "verify every relative markdown link in docs/ resolves on disk"},
+	{"all", runAll, "run all five lints; exits non-zero if any fail"},
 }
 
 func main() {
@@ -33,7 +38,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rimsky-docs-lint: RIMSKY_REPO is unset.")
 		fmt.Fprintln(os.Stderr, "Set RIMSKY_REPO to a local rimsky checkout path, e.g.:")
 		fmt.Fprintln(os.Stderr, "  RIMSKY_REPO=$(pwd)/../rimsky go run ./cmd/rimsky-docs-lint all")
-		fmt.Fprintln(os.Stderr, "Citation-drift, public-anchor-validity, and similar lints cross-check against rimsky source annotations and the concept catalog under ${RIMSKY_REPO}/.ok-planner/design/concepts/.")
+		fmt.Fprintln(os.Stderr, "Glossary-parity and similar lints cross-check against the rimsky concept catalog under ${RIMSKY_REPO}/.ok-planner/design/.")
 		os.Exit(2)
 	}
 	if len(os.Args) < 2 {
@@ -72,10 +77,9 @@ var allLints = []struct {
 }{
 	{"frontmatter", runFrontmatter},
 	{"glossary-parity", runGlossaryParity},
-	{"vocabulary", runVocabulary},
 	{"citation-drift", runCitationDrift},
-	{"public-anchor-validity", runPublicAnchorValidity},
 	{"llms-txt-validity", runLLMSTxtValidity},
+	{"link-validity", runLinkValidity},
 }
 
 func runAll(args []string) error {

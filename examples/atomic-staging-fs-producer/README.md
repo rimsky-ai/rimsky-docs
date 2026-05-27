@@ -1,7 +1,8 @@
 # atomic-staging-fs-producer
 
 A reference ClaimProducer implementing the atomic-staging pattern
-(see `docs/agents/examples/atomic-staging.md`) over a POSIX filesystem
+(see [`docs/agents/examples/atomic-staging.md`](../../docs/agents/examples/atomic-staging.md))
+over a POSIX filesystem
 substrate. Open creates a per-(scope, claim_id) staging directory;
 Commit fires a two-rename atomic swap into the canonical location;
 Abandon drops the staging directory; Release is a no-op for `r`
@@ -9,8 +10,10 @@ intent.
 
 ## Build
 
+From the `examples/` module root (the directory holding `go.mod`):
+
 ```sh
-go build ./examples/atomic-staging-fs-producer/cmd
+go build -o atomic-staging ./atomic-staging-fs-producer/cmd
 ```
 
 ## Run
@@ -20,8 +23,14 @@ RIMSKY_ATOMIC_STAGING_ROOT=/var/lib/atomic-staging \
 RIMSKY_LISTEN_ADDR=:8090 \
 RIMSKY_SWEEP_INTERVAL=5m \
 RIMSKY_SWEEP_TTL=24h \
-./cmd
+./atomic-staging
 ```
+
+`RIMSKY_ATOMIC_STAGING_ROOT` is required (the binary exits non-zero if
+unset). `RIMSKY_LISTEN_ADDR` defaults to `:8090`. `RIMSKY_SWEEP_INTERVAL`
+and `RIMSKY_SWEEP_TTL` are durations; when unset (or non-positive) the
+sweep loop falls back to its built-in defaults of `5m` and `24h`
+respectively.
 
 ## Layout
 
@@ -34,12 +43,20 @@ RIMSKY_SWEEP_TTL=24h \
 ## Conformance
 
 Once the binary is running locally, exercise the rimsky-side protocol
-expectations via the bundled conformance probe:
+expectations with the ClaimProducer conformance probe. The probe ships
+in the rimsky repository (not in this examples module), so run it from a
+rimsky checkout:
 
 ```sh
+# from your local rimsky checkout
 go run ./cmd/rimsky-claim-producer-conformance \
-   --endpoint localhost:8090 --transport grpc
+   --endpoint grpc://localhost:8090
 ```
+
+The `--endpoint` value is a single URL carrying the `grpc://` scheme;
+there is no separate `--transport` flag. Pass `--timeout` to adjust the
+per-check deadline (default 10s) and `--check-observability` to also
+probe the ClaimProducerObservability surface.
 
 ## Side-table caveats
 
@@ -57,6 +74,8 @@ filesystem locks or run a single replica per substrate.
 
 ## See also
 
-- `docs/agents/examples/atomic-staging.md` — pattern doc.
-- `docs/concepts/claim-producer.md` — protocol surface.
-- `docs/concepts/held-subgraph.md` — held-subgraph discipline.
+- [`docs/agents/examples/atomic-staging.md`](../../docs/agents/examples/atomic-staging.md) — pattern doc.
+- [`docs/concepts/atomic-staging.md`](../../docs/concepts/atomic-staging.md) — the pattern as a concept.
+- [`docs/concepts/claim-producer.md`](../../docs/concepts/claim-producer.md) — protocol surface.
+- [`docs/concepts/auto-terminal.md`](../../docs/concepts/auto-terminal.md) — holding-subgraph resolution (Commit/Abandon on aggregate outcome).
+- [`docs/concepts/claim-co-holdership.md`](../../docs/concepts/claim-co-holdership.md) — how verifiers co-hold the acquirer's claim.

@@ -1,0 +1,6 @@
+---
+concept: example
+aliases: []
+---
+
+# Example

@@ -38,8 +38,9 @@ nodes:
     executor: stub
     subscribes:
       - { node: acquirer, on: state }
-    inherits:
-      - { claim: snapshot }
+    holds:
+      snapshot:
+        from: acquirer
     attributes:
       schema:
         type: object
@@ -52,8 +53,9 @@ nodes:
     executor: stub
     subscribes:
       - { node: acquirer, on: state }
-    inherits:
-      - { claim: snapshot }
+    holds:
+      snapshot:
+        from: acquirer
     attributes:
       schema:
         type: object
@@ -108,5 +110,5 @@ curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
 
 ## See also
 
-- [`../../concepts/holding-subgraph.md`](../../concepts/holding-subgraph.md)
-- [`../../concepts/inheritance.md`](../../concepts/inheritance.md)
+- [`../../concepts/auto-terminal.md`](../../concepts/auto-terminal.md) — held-claim resolution over the holding subgraph.
+- [`../../concepts/claim-co-holdership.md`](../../concepts/claim-co-holdership.md) — co-holding an upstream claim via the `holds:` directive.

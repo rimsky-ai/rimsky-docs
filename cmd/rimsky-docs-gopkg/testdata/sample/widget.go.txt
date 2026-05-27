@@ -1,0 +1,29 @@
+// Package sample is a fixture package for rimsky-docs-sdk tests.
+package sample
+
+// MaxWidgets is the upper bound on widgets.
+const MaxWidgets = 42
+
+// Widget is an exported widget type.
+type Widget struct {
+	// Name of the widget.
+	Name string
+}
+
+// NewWidget constructs a Widget.
+func NewWidget(name string) *Widget {
+	return &Widget{Name: name}
+}
+
+// Describe returns a description of the widget.
+func (w *Widget) Describe() string {
+	return "widget " + w.Name
+}
+
+// Greet is a package-level function.
+func Greet(name string) string {
+	return "hello " + name
+}
+
+// unexported should not appear in the reference.
+func unexported() {}

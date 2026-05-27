@@ -22,7 +22,7 @@ persistence:
   blob:
     backend: pg-largeobject
     spill_threshold_bytes: 65536    # default; bytes above this spill
-    pg_large_object: {}             # no fields required
+    pg_largeobject: {}              # only an optional reserved `schema:` field
     retention:
       orphan_sweep_interval: 1h
       retention_after_unreferenced: 24h

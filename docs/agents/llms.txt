@@ -22,6 +22,7 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 - [Template demonstrating attribute-default inertness](agents/examples/claude-agent-attribute-defaults.md)
 - [Holding-subgraph template demonstrating held-claim resolution](agents/examples/holding-subgraph.md)
 - [rimsky-compose multi-template project](agents/examples/rimsky-compose-multi-template.md)
+- [Atomic staging via a held subgraph](agents/examples/atomic-staging.md)
 
 ## Errors
 

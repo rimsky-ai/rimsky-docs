@@ -6,35 +6,24 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
-var citationCommentRE = regexp.MustCompile(`<!--\s*@source:\s*(concepts/[a-z0-9-]+\.md)\s*-->`)
-
-type defOnlyFM struct {
-	Definition string `yaml:"definition"`
-}
+// conceptRefRE matches inline concept-reference tokens like `concept:claim` or
+// `` `concept:claim-handle` `` that appear in concept prose. The slug is the
+// captured group and must match the published concept filename (minus `.md`).
+var conceptRefRE = regexp.MustCompile(`concept:([a-z0-9-]+)`)
 
 func runCitationDrift(args []string) error {
 	fs := flag.NewFlagSet("citation-drift", flag.ContinueOnError)
-	// Concept catalog lives in rimsky's `.ok-planner/design/concepts/`;
-	// the public surface scanned for citations is this repo's docs/.
-	defaultConcepts := os.Getenv("RIMSKY_REPO") + "/.ok-planner/design/concepts"
 	publicSurface := fs.String("scope", "../docs/concepts,../docs/protocols,../docs/humans", "comma-separated public-surface roots (relative to cmd/ cwd)")
-	conceptsDir := fs.String("concepts-dir", defaultConcepts, "path to concept files (citation targets; defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts)")
+	conceptsDir := fs.String("concepts-dir", "../docs/concepts", "path to published concept pages (reference targets; relative to cmd/ cwd)")
 	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	defs, err := loadConceptDefinitions(*conceptsDir)
-	if err != nil {
 		return err
 	}
 	var hits []string
@@ -53,7 +42,7 @@ func runCitationDrift(args []string) error {
 			if info.IsDir() || !strings.HasSuffix(path, ".md") {
 				return nil
 			}
-			fileHits, err := scanCitations(path, defs)
+			fileHits, err := scanConceptRefs(path, *conceptsDir)
 			if err != nil {
 				return err
 			}
@@ -70,45 +59,9 @@ func runCitationDrift(args []string) error {
 	return nil
 }
 
-func loadConceptDefinitions(dir string) (map[string]string, error) {
-	defs := map[string]string{}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return defs, nil
-		}
-		return nil, err
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || e.Name() == "README.md" {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		if !bytes.HasPrefix(raw, []byte("---\n")) {
-			continue
-		}
-		end := bytes.Index(raw[4:], []byte("\n---\n"))
-		if end < 0 {
-			continue
-		}
-		fm := &defOnlyFM{}
-		if err := yaml.Unmarshal(raw[4:4+end], fm); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		defs["concepts/"+e.Name()] = normalizeWhitespace(fm.Definition)
-	}
-	return defs, nil
-}
-
-func normalizeWhitespace(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
-
-func scanCitations(path string, defs map[string]string) ([]string, error) {
+// scanConceptRefs reports every `concept:<slug>` reference in path whose
+// published target page (`<conceptsDir>/<slug>.md`) does not exist.
+func scanConceptRefs(path, conceptsDir string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -116,45 +69,24 @@ func scanCitations(path string, defs map[string]string) ([]string, error) {
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	lines := []string{}
+	var hits []string
+	line := 0
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+		line++
+		for _, m := range conceptRefRE.FindAllStringSubmatch(scanner.Text(), -1) {
+			slug := m[1]
+			target := filepath.Join(conceptsDir, slug+".md")
+			if _, err := os.Stat(target); err != nil {
+				if os.IsNotExist(err) {
+					hits = append(hits, fmt.Sprintf("%s:%d references unknown concept '%s'", path, line, slug))
+					continue
+				}
+				return nil, err
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
-	}
-	var hits []string
-	for i := 0; i < len(lines); i++ {
-		m := citationCommentRE.FindStringSubmatch(lines[i])
-		if m == nil {
-			continue
-		}
-		targetKey := m[1]
-		wantDef, ok := defs[targetKey]
-		if !ok {
-			hits = append(hits, fmt.Sprintf("%s:%d cites missing target %s", path, i+1, targetKey))
-			continue
-		}
-		// Look for the next blockquote starting the next non-blank line.
-		j := i + 1
-		for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
-			j++
-		}
-		if j >= len(lines) || !strings.HasPrefix(lines[j], "> ") {
-			hits = append(hits, fmt.Sprintf("%s:%d citation must be immediately followed by a markdown blockquote starting with `> `", path, i+1))
-			continue
-		}
-		// Collect blockquote lines until non-`>` line.
-		var bq strings.Builder
-		for ; j < len(lines) && strings.HasPrefix(lines[j], "> "); j++ {
-			bq.WriteString(strings.TrimPrefix(lines[j], "> "))
-			bq.WriteByte(' ')
-		}
-		gotDef := normalizeWhitespace(bq.String())
-		if gotDef != wantDef {
-			hits = append(hits, fmt.Sprintf("%s:%d citation drift; blockquote text does not match %s `definition` frontmatter\n      got:  %q\n      want: %q",
-				path, i+1, targetKey, gotDef, wantDef))
-		}
 	}
 	return hits, nil
 }

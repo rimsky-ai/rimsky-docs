@@ -1,0 +1,88 @@
+# Quickstart compose: rimsky/all + bundled stub claim-producer +
+# bundled stub executor + dashboard. One command brings up a working
+# Rimsky on http://localhost:8080 with the dashboard at
+# http://localhost:8090.
+#
+# Images build directly from sibling checkouts, which are the build
+# contexts. The rimsky services build from a sibling rimsky checkout
+# (override with RIMSKY_REPO); the dashboard builds from a sibling
+# rimsky-dashboard checkout (override with RIMSKY_DASHBOARD_REPO).
+# `docker compose up --build` compiles and runs them all — no registry
+# access required.
+#
+# State volume:
+#   The SQLite state file lives in a Docker named volume mounted at
+#   /var/lib/rimsky inside the rimsky container (see rimsky.yml's
+#   persistence.sqlite.path). Override with RIMSKY_STATE_DIR=./state
+#   (or any path) for a host bind-mount. Inspect with
+#   `docker compose exec rimsky sqlite3 /var/lib/rimsky/state.db`.
+#
+# Host ports:
+#   Default mappings are 8080 (control-api) and 8090 (dashboard). If
+#   either is in use on your host, override with environment variables
+#   before `docker compose up`:
+#     RIMSKY_HOST_PORT=18080 RIMSKY_DASHBOARD_HOST_PORT=18090 docker compose up
+#   The container-side ports stay 8080/8090; only the host mapping
+#   changes.
+
+services:
+  rimsky:
+    build:
+      context: ${RIMSKY_REPO:-../../rimsky}
+      dockerfile: Dockerfile.all
+    image: rimsky/all:latest
+    ports:
+      - "${RIMSKY_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
+      - ../deploy/supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro
+      - ./:/quickstart:ro
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
+    environment:
+      RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
+      RIMSKY_CONTROL_API_HOST: "0.0.0.0"
+      RIMSKY_CONTROL_API_PORT: "8080"
+    depends_on:
+      store-stub:
+        condition: service_started
+      executor-stub:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rimsky", "health", "--endpoint=http://localhost:8080"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  store-stub:
+    build:
+      context: ${RIMSKY_REPO:-../../rimsky}
+      dockerfile: stores/stub/Dockerfile.stub
+    image: rimsky/store-stub:latest
+    environment:
+      STORE_STUB_CONFIG: /etc/store/config.yml
+    volumes:
+      - ./store-stub.yml:/etc/store/config.yml:ro
+    expose: ["9102"]
+
+  executor-stub:
+    build:
+      context: ${RIMSKY_REPO:-../../rimsky}
+      dockerfile: executors/stub/Dockerfile.stub
+    image: rimsky/executor-stub:latest
+    expose: ["9300"]
+
+  dashboard:
+    build:
+      context: ${RIMSKY_DASHBOARD_REPO:-../../rimsky-dashboard}
+      dockerfile: Dockerfile
+    image: rimsky/dashboard:latest
+    ports:
+      - "${RIMSKY_DASHBOARD_HOST_PORT:-8090}:8090"
+    environment:
+      RIMSKY_CONTROL_API_URL: http://rimsky:8080
+    depends_on:
+      rimsky:
+        condition: service_healthy
+
+volumes:
+  rimsky-state:

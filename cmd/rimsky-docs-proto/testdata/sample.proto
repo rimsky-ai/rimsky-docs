@@ -1,0 +1,43 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+// Sample protocol used by rimsky-docs-proto tests. Exercises a service with a
+// streaming method, a message with repeated/optional fields, and an enum.
+
+syntax = "proto3";
+
+package sample.v1;
+
+// Greeter says hello.
+service Greeter {
+  // Hello greets the caller.
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  // Watch streams greetings forever.
+  rpc Watch(HelloRequest) returns (stream HelloResponse);
+}
+
+// HelloRequest carries the caller's name.
+message HelloRequest {
+  // name of the caller.
+  string name = 1;
+  // tags attached to the request.
+  repeated string tags = 2;
+  // nickname is optional.
+  optional string nickname = 3;
+}
+
+// HelloResponse carries the greeting.
+message HelloResponse {
+  // greeting text.
+  string greeting = 1;
+  // mood of the greeting.
+  Mood mood = 2;
+}
+
+// Mood enumerates greeting moods.
+enum Mood {
+  // MOOD_UNKNOWN is the default.
+  MOOD_UNKNOWN = 0;
+  // MOOD_HAPPY is cheerful.
+  MOOD_HAPPY = 1;
+}

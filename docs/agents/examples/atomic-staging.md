@@ -128,10 +128,10 @@ discipline:
 
 - **Acquirer** Opens the staging area. Returns `staged_async`
   semantics. Does not Commit.
-- **Verifier nodes** declare `inherits: [{claim: <alias>}]`. They
-  subscribe to the acquirer's state (via the post-2026-05-14
+- **Verifier nodes** declare `holds: {<alias>: {from: <acquirer-node>}}`.
+  They subscribe to the acquirer's state (via the post-2026-05-14
   `subscribes:` model) and read the staging address from the
-  inherited claim. They run shape / domain / count checks against
+  co-held claim. They run shape / domain / count checks against
   staging.
 - **Holding subgraph** = acquirer + every inheritor. All members run
   to terminal (fresh or failed).
@@ -169,15 +169,17 @@ in exchange for safety.
 ## Worked example: filesystem
 
 The reference filesystem implementation lives under
-`examples/atomic-staging-fs-producer/` in the rimsky repository.
+`examples/atomic-staging-fs-producer/` in the rimsky-docs repository
+(this repo). It compiles against the public `protocols` module.
 Structure:
 
 - `cmd/main.go` — binary entrypoint; reads env, starts the gRPC
   server, spawns the sweep loop.
 - `server/server.go` — gRPC `ClaimProducerServer` implementation;
   one method per verb plus `Capabilities`.
-- `store/store.go` — the four-verb logic against the filesystem +
-  SQLite producer state.
+- `store/store.go` — the four-verb logic against the filesystem,
+  with a JSONL side-table (`producer_state.jsonl`) recording per-claim
+  staging metadata for the sweep loop.
 - `sweep/sweep.go` — the leaked-staging reaper.
 - `template.yaml` — a worked-example template using the producer
   (one acquirer + two verifiers).
@@ -186,9 +188,10 @@ See the example's `README.md` for build / run instructions.
 
 ## See also
 
-- `docs/concepts/claim-producer.md` — the protocol surface (Open /
+- [`../../concepts/claim-producer.md`](../../concepts/claim-producer.md) — the protocol surface (Open /
   Commit / Abandon / Release / Capabilities).
-- `docs/concepts/claim-producer-fs-store.md` — the bundled
-  `pop_and_move` shape (related but queue-shaped, not staging-shaped).
-- `docs/concepts/held-subgraph.md` — held-subgraph discipline +
-  auto-terminal mechanism.
+- [`../../concepts/atomic-staging.md`](../../concepts/atomic-staging.md) — this pattern as a concept reference.
+- [`../../concepts/auto-terminal.md`](../../concepts/auto-terminal.md) — the holding-subgraph
+  resolution mechanism that fires Commit / Abandon.
+- [`../../concepts/claim-co-holdership.md`](../../concepts/claim-co-holdership.md) — how downstream
+  verifiers co-hold the acquirer's claim.

@@ -1,120 +1,57 @@
-# rimsky-mcp-control-api
+# Control-API MCP surface
 
-Bundled MCP shim that wraps the rimsky control-API as a tool catalog.
-Useful for connecting agentic clients (Claude, Claude Code, custom MCP
-clients) directly to a running rimsky deployment for template
-registration, instance creation, parked-node inspection, and admin
-invalidates — without writing a custom MCP server per integration.
+The rimsky control-API exposes its operational surface as an MCP (Model Context Protocol) tool catalog. This is **not** a standalone sidecar binary — it is a JSON-RPC protocol skin mounted directly inside the control-API process at `route:POST /mcp` (wired in `control/controlapi/mcp_route.go`; the catalog and JSON-RPC envelope live in `control/controlapi/mcp/`). An agentic client speaks MCP to the same process and port that serves the HTTP API, and every tool re-enters the control-API's own routing and auth pipeline.
 
 ## When to use it
 
-- You want an LLM agent to drive rimsky operationally (register a
-  template, create an instance, inspect held frames, resume a parked
-  node).
-- You want to expose rimsky's admin surface to a client that speaks
-  MCP without exposing the raw HTTP API to the same client.
-- You want a single shim per deployment rather than re-implementing
-  the wrapper layer in each consumer.
+- You want an LLM agent to drive rimsky operationally (register a template, create an instance, inspect held frames, resume a parked node) without writing a custom MCP server per integration.
+- You want the agent to see exactly the operations its API key is granted — `tools/list` is filtered per-key.
 
-## Configuration
+## How it is mounted
 
-The shim reads four environment variables:
+`POST /mcp` is gated by the `mcp:read` umbrella action, which the bundled `viewer` role covers via wildcard `*:read`. `initialize` and `tools/list` run inside the MCP server and never reach a tool. A `tools/call` re-enters the chi router through the catalog, so the call picks up the **per-tool action gate** there — a mutating tool still requires the matching write permission (e.g. `instance_create` requires `instance:create`).
 
-| Variable             | Default                  | Description                                                             |
-|----------------------|--------------------------|-------------------------------------------------------------------------|
-| `CONTROL_API_URL`    | `http://127.0.0.1:8080`  | Absolute base URL of the rimsky control-API.                            |
-| `CONTROL_API_TOKEN`  | (empty)                  | When set, forwarded as `Authorization: Bearer <token>` to control-API.  |
-| `BIND_ADDR`          | `0.0.0.0`                | Bind address for the shim's HTTP listener.                              |
-| `PORT`               | `8081`                   | Listen port for the shim's HTTP listener.                               |
+There is no separate MCP config block, no `CONTROL_API_URL` / `CONTROL_API_TOKEN` / `BIND_ADDR` / `PORT` environment surface, and no second process to deploy. The MCP surface inherits the control-API's bind address, TLS, and auth.
 
-Run:
+## Auth
 
-```sh
-CONTROL_API_URL=http://rimsky-control-api:8080 \
-CONTROL_API_TOKEN="$RIMSKY_TOKEN" \
-go run github.com/fallguyconsulting/rimsky/mcp-servers/control-api/cmd/rimsky-mcp-control-api
-```
+Same model as the HTTP API. A request carries `Authorization: Bearer <plaintext API key>`; the auth middleware resolves it to an identity with a set of permission grants (or a synthetic anonymous identity when the deployment runs in anonymous mode). Two consequences for MCP:
+
+- `tools/list` returns only the tools whose backing action the key is granted (`auth.CheckGrant` per tool). An agent never sees tools it cannot call.
+- `tools/call` is gated again at dispatch by the per-tool action; a permission denial surfaces as a JSON-RPC error.
 
 ## Wire protocol
 
-JSON-RPC 2.0 over `POST /mcp`. The shim implements three methods:
+JSON-RPC 2.0 over `POST /mcp`, advertising `protocolVersion` `2025-06-18` and `serverInfo` `{name: "rimsky-control-api", version: "v1"}`. Five methods:
 
-- `initialize` — returns `protocolVersion`, `serverInfo`, `capabilities`.
-- `tools/list` — returns the registered tool catalog.
-- `tools/call` — dispatches by tool name; arguments are JSON-Schema
-  validated server-side.
+- `initialize` — returns `protocolVersion`, `capabilities` (`tools`, `resources`), and `serverInfo`.
+- `tools/list` — the per-key-filtered tool catalog.
+- `tools/call` — dispatches by tool name; arguments are JSON-Schema validated; the result is returned as an MCP `content` text block wrapping the control-API JSON response.
+- `resources/list` / `resources/read` — the read-only resource catalog (empty on tools-only deployments).
+
+Error codes follow JSON-RPC: `-32700` parse error, `-32600` invalid request, `-32601` method/tool not found, `-32602` invalid params, `-32603` internal error.
 
 ## Tool catalog
 
-Each tool is a thin pass-through over the rimsky control-API.
+Tools are declared in the canonical action registry (`control/controlapi/actions.go`); each maps to one control-API action and its HTTP route(s). The catalog is the source of truth — the list below is grouped for orientation, not hand-maintained field-by-field.
 
-### Templates
+- **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate`, `instance_pause`, `instance_resume`.
+- **Breakpoints:** `breakpoint_list`, `breakpoint_create`, `breakpoint_resume_hit`, `breakpoint_delete`.
+- **Templates:** `template_list`, `template_get`, `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
+- **Tags:** `tag_list`, `tag_create`, `tag_set`, `tag_delete`.
+- **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `route:POST /nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
+- **Messages:** `message_send`, `message_list`, `message_get`.
+- **Events:** `event_list`.
+- **Lineage:** `lineage_get`, `lineage_prune`.
+- **Backfills:** `backfill_create`, `backfill_list`, `backfill_get`, `backfill_partitions`, `backfill_cancel`.
+- **Assets:** `asset_list`, `asset_get`, `asset_versions`, `asset_materialization_history`, `asset_materialize`, `asset_delete`.
+- **Diagnostics:** `parked_node_list`, `waitset_list`, `claim_holders_list`, `held_frames_list`.
+- **Auth (self-administration):** `auth_list`, `auth_get`, `auth_status`, `auth_create_key`, `auth_revoke_key`, `auth_rotate_key`.
 
-- `template_list` — list registered templates.
-- `template_get { hash }` — fetch template by content hash.
-- `template_register { spec, tag?, source? }` — register a new template.
-- `template_deploy { hash }` — mark a template deployed.
-- `template_undeploy { hash }` — mark a template undeployed.
-- `template_deregister { hash }` — delete a template.
-
-### Tags
-
-- `tag_list` — list tags.
-- `tag_set { name, hash }` — point a tag at a template hash.
-- `tag_delete { name }` — delete a tag.
-
-### Instances
-
-- `instance_list` — list instances.
-- `instance_get { id }` — fetch an instance.
-- `instance_create { template, instance_key?, params?, attribute_overrides? }`
-  — create a new instance. `attribute_overrides` mirrors the rimsky
-  control-API's per-instance overrides surface
-  (`{by_executor: {...}, by_node: {...}, by_match: [...]}`). `by_match`
-  is an ordered list of `{matcher, overlay}` entries whose matcher is a
-  content-keyed predicate (`node_type`, `executor`, `graph`,
-  `child_key`, `attrs.<path>`) — see `concept:attribute`'s "Matcher
-  overlay (by_match)" section. `instance_get` echoes
-  `attribute_overrides_match_counts` (per-entry counter) alongside the
-  overrides blob.
-- `instance_terminate { id }` — terminate an instance.
-
-### Nodes
-
-- `node_get { instance, node_id }` — fetch a node.
-- `node_invalidate { instance, node_id }` — wake a parked node or
-  fresh-invalidate a fresh node. Maps to `POST
-  /admin/instances/{instance}/nodes/{node_id}/invalidate`. Returns
-  409 when the node is in a state that does not accept invalidates
-  (running | failed).
-- `force_fire_scheduled { node_id }` — advance a scheduled node's
-  `next_fire_at` so the next scheduler tick picks it up.
-
-### Diagnostics
-
-- `held_frames_list` — frames with at least one parked node.
-- `parked_nodes_list { reason? }` — currently parked nodes; optional
-  reason filter.
-
-## Deployment shape
-
-The shim is a stateless sidecar; co-locate it with the rimsky
-control-API. Two reasonable deployments:
-
-- **Sidecar:** the shim runs in the same pod / container group as
-  rimsky-control-api and binds to `127.0.0.1`. Agentic clients in the
-  same network connect to the shim; rimsky-control-api stays
-  network-private.
-- **Separate container:** the shim runs in its own container/pod and
-  reaches rimsky-control-api over the cluster network. Use a
-  network policy to keep direct access to rimsky-control-api closed.
+`instance_create` accepts `{template, instance_key?, params?, attribute_overrides?}`. `attribute_overrides` mirrors the control-API's per-instance overrides surface (`{by_executor, by_node, by_match}`); `by_match` is an ordered list of `{matcher, overlay}` entries keyed on a content predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`) — see `concept:attribute`.
 
 ## Security
 
-- The shim does not enforce its own auth. Operators should isolate
-  the shim's port via network policy / firewall.
-- The shim forwards `CONTROL_API_TOKEN` as a bearer token to the
-  underlying control-API. The token is not logged.
-- All inputs are JSON-Schema validated against the rimsky control-API
-  schemas before dispatch; the shim rejects malformed bodies with
-  JSON-RPC `-32602` (invalid params).
+- The MCP surface does not add its own auth layer: it is gated by the control-API's API-key permission model, the same as every HTTP route.
+- `tools/call` mutations require the corresponding write grant; a read-only key sees and can invoke only read tools.
+- Tool arguments are JSON-Schema validated before dispatch; malformed params return JSON-RPC `-32602`.

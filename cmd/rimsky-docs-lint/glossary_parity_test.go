@@ -6,16 +6,16 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// findRepoRoot walks up from the test's cwd looking for go.work. Tests run
-// with cwd = the package directory (cmd/rimsky-docs-lint/), so two levels up
-// is the repo root. We walk to be defensive against future relayouts.
-func findRepoRoot(t *testing.T) string {
+// findModuleRoot walks up from the test's cwd looking for the cmd module's
+// go.mod. Tests run with cwd = the package directory
+// (cmd/rimsky-docs-lint/), so one level up is the module root. We walk to be
+// defensive against future relayouts.
+func findModuleRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
@@ -23,7 +23,7 @@ func findRepoRoot(t *testing.T) string {
 	}
 	dir := wd
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.work")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -32,32 +32,35 @@ func findRepoRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Skipf("repo root not found above %s", wd)
+	t.Skipf("module root (go.mod) not found above %s", wd)
 	return ""
 }
 
-func runGoCmd(t *testing.T, dir string, args []string) error {
+// writeCatalog stages a fake RIMSKY_REPO whose concept catalog has the given
+// content, sets RIMSKY_REPO for the test, and returns the catalog content.
+func stageCatalog(t *testing.T, content string) {
 	t.Helper()
-	cmd := exec.Command("go", args...)
-	cmd.Dir = dir
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stderr
-	return cmd.Run()
+	repo := t.TempDir()
+	catalogDir := filepath.Join(repo, ".ok-planner", "design")
+	if err := os.MkdirAll(catalogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(catalogDir, "concepts.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIMSKY_REPO", repo)
 }
 
 func TestGlossaryParity_DetectsDrift(t *testing.T) {
-	repoRoot := findRepoRoot(t)
+	moduleRoot := findModuleRoot(t)
+	stageCatalog(t, "# Catalog\n\n- `claim` — a thing.\n")
 	tmp := t.TempDir()
 	outAbs := filepath.Join(tmp, "glossary.md")
 	if err := os.WriteFile(outAbs, []byte("stale content"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Both -concepts-dir and -output are passed to the inner binary as-is.
-	// We want them to resolve from cmd.Dir = repoRoot, so we pass an absolute
-	// path for the temp output and a repo-root-relative path for the fixtures.
 	err := runGlossaryParity([]string{
-		"-repo-root=" + repoRoot,
-		"-concepts-dir=cmd/rimsky-docs-glossary/testdata/concepts",
+		"-repo-root=" + moduleRoot,
 		"-output=" + outAbs,
 	})
 	if err == nil {
@@ -68,26 +71,21 @@ func TestGlossaryParity_DetectsDrift(t *testing.T) {
 	}
 }
 
-func TestGlossaryParity_FixtureRoundTrip(t *testing.T) {
-	repoRoot := findRepoRoot(t)
+func TestGlossaryParity_RoundTrip(t *testing.T) {
+	moduleRoot := findModuleRoot(t)
+	content := "# Catalog\n\n- `claim` — a thing.\n"
+	stageCatalog(t, content)
 	tmp := t.TempDir()
 	outAbs := filepath.Join(tmp, "glossary.md")
-	// First, generate the canonical output by running with -check=false.
-	genCmd := []string{
-		"run", "./cmd/rimsky-docs-glossary",
-		"-concepts-dir=cmd/rimsky-docs-glossary/testdata/concepts",
-		"-output=" + outAbs,
+	// The published glossary is a verbatim copy of the catalog.
+	if err := os.WriteFile(outAbs, []byte(content), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if err := runGoCmd(t, repoRoot, genCmd); err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	// Then, parity-check should pass.
 	err := runGlossaryParity([]string{
-		"-repo-root=" + repoRoot,
-		"-concepts-dir=cmd/rimsky-docs-glossary/testdata/concepts",
+		"-repo-root=" + moduleRoot,
 		"-output=" + outAbs,
 	})
 	if err != nil {
-		t.Errorf("expected parity pass after generate, got %v", err)
+		t.Errorf("expected parity pass, got %v", err)
 	}
 }

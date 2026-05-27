@@ -16,8 +16,9 @@ nodes:
 
   - type: verify-staged
     executor: http-node
-    inherits:
-      - { claim: target }
+    holds:
+      target:
+        from: stage-data
     userdata: { url: "http://my-checks.internal:8080/verify-shape" }
     attributes:
       schema:
@@ -28,8 +29,9 @@ nodes:
 
   - type: verify-staged-domain
     executor: http-node
-    inherits:
-      - { claim: target }
+    holds:
+      target:
+        from: stage-data
     userdata: { url: "http://my-checks.internal:8080/verify-domain" }
     attributes:
       schema:

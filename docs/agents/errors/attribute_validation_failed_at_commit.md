@@ -19,5 +19,5 @@ The executor must produce writeback shaped exactly to the schema. Check the writ
 
 ## See also
 
-- [`../../concepts/attributes.md`](../../concepts/attributes.md)
+- [`../../concepts/attribute.md`](../../concepts/attribute.md)
 - [`../../concepts/executor.md`](../../concepts/executor.md)

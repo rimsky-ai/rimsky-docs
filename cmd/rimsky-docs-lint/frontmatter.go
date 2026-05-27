@@ -15,15 +15,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// fmShape is the new concept frontmatter: exactly four keys. `concept` and
+// `status` are required; `aliases` and `references` are optional lists.
+// KnownFields(true) rejects any unexpected key.
 type fmShape struct {
-	Concept         string                   `yaml:"concept"`
-	Definition      string                   `yaml:"definition"`
-	ProtoSymbol     string                   `yaml:"proto_symbol"`
-	ConfigField     string                   `yaml:"config_field"`
-	APISurface      string                   `yaml:"api_surface"`
-	Related         []string                 `yaml:"related"`
-	DeprecatedTerms []string                 `yaml:"deprecated_terms"`
-	LayerSenses     []map[string]interface{} `yaml:"layer_senses,omitempty"`
+	Concept    string   `yaml:"concept"`
+	Status     string   `yaml:"status"`
+	Aliases    []string `yaml:"aliases"`
+	References []string `yaml:"references"`
 }
 
 // errorFM is the frontmatter shape for files under docs/agents/errors/.
@@ -106,23 +105,8 @@ func validateFile(path string) error {
 	if strings.TrimSpace(fm.Concept) == "" {
 		missing = append(missing, "concept")
 	}
-	if strings.TrimSpace(fm.Definition) == "" {
-		missing = append(missing, "definition")
-	}
-	if strings.TrimSpace(fm.ProtoSymbol) == "" {
-		missing = append(missing, "proto_symbol (use \"(none)\" if not applicable)")
-	}
-	if strings.TrimSpace(fm.ConfigField) == "" {
-		missing = append(missing, "config_field (use \"(none)\" if not applicable)")
-	}
-	if strings.TrimSpace(fm.APISurface) == "" {
-		missing = append(missing, "api_surface (use \"(none)\" if not applicable)")
-	}
-	if fm.Related == nil {
-		missing = append(missing, "related (use [] if empty)")
-	}
-	if fm.DeprecatedTerms == nil {
-		missing = append(missing, "deprecated_terms (use [] if empty)")
+	if strings.TrimSpace(fm.Status) == "" {
+		missing = append(missing, "status")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%s: missing required field(s): %s", path, strings.Join(missing, ", "))

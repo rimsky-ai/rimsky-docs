@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// main.go — rimsky-docs-glossary. Reads docs/concepts/*.md frontmatter
-// and emits docs/glossary.md.
+// main.go — rimsky-docs-glossary. Publishes rimsky's auto-generated concept
+// catalog (`${RIMSKY_REPO}/.ok-planner/design/concepts.md`) verbatim to the
+// public glossary (docs/glossary.md).
 package main
 
 import (
@@ -22,25 +23,25 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Required by the docs reconciliation gate to cross-check generated content against rimsky source.")
 		os.Exit(2)
 	}
-	// Concept catalog lives in rimsky's `.ok-planner/design/concepts/` —
-	// the authoritative source for public-glossary frontmatter per
-	// `concept:module-layout` and the rimsky CLAUDE.md pointer index.
-	defaultConcepts := rimskyRepo + "/.ok-planner/design/concepts"
-	conceptsDir := flag.String("concepts-dir", defaultConcepts, "path to concept files (defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts)")
-	outputFile := flag.String("output", "../docs/glossary.md", "path to write generated glossary (relative to cmd/ cwd)")
-	check := flag.Bool("check", false, "verify existing output matches generated; exit non-zero on diff")
+	// The concept catalog/glossary lives in rimsky at
+	// `.ok-planner/design/concepts.md` — an auto-generated markdown doc that
+	// IS the public glossary. We publish it verbatim.
+	defaultCatalog := rimskyRepo + "/.ok-planner/design/concepts.md"
+	catalogFile := flag.String("catalog", defaultCatalog, "path to the source concept catalog (defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts.md)")
+	outputFile := flag.String("output", "../docs/glossary.md", "path to write the published glossary (relative to cmd/ cwd)")
+	check := flag.Bool("check", false, "verify existing output matches source catalog; exit non-zero on diff")
 	flag.Parse()
 
-	if err := run(*conceptsDir, *outputFile, *check); err != nil {
+	if err := run(*catalogFile, *outputFile, *check); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(conceptsDir, outputPath string, check bool) error {
-	got, err := generate(conceptsDir)
+func run(catalogPath, outputPath string, check bool) error {
+	got, err := os.ReadFile(catalogPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", catalogPath, err)
 	}
 	if check {
 		want, err := os.ReadFile(outputPath)
@@ -48,7 +49,7 @@ func run(conceptsDir, outputPath string, check bool) error {
 			return fmt.Errorf("%s: %w", outputPath, err)
 		}
 		if !bytes.Equal(got, want) {
-			return fmt.Errorf("%s differs from generator output; run `go run ./cmd/rimsky-docs-glossary` to regenerate", outputPath)
+			return fmt.Errorf("%s differs from source catalog %s; run `go run ./cmd/rimsky-docs-glossary` to regenerate", outputPath, catalogPath)
 		}
 		return nil
 	}

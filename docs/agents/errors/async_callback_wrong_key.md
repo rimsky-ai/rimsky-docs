@@ -15,7 +15,7 @@ When implementing an executor that uses the async-callback path. The executor's 
 
 ## What to do
 
-Change the body key from `kind` to `type`. The TS claude-agent reference impl's test suite (under `executors/claude-agent/src/server.test.ts`) covers the exact wire shape; align with that.
+Change the body key from `kind` to `type`. The claude-agent reference executor (now in the separate `rimsky-services` repository, under `executors/claude-agent/`) and its test suite cover the exact wire shape; align with that.
 
 ## See also
 

@@ -15,8 +15,10 @@ Rimsky ships four reference backends:
 - [`memory`](./memory.md) — in-process map; **dev-only**, rejected at
   startup unless `RIMSKY_PROCESS_ROLE=unified`.
 
-Configuration: `persistence.blob.backend` plus per-backend sub-blocks.
-See `deploy/rimsky.yml` for the full schema.
+Configuration: `cfg:persistence.blob.backend` plus per-backend sub-blocks
+(`spill_threshold_bytes`, `filesystem.root`, `pg_largeobject`, `retention`).
+The schema is parsed in `control/config/` (`persistence.blob` block) and
+defaults to `inline` with a 64 KiB notional threshold when the key is absent.
 
 ## Cross-backend invariants
 

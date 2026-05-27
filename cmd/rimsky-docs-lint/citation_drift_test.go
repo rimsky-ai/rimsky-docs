@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func TestCitationDrift_GoodPasses(t *testing.T) {
+func TestCitationDrift_ResolvedReferencePasses(t *testing.T) {
 	err := runCitationDrift([]string{
-		"-scope=testdata/citation-good/protocols",
+		"-scope=testdata/citation-good/docs,testdata/citation-good/concepts",
 		"-concepts-dir=testdata/citation-good/concepts",
 	})
 	if err != nil {
@@ -19,28 +19,25 @@ func TestCitationDrift_GoodPasses(t *testing.T) {
 	}
 }
 
-func TestCitationDrift_DriftFails(t *testing.T) {
+func TestCitationDrift_UnknownReferenceFails(t *testing.T) {
 	err := runCitationDrift([]string{
-		"-scope=testdata/citation-bad/protocols",
+		"-scope=testdata/citation-bad/docs,testdata/citation-bad/concepts",
 		"-concepts-dir=testdata/citation-bad/concepts",
 	})
 	if err == nil {
 		t.Fatal("expected failure")
 	}
-	if !strings.Contains(err.Error(), "drift") {
-		t.Errorf("expected drift in error, got %v", err)
+	if !strings.Contains(err.Error(), "references unknown concept 'does-not-exist'") {
+		t.Errorf("expected unknown-concept error, got %v", err)
 	}
 }
 
-func TestCitationDrift_MissingBlockquoteFails(t *testing.T) {
+func TestCitationDrift_MissingScopeSkipped(t *testing.T) {
 	err := runCitationDrift([]string{
-		"-scope=testdata/citation-no-blockquote/protocols",
-		"-concepts-dir=testdata/citation-no-blockquote/concepts",
+		"-scope=testdata/citation-does-not-exist",
+		"-concepts-dir=testdata/citation-good/concepts",
 	})
-	if err == nil {
-		t.Fatal("expected failure")
-	}
-	if !strings.Contains(err.Error(), "blockquote") {
-		t.Errorf("expected blockquote in error, got %v", err)
+	if err != nil {
+		t.Errorf("expected missing scope root to be skipped silently, got %v", err)
 	}
 }
