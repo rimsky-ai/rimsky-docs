@@ -1,4 +1,4 @@
-module github.com/fallguyconsulting/rimsky-docs/cmd
+module github.com/rimsky-ai/rimsky-docs/cmd
 
 go 1.25.0
 

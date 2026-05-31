@@ -41,10 +41,6 @@ Owns: the node-run lifecycle phase, candidate-selection inputs, heartbeat fields
 
 Renamed from the former worker-request concept per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #14). The legacy persisted names were "dispatch" (pre-Phase-5) and "worker request" (Phase-5 through 2026-05-12). Some prose still uses "dispatch row" as a colloquial term.
 
-## Open within this concept
-
-- Five-phase CHECK + Go enum is the single source of truth; new phases require coordinated migration + sweep updates (no specific tension; just discipline).
-
 ## Notes
 
 - Renamed from the former worker-request concept per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #14).

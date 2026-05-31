@@ -230,9 +230,9 @@ See spec:2026-05-20-attribute-pull-resolution-design for the brainstorm rational
 - Substitution reads are scoped to the current frame. A `{{nodes.X.attribute.Y}}` directive resolves to the X-run that contributed to this dispatch via the frame's wait-set; reads of X-runs from earlier frames return a missing-source error. The per-run attribute rows are the persistent record of what each node-run produced — not a cache. State that must be available across frames belongs in `params`, claim payloads, or threaded subgraph inputs.
 - Per-field `source:` admits literal text and one or more `{{...}}` directives. Each directive resolves independently against its source kind (`nodes`, `claim`, `params`, `trigger`, `child`). Per-directive strict-default with `?` opt-in to lenient. Lenient missing rendering depends on resolution mode: in whole-directive mode (the source is exactly one `{{...}}` directive, modulo whitespace) the directive lifts to JSON `null`; in embedded mode (literal text alongside directives) the directive contributes the empty string so the surrounding template still concatenates cleanly. The `?` marker is mutually exclusive with `| <literal>` fallback. Multi-source array form (`source: [...]`) and multi-pipe chains (`{{X | Y | Z}}`) are not admitted. Many-to-many fan-in across upstreams lives in the cascade vocabulary (subscriptions over multiple senders, plus optional schema fields whose dispatch-time missing-source is silently omitted by the schema-substitution path). Enforced at registration by the template validator's attribute-source check (rejects the declined forms). The arity asymmetry between subscriptions (many-to-many) and per-field substitution (1:1 per directive) is intentional: subscriptions sum signals across upstreams; substitution names a single value per field. Per-directive composition within a source string concatenates, it does not sum.
 
-- Each property has at most one of `source:` or `default:`. Each property satisfies one of: has `source:`, has `default:`, or is marked `readOnly: true` in the executor's `expected_attributes_schema` (executor-write-back populates at commit). Properties failing all three checks are rejected at registration with `template_validation_failed`, or at dispatch with `attributes_schema_invalid` if the executor's schema wasn't visible at registration time. The registration-time check soft-fails the `readOnly`-fallback leg when the discovery cache hasn't populated yet (no hook wired, executor not yet handshaked, or executor advertises no schema) — under those conditions, runtime dispatch reapplies the rule once the schema is visible. Enforced by the template validator's attributes-schema check at registration and its effective-schema check at dispatch (the latter invoked from the dispatch-time attribute-resolution path).
+- Each property has at most one of `source:` or `default:`. Each property satisfies one of: has `source:`, has `default:`, is marked `readOnly: true` in the executor's `expected_attributes_schema` (executor-write-back populates at commit), or it is a property the executor does not enumerate, under an executor schema that does not constrain it — either the executor declares no `properties` block at all (a fully permissive schema), or it declares `additionalProperties` that is not `false`. In both cases the executor has delegated naming authority for unenumerated properties. Properties failing all of these checks are rejected at registration with `template_validation_failed`, or at dispatch with `attributes_schema_invalid` if the executor's schema wasn't visible at registration time. The registration-time check soft-fails the `readOnly`-fallback leg when the discovery cache hasn't populated yet (no hook wired, executor not yet handshaked, or executor advertises no schema) — under those conditions, runtime dispatch reapplies the rule once the schema is visible. Enforced by the template validator's attributes-schema check at registration and its effective-schema check at dispatch (the latter invoked from the dispatch-time attribute-resolution path).
 
-- The template-author L2 declaration cannot set `readOnly: true` on a property the executor's schema does not also mark `readOnly: true`. Rejected at registration. The executor is authoritative on which of its attributes it produces vs consumes.
+- The template-author L2 declaration cannot set `readOnly: true` on a property the executor's schema does not also mark `readOnly: true`. Rejected at registration. The executor is authoritative on which of its attributes it produces vs consumes. The same open-schema carve-out applies: an unenumerated property under an executor schema that does not constrain it (no `properties` block, or `additionalProperties` not `false`) may be author-marked `readOnly: true`, since the executor has delegated naming authority for unenumerated properties. Enumerated properties remain fully checked.
 
 - A fifth override layer (L5) extends the four-layer merge: `instance.attribute_overrides.by_match` is an ordered list of `{matcher, overlay}` entries. The matcher predicate is equality-only over a fixed key set (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`); evaluated against the dispatch context at runtime; missing keys are wildcards; AND across present keys. Each matching entry's overlay folds on top via a recursive JSON deep-merge in declaration order — later entries win. Empty matcher (`{}`) matches every dispatch. The matcher reads from the post-L4 merged bag (overrides applied through L4 are visible to the matcher). Ordinal-shaped matcher keys (`dispatch_index`, `nth_child`, `partition_index`, `seq`) and expression-shaped values are rejected at registration. Enforced by the control-api override validator at registration and the runtime override applier at dispatch.
 
@@ -276,6 +276,7 @@ Per-entry match counters persist on the instance row's match-count map. The supe
 - 2026-05-22 — `child_key` matcher anchor sourcing reconciled per spec:2026-05-22-fan-out-safety-scope-first-design: matcher reads from RunScope's `partition_key` now that the parent-run and child-key columns are removed from the node-run row. Operator semantics unchanged; only the implementation sourcing changes.
 - 2026-05-24 — Matcher grammar (the closed 5-key dispatch-identity predicate from by_match) extracts to a shared foundation matcher package per spec:2026-05-24-instance-debugger-design. `concept:breakpoint` reuses the package. by_match wire shape, semantics, and merge layering unchanged.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — open-schema extension-property exemption clarified in the attribute-surface invariant per spec:2026-05-28-quality-of-life-features; an unenumerated property under an executor schema that does not constrain it (no properties block, or additionalProperties not false) is admitted without source/default/executor-readOnly and may be author-marked readOnly, while enumerated properties remain fully checked.
 
 
 
@@ -327,7 +328,9 @@ State-column refactor per spec:2026-05-17-post-data-platform-cleanup: the main a
 
 ## Definition
 
-A backfill is one invalidate-kind message with a `partition_request_override` payload field, targeting a fan-out node. The target's template uses substitution on its fan-out partition-request field to accept the override: the field is authored as a substitution that pulls the override out of the triggering message's payload, falling back to a template-declared default. The default clause runs for non-backfill invocations; the substitution-override runs when a backfill message provides one.
+A backfill is one invalidate-kind message with a `partition_request_override` payload field, targeting a fan-out node. The target's template uses substitution on its fan-out partition-request field to accept the override: the field is authored as a substitution that pulls the override out of the triggering message's payload, falling back to a template-declared default. The fallback runs for non-backfill invocations; the substitution-override runs when a backfill message provides one.
+
+The override genuinely reaches the node. Fan-out acquisition resolves the node's `partition_request` through the substitution engine at acquisition time, binding the triggering message's payload (see `concept:fan-out`). Previously the template's `partition_request` was passed verbatim, un-substituted, so the override was silently ignored and the fallback always fired — every backfill processed the template default regardless of the operator's override. That is fixed: the override now drives the partitions actually processed.
 
 ## Boundaries
 
@@ -335,7 +338,7 @@ Owns: the backfill-message pattern, the control-api backfill endpoints (create, 
 
 ## Invariants
 
-- A backfill is structurally a message with `kind: invalidate` + payload `{partition_request_override, backfill_operation_id, reason}`. Rimsky validates that the target node has `fan_out.partition_request` referencing trigger substitution (warning if not).
+- A backfill is structurally a message with `kind: invalidate` + payload `{partition_request_override, backfill_operation_id, reason}`. `backfill:create` **rejects (400)** a target that is not a fan-out node wired to accept the partition override (its `fan_out.partition_request` must reference the trigger substitution). A backfill is meaningless without a partition — and thus a fan-out — so a non-fan-out / unwired target is refused at submit with a message naming the requirement, rather than silently degrading to a plain invalidate. The dry-run preview projects the same validation (a bad target fails the same way).
 - The backfill-operation key on the message row is the chain key — multi-fire backfills share the same operation id; lineage walks chain back via it.
 - V1 cancellation: the cancel endpoint marks the operation cancelled. Pending undelivered messages are skipped (a cancelled filter on the pending-delivery path); in-flight frames complete normally (no preemption).
 - Status rollup: the single-backfill fetch endpoint queries the message ledger and the node-run ledger for the originating message + the parent fan-out run + its children's aggregated states.
@@ -349,6 +352,7 @@ The control-api offers five backfill operations on an instance: create a backfil
 Introduced by spec:2026-05-15-data-platform-extensions-design. The "backfill is just an invalidate-message with a payload" design keeps the dispatch machinery uniform — backfills go through the same message queue and the same frame-delivery path as operator-API invalidates and publisher-origin messages.
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: the target-validation invariant tightens from "warn if not a wired fan-out target" to "`backfill:create` **rejects (400)**." And the override now actually functions — fan-out acquisition substitutes the node's `partition_request` from the triggering message at acquisition (previously it passed the template's `partition_request` verbatim, so the override was silently ignored and the fallback always fired). See `concept:fan-out`, `concept:message` (delivery default flips to `serial_queue`).
 
 
 ---
@@ -411,7 +415,7 @@ Enable agent-driven debugging of live rimsky instances. The agent installs break
 
 Owns: the per-instance breakpoint ledger and the hit ledger (schema, CRUD, sweeps); the `before_dispatch` and `after_terminal` supervisor checkpoint logic; the resume-with-overlay L6 merge; the per-mode overflow policies and the queue-cap (100 unresumed hits per breakpoint).
 
-Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); the MCP transport for hit delivery (`concept:control-api` owns the read-only resource-listing and resource-read extension that surfaces hits).
+Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); hit *delivery* (`concept:control-api` owns it, exposing **both** the read-only MCP resource-listing and resource-read extension and a read-only REST route that surface hits — this concept owns the ledger, not the transport).
 
 Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `concept:instance`, `concept:signal`, `concept:permission`, `concept:parked-state`.
 
@@ -447,6 +451,7 @@ None.
 
 - 2026-05-24 — Introduced per spec:2026-05-24-instance-debugger-design.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — hit-delivery boundary broadened to include a REST read route alongside the MCP resource per spec:2026-05-28-quality-of-life-features.
 
 
 ---
@@ -1180,38 +1185,33 @@ The cache and its handshake population were previously documented inside `observ
 
 ## What it is
 
-A per-grant-entry modifier on `concept:permission` entries: `{ "action": "<action>", "mode": "dry_run" }`. When the per-request mode resolves to `dry_run`, the handler runs validation (including side-effect-free external calls like the validation protocol's checks; see `concept:validation`) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
+A per-request flag — `?dry_run=true` on the control-plane request — that asks "what would happen if I did this?" without applying it. The auth middleware honors the flag, resolving the request's mode to `dry_run` regardless of the (now mode-less) grant in `concept:permission`. Default (flag absent) is `execute`. When the request resolves to `dry_run`, a write handler runs validation (including side-effect-free external calls like the validation protocol's checks; see `concept:validation`) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
 
-The control-plane auth middleware threads the resolved mode through the request context; handlers read it back from the context and gate the side-effectful path through a shared dry-run-response helper that emits the synthetic envelope.
+The flag is the *only* source of dry-run. There is no preview-only key to escalate from — the grant carries no mode. The auth middleware threads the resolved mode through the request context; handlers read it back from the context and gate the side-effectful path through a shared dry-run-response helper that emits the synthetic envelope.
 
 ## Purpose
 
-Agentic supervision needs a way to ask "what would happen if I did X?" without applying X. The same audit-log trail then serves as evidence of agent intent — "this agent attempted these operations; we did not apply them" — which is the precondition for promoting an agent from supervised dry-run to live execution.
+Dry-run is human-in-the-loop preview-before-commit and validate-without-commit: an operator or agent can preview the effect of any write before applying it, and can validate that a request would be accepted (well-formed, authorized, structurally valid) without committing its side effect. The same audit-log trail records the attempt — "this request was previewed; we did not apply it" — as forensic evidence.
 
 ## Boundaries
 
-Owns: the per-grant-entry mode vocabulary (`execute` / `dry_run`), the per-request context plumbing, the dry-run-response helper, the per-handler dry-run branches (instance:create, instance:terminate, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
+Owns: the per-request `dry_run` flag handling in the auth middleware, the per-request context plumbing, the dry-run-response helper, and the per-handler dry-run branches. Dry-run covers **all** write actions uniformly — there is no auth carve-out; `auth:create` / `auth:revoke` / `auth:rotate` are previewable like any other write. Does NOT own: the read path (a read has no mutation to skip, so the flag is a no-op there; see Invariants). Adjacent: `concept:permission` (the request flag is orthogonal to the binary grant), `concept:event-log` (the audit row records `mode: dry_run`).
 
 ## Invariants
 
-- **Read actions ignore mode.** The dry-run modifier is meaningful only for write actions.
+- **Reads honor the flag as a no-op.** A read has no mutation to skip, so `?dry_run=true` on a `*:read` action runs the read normally and returns it. This lets a mixed read/write script set the flag uniformly without special-casing reads. The audit row records `mode: dry_run` with `executed: true` (the read genuinely ran).
+- **Every write is previewable.** Each write action has a dry-run branch returning a `would_have_*` envelope and performing no mutation. This is guaranteed structurally by a coverage conformance test that enumerates every write action and asserts each, invoked under the flag, mutates nothing — not by a runtime gate. A future write handler that omits its branch fails the test.
 - **Validation runs faithfully.** Dry-run is "validate-without-mutate." For `template:register`, this includes firing the validation protocol's checks against advertising services (see `concept:validation`) — those are side-effect-free reads from the platform's perspective.
-- **Audit row reflects intent.** The middleware emits `auth.access_attempted` with `mode: dry_run` and `executed: false`. The row is the canonical evidence of "the agent attempted this; we didn't apply it."
-- **Auth mutations are NOT dry-runnable.** `auth:create`, `auth:revoke`, `auth:rotate` always execute regardless of the matching grant entry's mode. Rationale: dry-running auth mutations doesn't compose well with the implicit-anonymous predicate (a dry-run create wouldn't change the active-key count, leading to confusing audit trails).
+- **A request resolved to `dry_run` never mutates.** With no carve-outs, this holds by construction; the coverage conformance test is its enforcement.
+- **Audit row reflects intent.** The middleware emits `auth.access_attempted` with `mode: dry_run`. For a write the row carries `executed: false`; for a read, `executed: true`. The row is the canonical evidence of "the request was previewed; we didn't apply it."
 
 ## Synthetic response shape
 
-Each handler picks a verb that describes the intent:
+Each handler picks a verb that describes the intent. The synthetic envelope sets `dry_run` to `true` and carries a single `would_have_<verb>` key (`would_have_created`, `would_have_invalidated`, and so on) whose object echoes the target identifiers the live write would have produced.
 
-```json
-{ "dry_run": true, "would_have_created": { "instance_id": "dry-run-not-persisted", "template_hash": "<actual>", "params": { ... } } }
-```
+For the create case, the envelope's `would_have_created` object holds a placeholder `instance_id` of `dry-run-not-persisted` (no row is created, so there is no real ID), the actual `template_hash`, and the actual `params` the create would have used.
 
-For non-create writes the placeholder ID is replaced with the actual target:
-
-```json
-{ "dry_run": true, "would_have_invalidated": { "instance_id": "<actual>", "node_id": "<actual>" } }
-```
+For non-create writes the placeholder ID is replaced with the actual targets: an invalidate, for example, carries a `would_have_invalidated` object with the actual `instance_id` and `node_id` of the target being invalidated.
 
 Clients (CLI, MCP) check the top-level `dry_run` flag to render the response distinctly from a live invocation.
 
@@ -1219,6 +1219,8 @@ Clients (CLI, MCP) check the top-level `dry_run` flag to render the response dis
 
 - [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth` ("Dry-run mode").
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — instance:kill added to the dry-run-branch enumeration per spec:2026-05-28-quality-of-life-features; the force-terminate write action returns a would_have_terminated envelope under a dry_run grant.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: dry-run becomes a per-request flag (`?dry_run=true`), not a per-grant-entry mode modifier — the grant in `concept:permission` no longer carries a mode. Coverage is uniform across all writes with no auth carve-out; `auth:create` / `auth:revoke` / `auth:rotate` are now previewable (the "auth mutations are NOT dry-runnable" carve-out is removed). Reads honor the flag as a no-op with `executed: true`. The "forced dry-run never mutates" guarantee is enforced structurally by a coverage conformance test enumerating every write action. The graduated-trust / agent-promotion narrative is dropped; purpose is human-in-the-loop preview-before-commit and validate-without-commit.
 
 
 ---
@@ -1299,7 +1301,7 @@ The policy-chain resolver was renamed per `spec:2026-05-12-nomenclature-resoluti
 
 ## What it is
 
-Rimsky's internal append-only audit-log ledger. Each row carries an auto-incrementing id, the originating instance and node, a free-form `kind` text column (no enum constraint), a JSON `payload`, and an `occurred_at` timestamp. Indexed for lookup by node, by instance, and by kind, each ordered newest-first. Written by rimsky's supervisor / scheduler / control-api at observable transitions. Read by the operator-dashboard event-feed endpoint that `cascade-graph` exposes.
+Rimsky's internal append-only audit-log ledger. Each row carries an auto-incrementing id, the originating instance and node, a free-form `kind` text column (no enum constraint), a JSON `payload`, and an `occurred_at` timestamp. Indexed for lookup by node, by instance, and by kind, each ordered newest-first. Written by rimsky's supervisor / scheduler / control-api at observable transitions. Read by the operator-dashboard event-feed endpoint that `cascade-graph` exposes, and — for the `auth.*` subset — by a dedicated audit-read surface gated on the `audit:read` action (see `concept:permission`), which filters those rows by actor, action, target, result, mode, and time.
 
 ## Purpose
 
@@ -1314,6 +1316,7 @@ Owns: the audit-log schema, the CRUD path, the read pattern feeding `cascade-gra
 - The `kind` column is free-form; no enum constraint. Zero-migration to add a new kind; typos produce events no consumer finds.
 - The `payload` is rimsky's own JSON — readable by rimsky for the dashboard and audit consumers. NOT bound by `@blessed-invariant 21` (which governs the named-event ledger).
 - No built-in retention; operator-managed retention is required.
+- **Writes are never *silently* dropped; under a healthy backing store they are durable.** The log is the canonical forensic record. The per-request auth-audit write (`auth.access_attempted`) is **synchronous in the request path** — written inline after the handler returns (so `response_status` and `duration_ms` are known) and before the gate returns, not through a best-effort queue that drops under load. Under a healthy store every intended row is persisted before the request completes. The honest limit of the current implementation: the synchronous write is bounded by a short deadline, and a write that fails or exceeds it is **surfaced (logged at error), not retried or buffered** — so a backing-store outage or stall can lose that row (with an operator-visible error, never a silent discard), and a degraded store spends request-path latency rather than dropping. So the guarantee is *never silently dropped* and *durable under normal operation* — not *always persisted under all conditions*. Operational event rows (node transitions, lock/work events) are written synchronously inside the supervisor's transactions, so they are durable as part of the mutation that produced them.
 
 ## Aliases and historical names
 
@@ -1323,19 +1326,21 @@ Post-2026-05-15: the audit log remains the record for **events** (executor emiss
 
 ## Auth event kinds (added 2026-05-15)
 
-The control-plane MCP and auth spec (`spec:2026-05-15-control-plane-mcp-and-auth`) adds five `auth.*` event kinds. They share the same `(kind, payload)` shape as every other audit-log row — no schema change.
+The control-plane MCP and auth spec (`spec:2026-05-15-control-plane-mcp-and-auth`) adds five `auth.*` event kinds. They share the same `(kind, payload)` shape as every other audit-log row — no schema change. All five are readable through the `audit:read`-gated audit surface, which filters on the `auth.*` payload fields (actor `key_id` / `key_name`, `action`, target path, `response_status`, `mode`) plus the time range.
 
 - `auth.access_attempted` — emitted by the control-plane auth middleware's per-action gate after every authenticated request runs. Payload includes `key_id`, `key_name`, `identity_kind`, `protocol_skin` (`http` | `mcp`), `action`, `request_path`, `request_method`, `request_params` (verbatim), `response_status`, `mode` (`execute` | `dry_run`), `executed` (bool), `duration_ms`, `client_ip`, `user_agent`.
 - `auth.access_denied` — emitted on 401 / 403. Same shape plus a `denial_reason` enum: `no_token | invalid_token | expired_token | revoked_token | permission_denied`. For pre-action-resolution denials (the first four) `action`, `request_params`, `mode` are null; for `permission_denied` they are populated.
 - `auth.key_created` — emitted by the control-plane key-creation handler. Payload: `key_id`, `key_name`, `permissions`, `created_by_key_id`, `expires_at`.
 - `auth.key_revoked` — emitted by the control-plane key-revocation handler and the runtime rotation-grace sweep. Payload: `key_id`, `key_name`, `revoked_by_key_id`, `reason` (`manual | rotation_grace | expired`).
-- `auth.key_rotated` — emitted by the control-plane key-rotation handler. Payload: `old_key_id`, `new_key_id`, `name`, `revoke_at`.
+- `auth.key_rotated` — emitted by the control-plane key-rotation handler. Payload: `key_id` and `key_name` (the new / surviving key, so the actor filter surfaces a rotation like every other auth row), `old_key_id`, `new_key_id`, `name`, `revoke_at`.
 
 ## Notes
 
 - [2026-05-15] `auth.*` event kinds added by `spec:2026-05-15-control-plane-mcp-and-auth`.
 - 2026-05-23 — Per `spec:2026-05-23-signal-taxonomy-and-policy-decoupling`: the node-run-transition subset of the audit log's `kind` values now carries canonical signal type-paths (e.g., `terminal/error/http/timeout`) rather than free-form strings; for those rows `payload` carries the signal payload per its type's schema (`concept:signal`). Other audit kinds (`state_transition`, `lock_*`, `work_*`, `auth.*`, etc.) continue to use free-form text — see `tension:events-kind-no-enum` partial-coverage note.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: the per-request auth-audit write (`auth.access_attempted`) is now **durable and synchronous** in the request path, replacing the prior best-effort, droppable-under-load async dispatcher (added the durability invariant above). Adds an `audit:read`-gated read surface over the `auth.*` rows, filterable by actor / action / target / result / mode / time — recorded as a reader of those rows in "What it is" and the auth-event-kinds section.
+- 2026-05-30 — Tightened the durability invariant to match the implementation. The 2026-05-29 wording (per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`) claimed the auth-audit row is "always persisted, never discarded under load." In fact the synchronous write is bounded by a short deadline and, on failure or timeout, logs at error and drops the row rather than retrying or buffering — so the honest guarantee is *never silently dropped; durable under a healthy store; a store outage or stall costs request latency and can lose the row with an operator-visible error*. A durable local-spool write path (local append + background batched ship to the backing store) is sketched as the intended way to close the gap to *always persisted*; it is pre-spec and not yet adopted. Also recorded that `auth.key_rotated` now carries uniform `key_id` / `key_name` (the new key) so the `audit:read` actor filter surfaces rotations like every other auth row.
 
 ## Open within this concept
 
@@ -1406,7 +1411,7 @@ Owns: the per-node fan-out declaration, the partition-split mechanics at parent-
 
 - Fan-out requires the named claim be declared on the same node (via `claims:` or `holds:`). Missing claim → reject.
 - The claim's producer MUST advertise split-scope support in its capabilities. Otherwise template registration rejects.
-- The `partition_request` field is opaque bytes passed verbatim to the partition-split operation; rimsky does not parse it. Typically a substitution path (`{{trigger.message.payload.partition_request_override | default: <template-default>}}`) so the same node accepts normal invocations and backfill messages uniformly.
+- The `partition_request` field is opaque to rimsky's split logic — rimsky does not parse its meaning — but it is **resolved through substitution at acquisition**, not passed verbatim. Before the partition-split operation runs, fan-out acquisition runs the node's `partition_request` through the substitution engine with the triggering message's payload in scope, then hands the substituted bytes to the split. This is what lets the same node accept normal invocations and backfill messages uniformly: the field is typically authored as a substitution directive (`{{trigger.message.payload.partition_request_override | <template-default>}}`) that binds the triggering message's override when one is present and falls back to the template default otherwise. The fallback grammar is `<directive> | <literal>` (the literal being `null` / `true` / `false` / a number / a quoted string) — there is no `default:` keyword.
 - Sub-claim atomicity per `@blessed-invariant 10`: the rimsky-side acquisition transaction inserts the parent claim-handle row AND all sub-claim handle rows AND records all producer-returned addresses, or none of these.
 - For data-processing-capable producers, the candidate-begin step fires at sub-claim acquisition (in the same transaction); the producer-candidate handle persists on the sub-claim row and threads into the leaf executor's dispatched request.
 - Each child runs in its own fan-out partition RunScope (per `concept:run-scope`): `parent_run_id = fan-out parent's run id`, `parent_run_scope_id = fan-out parent's RunScope id`, `partition_key = <partition_key>`. The child's leaf run lives in this RunScope.
@@ -1417,6 +1422,7 @@ Introduced by `spec:2026-05-15-data-platform-extensions`. The "partition_request
 
 2026-05-22 — Reshape per `spec:2026-05-22-fan-out-safety-scope-first`: fan-out children now live in fan-out partition RunScopes (`concept:run-scope`) rather than carrying an inline parent-run id + child key on the run row. The parent-child relationship moves onto the RunScope record via parent-run id + partition key; the child's run row carries only its run-scope id.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: clarified that the `partition_request` is **resolved through substitution at acquisition** (binding the triggering message's payload), not passed verbatim to the split — completing the half-built backfill-override path (see `concept:backfill`, `concept:message`). Also fixed a pre-existing doc bug: the illustrative directive used `| default: <x>`, which is not the engine's grammar — the fallback is `<directive> | <literal>` with no `default:` keyword.
 
 
 ---
@@ -1427,7 +1433,7 @@ Introduced by `spec:2026-05-15-data-platform-extensions`. The "partition_request
 
 A frame is one cascade resolution. It is a persisted frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state (`queued`, `running`, `completed`, or `failed`). Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins when a node receives an invalidate (in-frame cascade walk) OR when pending boundary-crossing messages get delivered (see "Message delivery" below). It ends when no run row for the instance remains `stale` or `running` (post-2026-05-15 the predicate re-roots onto run rows since state lives on runs now).
 
-**Message delivery as a frame-creation site** (post-2026-05-15). Boundary-crossing messages (operator-API enqueues, publisher-origin messages with `sender_kind: "publisher"`) persist in the message ledger on receipt. At each frame boundary, undelivered messages for the instance are bundled per the per-instance `frame_delivery_mode` (`coalesce` default, `serial_queue` opt-in): rimsky walks subscriptions matching the envelope fields and stale-marks matching receivers within the new frame. The message's delivered-at and frame reference are populated. See `concept:message`.
+**Message delivery as a frame-creation site** (post-2026-05-15). Boundary-crossing messages (operator-API enqueues, publisher-origin messages with `sender_kind: "publisher"`) persist in the message ledger on receipt. At each frame boundary, undelivered messages for the instance are bundled per the per-instance `frame_delivery_mode` (`serial_queue` default, `coalesce` opt-in — owned by `concept:message`; distinct from this concept's own `frame_resolution_mode`): rimsky walks subscriptions matching the envelope fields and stale-marks matching receivers within the new frame. The message's delivered-at and frame reference are populated. See `concept:message`.
 
 **Template-author surface.** The frame-resolution-mode is a required top-level string field on the template, with two valid values (`coalesce` / `serial_queue`); the template validator rejects empty or unknown values at registration. A companion frame-timeout field is optional with default 600000 ms (10 min) and a hard floor of 60000 ms (60 s), enforced by the same validator.
 
@@ -1489,6 +1495,7 @@ Owns: the per-instance concurrency rule (≤1 running frame), the coalesce/seria
 - [2026-05-18] Folded content from a former public-docs frame page (now retired) — held-frames exposition + serial-queue-vs-coalesce illustrative framing added to Purpose; stack-frame disambiguation + frame-ID / cross-instance pitfalls added as a Common-pitfalls subsection.
 - 2026-05-22 — Clarified orthogonality with `concept:run-scope` per `spec:2026-05-22-fan-out-safety-scope-first`. Frames and RunScopes are orthogonal: a single cascade frame can span multiple RunScopes (cascade propagation across sub-graph entry-success or fan-out parent settlement); a single RunScope can host multiple frames (the same graph firing across multiple cascade resolutions).
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: corrected the cross-reference parenthetical that named `coalesce` as the `frame_delivery_mode` default — the delivery default flips to `serial_queue` (owned by `concept:message`). This concept's own `frame_resolution_mode` knob is unchanged.
 
 
 ---
@@ -1677,6 +1684,7 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 - Candidate selection by the supervisor skips paused instances (the candidate query filters out paused rows).
 - `service_bindings` is opaque JSON, set at instance creation and consumed by the `concept:host-agent-proxy` at dispatch time to resolve a late-bound service name to a dev-machine binary.
 - `created_by_api_key_id` is the api-key whose authenticated request created the instance (nullable for instances created under `concept:anonymous-mode`); it is the routing key the host-agent-proxy uses to find the owner's connected `concept:host-agent`.
+- An instance is terminal exactly when its terminal timestamp is set. The force-terminate control action is the production mechanism that sets it, abandoning any in-flight node-runs (transitioning them to failed) and closing the instance's main `concept:run-scope` in the same teardown, so a terminated instance never retains an open main run-scope. Terminal is not removal: the instance key is freed for reuse only by the subsequent row delete, which is permitted only once the instance is terminal.
 
 ## Aliases and historical names
 
@@ -1696,6 +1704,8 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - [2026-05-24] Adds `service_bindings` (opaque late-bound service catalog) and `created_by_api_key_id` (the creating api-key, nullable under `concept:anonymous-mode`) to the instance row, consumed by the `concept:host-agent-proxy` for late-bound dispatch resolution and agent routing. Per spec 2026-05-24-host-agent-and-proxy-design.
+- 2026-05-28 — termination invariant added per spec:2026-05-28-quality-of-life-features; force-terminate is the first production path to mark an instance terminal, distinct from the row-delete reaper that frees the instance key.
+- 2026-05-28 — force-terminate teardown refined per spec:2026-05-28-quality-of-life-features: the action closes the instance's main concept:run-scope in the same teardown that marks it terminal and abandons in-flight node-runs, so a terminated instance never retains an open main run-scope. This does not depend on the background terminator sweep, which only reaches terminated instances that still carry concept:lifecycle-subscriber bookkeeping.
 
 
 ---
@@ -1799,25 +1809,16 @@ Owns: the per-kind record shape, the projection-write path. Does NOT own: the pr
 
 ## Leaf-run record shape
 
-```
-{
-  record_kind: "leaf_run",
-  instance_id, frame_id, observed_at, record: {
-    run_id, node_id, frame_id, child_key,
-    node_alias, parent_run_id,
-    frame_trigger_kind, trigger_message_id,
-    substitution_refs: [
-      {source_kind, source_node_alias, source_version_or_id}
-    ],
-    held_claims: [{claim_handle_id, role, producer_name, claim_scope_data_hash}],
-    executor_name, executor_version,
-    template_hash, template_node_alias,
-    params_snapshot_hash, userdata_hash, claim_scope_data_hash,
-    state, last_outcome, changed, terminal_kind,
-    error_class, extra
-  }
-}
-```
+A `leaf_run` record has `record_kind` set to `leaf_run` and carries the top-level envelope fields `instance_id`, `frame_id`, and `observed_at`, plus a nested `record` object with the following fields:
+
+- Identity and tree position: `run_id`, `node_id`, `frame_id`, `child_key`, `node_alias`, `parent_run_id`.
+- Frame trigger: `frame_trigger_kind`, `trigger_message_id`.
+- `substitution_refs` — a list of entries, each an object of `source_kind`, `source_node_alias`, and `source_version_or_id` (see "Substitution-ref entries" below).
+- `held_claims` — a list of entries, each an object of `claim_handle_id`, `role`, `producer_name`, and `claim_scope_data_hash`.
+- Executor metadata: `executor_name`, `executor_version`.
+- Template metadata: `template_hash`, `template_node_alias`.
+- Input hashes: `params_snapshot_hash`, `userdata_hash`, `claim_scope_data_hash`.
+- Outcome: `state`, `last_outcome`, `changed`, `terminal_kind`, `error_class`, `extra`.
 
 ### Substitution-ref entries
 
@@ -1868,23 +1869,16 @@ Downstream consumers pair the two records by `run_id` and discriminate on `termi
 
 ## Claim-terminal record shape
 
-```
-{
-  record_kind: "claim_terminal",
-  outcome: "committed" | "abandoned" | "force_cancelled",
-  instance_id, frame_id, observed_at, record: {
-    claim_handle_id, run_id, node_id, frame_id,
-    parent_claim_handle_id, parent_run_id,
-    sub_claim_handle_ids: [...],
-    producer_name, claim_scope_data_hash, version_id,
-    outcome, cause,                       # "natural" | "sibling_cancel" | "descendant_cancel"
-    committed_at,
-    producer_metadata
-  }
-}
-```
+A `claim_terminal` record has `record_kind` set to `claim_terminal` and a top-level `outcome` discriminator whose value is one of `committed`, `abandoned`, or `force_cancelled`. It carries the top-level envelope fields `instance_id`, `frame_id`, and `observed_at`, plus a nested `record` object with the following fields:
 
-The per-record `outcome` discriminator mirrors the JSON `outcome` field so analytical queries can filter without JSON extraction. The three-value discriminator (`committed` / `abandoned` / `force_cancelled`) distinguishes the per-terminal disposition; the `cause` field further discriminates Abandon provenance — `natural` (give_up / error policy), `sibling_cancel` (sibling-cancel walker), `descendant_cancel` (parent-Abandon recursive descent).
+- Identity and tree position: `claim_handle_id`, `run_id`, `node_id`, `frame_id`, `parent_claim_handle_id`, `parent_run_id`.
+- `sub_claim_handle_ids` — a list of sub-claim-handle ids (for fan-out parents).
+- Producer and data: `producer_name`, `claim_scope_data_hash`, `version_id`.
+- Disposition: `outcome`, and `cause` whose value is one of `natural`, `sibling_cancel`, or `descendant_cancel`.
+- `committed_at`.
+- `producer_metadata`.
+
+The per-record `outcome` discriminator mirrors the top-level `outcome` field so analytical queries can filter without JSON extraction. The three-value discriminator (`committed` / `abandoned` / `force_cancelled`) distinguishes the per-terminal disposition; the `cause` field further discriminates Abandon provenance — `natural` (give_up / error policy), `sibling_cancel` (sibling-cancel walker), `descendant_cancel` (parent-Abandon recursive descent).
 
 ## Notes
 
@@ -1948,7 +1942,9 @@ Introduced by `spec:2026-05-15-data-platform-extensions-design`. The "materializ
 
 ## Definition
 
-A boundary-crossing dispatch unit. Pushed envelope matched via subscription. Persisted in a message ledger on receipt; delivered to subscribers at frame boundary per the per-instance `frame_delivery_mode` (`coalesce` default; `serial_queue` opt-in).
+A boundary-crossing dispatch unit. Pushed envelope matched via subscription. Persisted in a message ledger on receipt; delivered to subscribers at frame boundary per the per-instance `FrameDeliveryMode` (`serial_queue` default; `coalesce` opt-in).
+
+`FrameDeliveryMode` (the per-instance message-**delivery** knob, persisted on the instance) is distinct from `FrameResolutionMode` (the template-driven frame-**aggregation** knob owned by `concept:frame`). They share the `serial_queue` / `coalesce` value names but govern different things; this concept owns only the delivery knob.
 
 Envelope shape:
 
@@ -1971,13 +1967,13 @@ The idempotency feature is universal — operator retries, publisher emissions, 
 
 ## Boundaries
 
-Owns: the message envelope shape, the message ledger, the delivery semantics (coalesce vs serial_queue), the subscription-walk at frame boundary, the dead-letter audit, the universal dedup ledger. Does NOT own: cascade walks (in-frame; not messages — see `concept:cascade`), event emissions (executor-internal; see `concept:named-event`), the frame creation mechanics (see `concept:frame`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:invalidate` (one `kind` of message in V1), `concept:backfill`.
+Owns: the message envelope shape, the message ledger, the per-instance `FrameDeliveryMode` and its delivery semantics (`serial_queue` default vs `coalesce` opt-in), the subscription-walk at frame boundary, the dead-letter audit, the universal dedup ledger. Does NOT own: cascade walks (in-frame; not messages — see `concept:cascade`), event emissions (executor-internal; see `concept:named-event`), the frame creation mechanics and the template-driven `FrameResolutionMode` (frame aggregation — see `concept:frame`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:invalidate` (one `kind` of message in V1), `concept:backfill`.
 
 ## Invariants
 
 - Two emit sites for V1: operator API (the message-emit endpoint with `sender_kind: "operator"`) and publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token). Cascade walks within a frame are NOT messages — they are direct stale-marks inside the frame.
 - Delivery at frame boundary: pending messages match against the target instance's subscriptions (kind, sender, sender_kind, target); matched subscribers' nodes are stale-marked in the new frame; the message's `delivered_at` and `frame_id` populate. Multiple matching subscribers fire in the same frame.
-- Per-instance `frame_delivery_mode`: `coalesce` (default) delivers all pending messages into one frame; `serial_queue` delivers the oldest one only and leaves the rest pending until the next frame.
+- Per-instance `FrameDeliveryMode`: `serial_queue` (**default**) delivers the oldest one message per frame and leaves the rest pending until the next frame — so each message gets its own frame, processed in received-order, which is unambiguous and the intuitive default. `coalesce` (opt-in) delivers pending messages in strict received-order, coalescing until a message would resolve a node's substitution to a **conflicting** (different) value, then breaks into the next frame; same-value bindings are idempotent and coalesce freely. Only a genuine value-disagreement breaks the frame.
 - If no matching subscriber, message dead-lettered (audited in the message ledger with `delivered_at` set, no firings recorded). Visible via the operator message-tail surface.
 - Payload is inert per `@blessed-invariant 24`. Read only at the substitution leaf and the persistence-layer fetch.
 - Publisher requests are capability-checked: rimsky validates that the publisher-subscription is a live, active binding for the target instance before insert; mismatch returns a forbidden response. The request's `sender` field is ignored — rimsky derives `sender` from the publisher-subscription's publisher name.
@@ -1988,6 +1984,7 @@ Introduced by `spec:2026-05-15-data-platform-extensions-design`. The 2026-05-17 
 
 - 2026-05-23 — Per `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`: under `concept:signal`'s field-naming convention, the message envelope's `payload` field is exposed to CEL subscription `when:` predicates as `payload.message_payload` (rather than `payload.payload`) to avoid colliding with the signal envelope's outer `payload` field. The substitution surface (`{{trigger.message.payload.X}}`) is NOT renamed — substitution does not have the envelope-collision problem since it goes through the explicit `trigger.message.` namespace prefix. This deliberate asymmetry keeps substitution backward-compatible and confines the rename to where it's structurally required.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`, two changes to `FrameDeliveryMode` (per-instance message delivery — explicitly **not** `FrameResolutionMode`, the template-driven frame-aggregation knob owned by `concept:frame`, which is unchanged): (1) the default flips from `coalesce` to **`serial_queue`** (one message per frame; the intuitive default — each backfill is its own frame/rerun/override; coalesce becomes the opt-in mode); (2) `coalesce` becomes **conflict-aware** — it delivers in received-order until a message would resolve a node's substitution to a conflicting (different) value, then breaks the frame, instead of coalescing all pending messages and colliding distinct overrides. Updated the Definition, Boundaries, and Invariants spots that previously asserted coalesce-default / coalesce-delivers-all. This is what makes backfill partition-request overrides land unambiguously (see `concept:backfill`, `concept:fan-out`).
 
 
 ---
@@ -1996,15 +1993,15 @@ Introduced by `spec:2026-05-15-data-platform-extensions-design`. The 2026-05-17 
 
 ## What it is
 
-The Go workspace ties four modules into one build. The root module itself has a four-layer split (graph + runtime + control + cmd) under the 2026-05-13 four-layer restructure (post-2026-05-12 nomenclature resolution):
+The Go workspace ties four modules into one build. The repo root holds four idiomatic top-level **code** directories: binaries (the cmd group), shippable library code (the lib group), out-of-tree tests plus their machinery (the test group), and dev tooling (the tools group). Non-code top-level entries — image build inputs and per-tag release notes — coexist alongside the four code groups for artifact-storage purposes; they are not part of the four-way grouping the concept owns. Library code under the lib group keeps the four-layer split (graph + runtime + control, consumed by the cmd binaries) established by the 2026-05-13 four-layer restructure:
 
-- **Protocols module** — the service-protocol interfaces and protobuf bindings, the hand-written contract ergonomics, the claim-producer action vocabulary, the implementer-facing server-side and publisher-side scaffolding, and the conformance library. It is the single public Go module a service implementer imports. Dependency budget: stdlib plus the gRPC, protobuf, UUID, and YAML libraries only — no database driver, no test infrastructure.
-- **Foundation module** — primitives only. Cascade engine, claim/lock primitives, persistence drivers, shared infrastructure types (clocks, loggers, ID generation, JSON merge), and the state-machine enums (node-state, last-outcome, illegal-transition error). Depends on the protocols module plus a Postgres driver, a UUID library, and a pure-Go SQLite driver. The foundation module is self-contained — it declares no replace directive against the root module.
-- **Postgres-test-helper module** — an opt-in, test-only module that carries the Postgres testcontainer helper and its testcontainers + Postgres-driver dependencies alone, so the contract module and every consumer that does not want a Postgres test container stay free of those dependencies.
-- **Root module** — graph layer + runtime layer + control layer + cmd binaries. Pulls heavier libraries (JSON-schema validation, cron parsing, JCS canonicalization, testcontainers). A migrations-applying Postgres test fixture lives in the root module; the plain-Postgres fixture now lives in the Postgres-test-helper module.
-  - **graph layer** — cascade model: templates, instances, frames, attributes, quality rules, scheduler, scenario harness. Imports foundation + protocols.
+- **Protocols module** (under the lib group) — the service-protocol interfaces and protobuf bindings, the hand-written contract ergonomics, the claim-producer action vocabulary, the implementer-facing server-side and publisher-side scaffolding, and the conformance library. It is the single public Go module a service implementer imports. Dependency budget: stdlib plus the gRPC, protobuf, UUID, and YAML libraries only — no database driver, no test infrastructure.
+- **Foundation module** (under the lib group) — primitives only. Cascade engine, claim/lock primitives, persistence drivers, shared infrastructure types (clocks, loggers, ID generation, JSON merge), and the state-machine enums (node-state, last-outcome, illegal-transition error). Depends on the protocols module plus a Postgres driver, a UUID library, and a pure-Go SQLite driver. The foundation module is self-contained — it declares no replace directive against the root module.
+- **Services module** (under the lib group) — the bundled consumption-side service implementations rimsky ships as images: the claim-producer stores, the sensors, the lifecycle subscribers, and the executors. Depends only on the protocols module (and carries its own heavier integration-test dependency set, including testcontainers); it is never imported back into the layered packages. Its isolation from the rimsky-internal layers is enforced twice: by the module graph (it requires only the protocols module) and, as defense-in-depth, by the consumption-side-isolation lint rule.
+- **Root module** — the graph, runtime, and control layers (under the lib group) plus the cmd binaries and the dev tooling. Pulls heavier libraries (JSON-schema validation, cron parsing, JCS canonicalization, testcontainers). The test-support scaffolding belongs to the root module too: a migrations-applying Postgres test fixture, a plain-Postgres testcontainer helper (formerly its own opt-in module, demoted to a plain test-support package in the 2026-05-27 reorg), the stub claim-producer + stub executor test doubles, and the end-to-end scenario harness all live under the test group.
+  - **graph layer** — cascade model: templates, instances, frames, attributes, scheduler. Imports foundation + protocols. (The scenario harness, formerly filed here, now lives under the test group.)
   - **runtime layer** — bridge layer: supervisor runner, conductor, sweeps, orphan reapers, auto-terminal, terminal-decision engine, callback server, the peer-client layer (gRPC clients to claim-producer / lifecycle-subscriber / publisher / validation / data-processing service impls — renamed from "remote" in 2026-05-24), and the executor gRPC client pool. Imports foundation + graph + protocols.
-  - **control layer** — operator surfaces: the control API, CLI, observability, and config loading. Imports runtime + graph + foundation + protocols. The operator MCP shim is part of the root module, NOT a separate Go module (corrects the pre-2026-05-24 concept-doc claim of a four-module workspace including a separate "MCP-server module" — that module never existed; the four modules in the workspace post-2026-05-24 are protocols, foundation, the Postgres-test-helper module, and root).
+  - **control layer** — operator surfaces: the control API, observability, and config loading. Imports runtime + graph + foundation + protocols. The CLI library, formerly filed under the control layer, now lives alongside the rimsky binary in the cmd group. The operator MCP shim is part of the root module, NOT a separate Go module.
 
 Layer ordering: foundation → graph → runtime → control. The control layer reads everything below it; the graph layer never reads the runtime or control layers (one-way, lint-enforced by the graph-purity rule); the runtime layer never reads the control layer (runtime-purity); the foundation layer never reads the graph, runtime, or control layers (foundation-purity). The protocols module imports only stdlib plus the gRPC, protobuf, UUID, and YAML libraries (enforced by the protocols-purity rule); it is the public contract surface and never consumes rimsky-internal layers.
 
@@ -2016,20 +2013,20 @@ The previously-documented foundation → graph back-import (the persistence laye
 
 ## Purpose
 
-Layered import-budget discipline. An external implementer of the claim-producer protocol imports only the protocols module. An implementer who wants the paved-path server scaffolding, publisher helpers, or the conformance library imports the same protocols module — for Go there is no separate SDK module. The root module pulls heavier libraries that implementers never see transitively. The four-layer split inside the root module isolates the bridge concerns (supervisor + sweeps + peer clients) in the runtime layer so the cascade-model code in the graph layer stays a clean dependency target.
+Layered import-budget discipline. An external implementer of the claim-producer protocol imports only the protocols module. An implementer who wants the paved-path server scaffolding, publisher helpers, or the conformance library imports the same protocols module — for Go there is no separate SDK module. The root module pulls heavier libraries that implementers never see transitively. The four-layer split inside the root module's library code isolates the bridge concerns (supervisor + sweeps + peer clients) in the runtime layer so the cascade-model code in the graph layer stays a clean dependency target. The root's top-level directory grouping — binaries, library code, out-of-tree tests + their machinery, and dev tooling — keeps the shippable surface (library code) cleanly separable from the binaries, the test scaffolding, and the dev tooling.
 
 ## Boundaries
 
-Owns: the per-module manifests, the workspace definition, the layer-purity lint rules, the four-layer ordering inside the root module, and the four-module workspace. The protocols module owns the implementer-facing surface; it does NOT own the calling-side wire code (rimsky-internal, stays in the runtime peer layer). Does NOT own: package-internal layout (that's per-feature), proto wire content (owned by the protocols module). Adjacent: `persistence-database`, `claim-producer`, `executor`, `lifecycle-subscriber`.
+Owns: the per-module manifests, the workspace definition, the layer-purity lint rules, the four-layer ordering inside the root module's library code, the four-way top-level code grouping (binaries / library code / out-of-tree tests + machinery / dev tooling), the four-module workspace (protocols, foundation, services, root), and the bundled-services module home under the lib group. The protocols module owns the implementer-facing surface; it does NOT own the calling-side wire code (rimsky-internal, stays in the runtime peer layer). Does NOT own: package-internal layout (that's per-feature), proto wire content (owned by the protocols module), artifact-storage top-level entries (image build inputs, per-tag release notes; they exist alongside the four code groups but are out of scope for the concept's invariants). Adjacent: `persistence-database`, `claim-producer`, `executor`, `lifecycle-subscriber`.
 
 ## Invariants
 
-- The pgx-isolation lint rule denies the Postgres driver outside an allow-list (which includes the Postgres-test-helper module so its testcontainer helper can use it).
+- The pgx-isolation lint rule denies the Postgres driver outside an allow-list (which includes the test-support Postgres testcontainer helper and the migrations-applying test fixture so they can use it).
 - The foundation-internal-isolation rule denies imports of the foundation module's internal packages from outside the foundation module.
 - The protocols-purity rule denies the protocols module from importing any rimsky-internal layer (foundation, internal, graph, runtime, control, cmd) or test infrastructure. The protocols module is the public contract surface; its dependency budget is stdlib plus the gRPC, protobuf, UUID, and YAML libraries.
-- The consumption-side-isolation rule denies the bundled stores, sensors, subscribers, and executors from importing any rimsky-internal layer. Introduced during P1 of the 2026-05-24 reorganization as the defensive guard that lets consumption-side bundled deliverables move out cleanly; stays in place post-move as a re-bundling guard. The in-repo stub claim-producer and stub executor (test-infrastructure carve-outs that stayed in rimsky) are exempt, so they may consume rimsky-internal helpers.
+- The consumption-side-isolation rule denies the bundled stores, sensors, subscribers, and executors from importing any rimsky-internal layer. The bundled services now live in-tree as the services module under the lib group; the rule actively denies them from importing any rimsky-internal layer (foundation, internal, graph, runtime, control, cmd), and the module graph reinforces the same boundary — the services module requires only the protocols module, so the rimsky-internal layers are not even reachable through the module dependency graph.
 - The foundation-purity rule denies the foundation layer from importing the graph, runtime, control, or cmd layers. Applies unconditionally — there are no per-site exemptions.
-- The graph-purity rule denies the graph layer from importing the runtime, control, or cmd layers. Per-site exemption for the scheduler → runtime. The scenario harness is fully exempt (boots the full stack).
+- The graph-purity rule denies the graph layer from importing the runtime, control, or cmd layers. Per-site exemption for the scheduler → runtime. (The scenario harness, which boots the full stack, moved out of the graph layer into the test-support group in the 2026-05-27 reorg, so it is no longer subject to graph-purity at all.)
 - The runtime-purity rule denies the runtime layer from importing control or cmd.
 - (Retired: the graph-control-isolation rule; subsumed by graph-purity.)
 - Logging is stdlib structured logging only; HTTP routing, the Postgres driver, the SQLite driver (pure-Go, no CGO), and cron parsing are each pinned to a single library. Resist adding heavier alternatives.
@@ -2041,7 +2038,7 @@ Pre-layer-crystallization (`spec:2026-05-04-layer-crystallization-design`), the 
 
 ## Licensing boundary
 
-A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license check with longest-prefix-match-wins. The Apache surface covers protocols, foundation, graph (excluding the quality-rule evaluator), runtime, control, and the CLI binaries; the AGPL surface covers the quality-rule evaluator and any directories explicitly mapped under AGPL. Repo-organization concern; not a runtime noun. The check is build-step enforcement, not runtime.
+A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license check with longest-prefix-match-wins. The Apache surface is the protocols module — the wire contract a consumer implements or links against — plus a documentation carve-out; the protocols module imports nothing internal, so the Apache code forms a single closed island with no path to AGPL source. Everything else Rimsky ships (the foundation, graph, runtime, and control layers, the binaries, the dev tooling, and the test-support scaffolding) is AGPL-3.0-or-later. The Postgres testcontainer helper, formerly an Apache-licensed standalone module, was reclassified AGPL when it was demoted to test-support in the 2026-05-27 reorg — it is no longer a public module. The bundled services in the services module are AGPL like the rest of what rimsky ships, with one carve-out — the TypeScript executor reference implementation is independently Apache-licensed and sits outside the Go import graph, so the single Go Apache island remains the protocols module. Repo-organization concern; not a runtime noun. The check is build-step enforcement, not runtime.
 
 (Adjacent: previously documented as a standalone concept; folded here under `2026-05-11-design-log-convergence`.)
 
@@ -2058,6 +2055,9 @@ A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license
 - 2026-05-24: SDK birth + bundled-deliverables migration. P2–P6 of `spec:2026-05-24-repo-reorganization-design`: a new SDK Go module (server scaffolding, publisher helpers, conformance library, testcontainer helpers, ops glue); rimsky's calling-side "remote" client layer renamed to "peer"; conformance CLI binaries became thin wrappers over the SDK's conformance library; production-side bundled stores, sensors, the OpenLineage subscriber, and production-side executors moved to the consumption side, outside the platform. Test-infrastructure carve-outs (stub stores/executors, store testfixtures) stayed in rimsky. The boundary the reorganization drew: rimsky owns the platform and its test doubles; consumption-side deliverables (production-side bundled services, public docs and docs-tooling, the atomic-staging example and several of its scenario tests, the demo app, the dashboard) live outside the platform. In-tree scenario canaries were added to replace the moved-out drift signals.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - 2026-05-26 — the SDK module collapsed into the protocols module; the Postgres testcontainer helper was carved into its own opt-in test-helper module; the sdk-purity lint rule became protocols-purity; the claim-producer contract-type aliases were removed from the locks package (canonical home is the claim-producer contract package). The consumption-side-isolation rule gained an exemption for the in-repo stub claim-producer and stub executor (test-infrastructure carve-outs) so they may consume rimsky-internal helpers. Per spec:2026-05-26-collapse-sdk-into-protocols.
+- 2026-05-27 (spec: none — root-folder reorg): collapsed the repo into the four top-level groups (the cmd group, the lib group, the test group, the tools group); the protocols and foundation modules moved under the lib group (their module paths gained a lib-group segment); the Postgres testcontainer helper was demoted from a standalone module to a plain test-support package; the dead ops package was deleted; the migration-runner helper, the stub claim-producer and stub executor test doubles, and the scenario harness were consolidated under the test-support package; the CLI library was relocated alongside the rimsky binary's package in the cmd group; the conformance binaries were folded into "rimsky conformance <protocol>" subcommands; the license-check moved into the tools group.
+- 2026-05-27 (spec: none — services reintegration): the bundled consumption-side services (stores, sensors, subscribers, executors), carved out on 2026-05-24, rejoined the workspace as the services module under the lib group. They build against the in-tree protocols module via the workspace; the published-module pin and external image references previously used to consume them were removed. Consumption-side isolation is now enforced both by the module graph and the lint rule. The production Go services were relicensed from Apache to AGPL on reintegration (an internal engineering effort, not a permissive deliverable; downstream consumers seeking permissive code implement against the protocols module themselves); the TypeScript executor reference implementation stays Apache as a separate deliverable outside the Go import graph; the single Go Apache island remains the protocols module.
+- 2026-05-27 (spec: 2026-05-27-release-skill-design): made the four-way grouping explicit as a code-only invariant. Non-code top-level entries — image build inputs (pre-existing) and per-tag release notes (introduced by this spec) — coexist alongside the four code groups but are out of the concept's scope.
 
 
 ---
@@ -2066,7 +2066,11 @@ A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license
 
 ## What it is
 
-A named event is a non-terminal executor emission carrying a name (a string drawn from the executor's `declared_events` capability) and an inert payload. Persisted to a named-event ledger (with inline/handle spill via the blob backend, see `concept:blob-backend`). Two consumption paths: attribute substitution (`{{nodes.<emitter>.event.<name>.<json_path>}}`) and subscription to the event (see `concept:node-subscription`). Inertness discipline cross-linked at `concept:inertness`.
+A named event is a non-terminal executor emission tagged with a name (a string drawn from the executor's `declared_events` capability) and an inert payload recorded alongside it. Persisted to a named-event ledger (with inline/handle spill via the blob backend, see `concept:blob-backend`). Two consumption paths: attribute substitution (`{{nodes.<emitter>.event.<name>.<json_path>}}`) and subscription to the event (see `concept:node-subscription`). Inertness discipline cross-linked at `concept:inertness`.
+
+A named event is **consumed invalidate-then-pull**, not delivered. Subscribing to an event does not push the payload anywhere: an emission marks the subscribing receiver stale, the receiver is rescheduled, and on its next run it **pulls the latest** persisted emission via substitution. Consequently subscribing fires the receiver **once per frame regardless of how many times the event was emitted** (the wait-set collapses N emissions to one dispatch); the receiver always reads the most-recent emission. Named events **never create a frame** and do **not** fan out per-emission.
+
+**Named events are not a fan-out mechanism.** True per-item (parallel) fan-out — one work unit per partition, processed concurrently — is `concept:fan-out` (claim-producer split-scope). Sequential per-message processing — one message per frame, processed in order — is `serial_queue` message delivery (see `concept:message`). A named event is neither: it is a reactive-recompute trigger that the receiver pulls from, not a per-emission dispatch source.
 
 ## Purpose
 
@@ -2104,6 +2108,7 @@ None live.
 - 2026-05-14: consumption paths updated. Two paths today are substitution + on_event-handler-invalidate; under the new model: substitution (unchanged) + subscription-to-event (`subscribes: [{node: <sender>, type: event/<name>}]`, see `concept:node-subscription`). The former on-event-handler concept is dropped (retired). Per `spec:2026-05-14-subscription-cascade-and-quality-of-life-design`.
 - 2026-05-15: **events are internal-to-rimsky and frame-synchronous; distinct from messages (external, frame-bounded)**. A named event is emitted mid-run by an executor and consumed in the same frame via substitution or subscription; it never crosses an instance boundary and never creates a new frame. A `concept:message` is the boundary-crossing dispatch unit (operator API, publisher-origin message via the message-emit endpoint with `sender_kind: "publisher"`); it enqueues into the message ledger and creates a frame at delivery. The retired `on_event:` map path is fully retired per `tension:_resolved/send-vs-subscribe-asymmetry`; consumption is via `subscribes: [{type: event/<name>, ...}]` only. Templates that reference the retired map path get reject class `on_event_map_retired_use_subscribes` at registration.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: accuracy fix. Stated plainly that a named event is **consumed invalidate-then-pull** — subscribing fires the receiver once per frame regardless of emission count, the receiver pulls the latest emission, and named events never create a frame and do not fan out per-emission. Added that named events are **not** a fan-out mechanism: true per-item parallel fan-out is `concept:fan-out`, sequential per-message processing is `serial_queue` message delivery (see `concept:message`). Softened delivery-implying phrasing. This corrects the misconception that drove a dropped per-emission event-payload-binding design — see `tension:event-vocabulary-implies-delivery`.
 
 
 ---
@@ -2252,6 +2257,7 @@ None at present.
 - 2026-05-20 — Minimalist substitution model under per-run attribute keying. Subscriptions remain push: an upstream transition causes the receiver to fire via the cascade. Attribute reads at dispatch are scoped to this-frame's contributing senders only (no scope-walk, no cross-frame caching). The auto-subscribe rule (substitution refs imply subscriptions) stays as the default and is not opt-out-able. See `concept:attribute` for the per-run keying details and the `hard_dep: true` opt-in for proactive upstream invalidation. See `spec:2026-05-20-attribute-pull-resolution-design`.
 - 2026-05-23 — Reshape per `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`. The subscription entry's structured filter fields (when/outcome/error-class/reason/name/kind/sender/sender-kind/target) retire; replaced by canonical signal `type:` (exact or trailing-`*` prefix from `concept:signal`) + CEL `when:` predicate over payload. Inverse-edge map shape changes from exact-key (sender → flat list) to prefix-keyed (per-sender radix tree). Auto-subscribe rule preserved; substitution refs map to `attribute/<key>/changed` / `event/<name>` patterns. Self-subscription invariant preserved (restated in new vocabulary). The legacy on-event validator carry-forwards to a `terminal/error/<class>` × executor-declared-error-classes range check in the template validator; the proto wiring lands in a later pass of the signal-taxonomy plan, until then silent-skip.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: accuracy fix superseding the 2026-05-20 "subscriptions remain push: an upstream transition causes the receiver to fire via the cascade" framing. The mechanism is **invalidate-then-pull**, not push: an upstream transition does **not** ride the cascade edge carrying a value to the receiver — it **invalidates and reschedules** the receiver, which then **pulls** the latest persisted values at dispatch. Nothing rides the cascade edge; no value is delivered along it. Event-subscription cardinality stated plainly: an event subscription dispatches the receiver **once per frame, reading the latest emission only**, regardless of how many times the upstream emitted in that frame (the wait-set collapses N emissions to one dispatch). See `concept:named-event` and `tension:event-vocabulary-implies-delivery` (the pub-sub vocabulary implies a delivery system the engine does not implement).
 
 
 ---
@@ -2440,9 +2446,9 @@ The state was added under the platform-extensions design (2026-05-08); migration
 
 ## What it is
 
-The per-key authorization grant attached to a `concept:api-key`. Each key carries a JSON array of grant entries; each entry names an action (e.g. `instance:create`, `*:read`) and may carry an optional `mode` modifier (e.g. `dry_run`).
+The per-key authorization grant attached to a `concept:api-key`. Each key carries a JSON array of grant entries; each entry is just an **action string** (e.g. `instance:create`, `*:read`) — the wildcard grammar below. There is no `mode` modifier on a grant entry; whether a request previews or commits is a per-request concern owned by `concept:dry-run`, not a property of the grant.
 
-The grant comprises four pieces: the grant-entry types and their parser, the wildcard matcher and validator, the first-match-wins permission evaluator, and the canonical action registry.
+The grant comprises four pieces: the grant-entry types and their parser, the wildcard matcher and validator, the set-membership permission evaluator, and the canonical action registry.
 
 ## Purpose
 
@@ -2450,7 +2456,7 @@ The auth middleware needs a small, predictable grammar for "what this key is all
 
 ## Boundaries
 
-Owns: the grant entry shape, the wildcard matcher (`*`, `<noun>:*`, `*:<verb>`; colon retained as match boundary), the action registry's canonical V1 list. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), per-action *resource* scoping (V2 territory), role expansion (CLI-side; see `concept:role-template`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (the per-entry mode modifier), `concept:role-template`.
+Owns: the grant entry shape, the wildcard matcher (`*`, `<noun>:*`, `*:<verb>`; colon retained as match boundary), the action registry's canonical V1 list. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), per-action *resource* scoping (V2 territory), role expansion (CLI-side; see `concept:role-template`), preview-vs-commit (a per-request flag; see `concept:dry-run`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (orthogonal — the request flag, not a grant property), `concept:role-template`.
 
 ## Action grammar
 
@@ -2466,10 +2472,8 @@ No infix wildcards; no regex. `auth:*` matches `auth:create` but NOT `authority:
 
 ## Invariants
 
-- **First-match-wins evaluation.** Iteration order over the grant determines which entry's mode applies. Operators wanting a specific mode override (e.g. `{instance:create, mode: dry_run}`) place it before the wildcard fallback.
+- **Set-membership evaluation.** A request is allowed iff any grant entry matches its action; otherwise denied. Iteration order is irrelevant — any match allows, so there is no first-match-wins rule (it was only ever meaningful for resolving a per-entry mode, which no longer exists).
 - **Forward-compatible parser.** Unknown JSON fields on grant entries are preserved (round-tripped through marshal) so future fields aren't lost.
-- **Read actions ignore `mode`.** The dry-run modifier is meaningful only for write actions.
-- **Auth mutations are NOT dry-runnable.** The key create / revoke / rotate handlers always execute regardless of the matching grant entry's mode — dry-runs interact badly with the implicit-anonymous predicate.
 - **Action registry is canonical.** The same registry validates key-creation request bodies (unknown action strings → 400) and resolves MCP tool names → action → handler.
 
 ## Notes
@@ -2477,6 +2481,7 @@ No infix wildcards; no regex. `auth:*` matches `auth:create` but NOT `authority:
 - [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth-design` ("Permissions model").
 - 2026-05-24 — Adds breakpoint:* and instance:pause / instance:resume action verbs to the canonical registry per `spec:2026-05-24-instance-debugger-design`. breakpoint:read covered by *:read wildcard; the four writes (create, resume, delete, instance:pause, instance:resume) require explicit grant via the new debug-operator role-template.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: a grant entry is now just an action string — the optional `mode` modifier is dropped entirely (preview-vs-commit is a per-request flag owned by `concept:dry-run`, not a grant property). The permission evaluator becomes **set-membership** (any matching entry allows); first-match-wins is removed as a concept, and the "Read actions ignore mode" and "Auth mutations are NOT dry-runnable" invariants are removed (both were mode-vocabulary statements). The wildcard grammar is unchanged. Adds `audit:read` to the canonical action registry (read of the `auth.*` audit rows — see `concept:event-log`), granted separately from `event:read` because audit data is sensitive; covered by the `*` (admin) and `*:read` (read-only) wildcards and granted explicitly to the operator role-template.
 
 
 ---
@@ -2772,12 +2777,11 @@ The server has no concept of roles — its only auth primitive is the per-key gr
 
 ## Boundaries
 
-Owns: the bundled JSON files, the CLI expansion logic, the patch operators (`--add`, `--remove`, `--dry-run`). Does NOT own: server-side authorization (that's `concept:permission`). Adjacent: `concept:permission`, `concept:rimsky` (the CLI binary).
+Owns: the bundled JSON files, the CLI expansion logic, the grant patch operators (`--add`, `--remove`). Does NOT own: server-side authorization (that's `concept:permission`), preview-vs-commit (a per-request flag; see `concept:dry-run`). Adjacent: `concept:permission`, `concept:rimsky` (the CLI binary).
 
 ## Invariants
 
 - **CLI-side only.** The server does not know roles exist. `rimsky auth show <name>` may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
-- **Patch operators are CLI-side validated.** `--dry-run=<action>` rejects read actions (`*:read` suffix) and auth-mutation actions (`auth:create`, `auth:revoke`, `auth:rotate`) at CLI time; the server tolerates these for forward-compatibility but the handlers ignore dry-run mode anyway.
 - **Operator-defined roles are local.** No server-side surface for "register a role with the cluster" in V1.
 
 ## Notes
@@ -2785,6 +2789,7 @@ Owns: the bundled JSON files, the CLI expansion logic, the patch operators (`--a
 - [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth-design` ("Bundled role templates (CLI-side)").
 - 2026-05-24 — Adds debug-operator role-template per `spec:2026-05-24-instance-debugger-design`. Bundles *:read, instance:pause, instance:resume, breakpoint:create, breakpoint:resume, breakpoint:delete. High-risk in production; grant explicitly. agent-supervisor unchanged.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: removed the `--dry-run=<action>` grant-patch operator from Boundaries and deleted the invariant that it rejected read/auth-mutation actions because the handlers ignored dry-run mode. Both are now false — per-grant dry-run no longer exists (preview-vs-commit is a per-request flag; see `concept:dry-run`), so there is no `--dry-run` CLI operator, and auth mutations are now previewable via the request flag. The bundled role JSONs were already mode-free, so no entry text changed. The operator role-template now grants `audit:read` explicitly (see `concept:permission`).
 
 
 ---
@@ -2932,14 +2937,7 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 
 ## What it is
 
-A **signal** is the unified emission shape for any transition that affects a node-run. Every signal carries a canonical hierarchical type-path and a structured payload:
-
-```
-Signal {
-  type:    <type-path>   // slash-separated, hierarchical, validator-enforced
-  payload: <object>      // typed per type-path; see "Payload schemas" below
-}
-```
+A **signal** is the unified emission shape for any transition that affects a node-run. Every signal is a type-path plus a typed payload object: a `type` field carrying a canonical hierarchical type-path (slash-separated, hierarchical, validator-enforced) and a `payload` field carrying a structured object (typed per type-path; see "Payload schemas" below).
 
 The signal travels two independent paths once emitted:
 
@@ -2958,23 +2956,13 @@ Five top-level kinds. Type-paths are canonical and validator-enforced.
 
 ### `terminal/*` — dispatch finished, run row settled
 
-```
-terminal/success
-terminal/error/<error_class>          # error_class may itself contain '/'
-terminal/park/snooze
-terminal/park/await_callback
-terminal/infra/<reason>
-```
+The `terminal/*` leaves are `terminal/success`; `terminal/error/<error_class>` (the `error_class` segment may itself contain `/`); `terminal/park/snooze` and `terminal/park/await_callback`; and `terminal/infra/<reason>`.
 
 Emitted exactly once per run, at the moment the run settles. `terminal/park/*` leaves are exactly the park-reason enum (a two-value closed set fixed on the wire executor protocol).
 
 ### `transient/*` — mid-dispatch transitions, dispatch not yet settled
 
-```
-transient/retry/<attempt>/<error_class>
-transient/heartbeat_missed
-transient/await_async
-```
+The `transient/*` leaves are `transient/retry/<attempt>/<error_class>`, `transient/heartbeat_missed`, and `transient/await_async`.
 
 `transient/await_async` is the executor await-async-callback outcome — the node stays in `running` state until the callback's eventual terminal settles it. It is NOT a `terminal/park/*` leaf.
 
@@ -3193,6 +3181,7 @@ The legacy `template_id` term still appears in some prose; `template_hash` is th
 - 2026-05-19 — The template spec gains an optional defaults block carrying template-author userdata baselines (per-executor defaults). The per-node template definition gains an optional tags list for operator-facing metadata (with materialization-time `{{params.<key>}}` substitution support). Both extensions are additive; hash semantics unchanged. Per spec:2026-05-19-multi-instance-template-ergonomics.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - [2026-05-24] Adds the top-level `late_bind_services` field (stored in the canonical spec bytes, so it participates in the content-addressing hash). Names in the list bypass registration-time existence + schema validation; their schemas come from the spawned binary's Capabilities at dispatch. Per spec 2026-05-24-host-agent-and-proxy-design.
+- 2026-05-28 — a validate-only control-api action (template:validate) now runs the full registration validation pipeline (static attribute-schema check + the validation-protocol RPC fan-out) without persisting, per spec:2026-05-28-quality-of-life-features; registration remains the only persisting entry point.
 
 
 
@@ -3265,7 +3254,9 @@ The "auto-terminal" name applies specifically to the held-claim branch of Stage 
 
 ## What it is
 
-The transition reason is the closed enum carried on every node-state transition. It is a closed set of ~18 named values, each a reason value carrying a kind discriminator (handler-complete, handler-error, pure-cascade, infra-reenqueue, acquire-pass, handler-park, handler-resume, park-timeout, etc.). Written by the state-transition apply path that drives the state machine.
+The transition reason is the closed enum carried on every node-state transition. It is a closed set of ~18 named values, each a reason value carrying a kind discriminator (handler-complete, handler-error, pure-cascade, infra-reenqueue, acquire-pass, handler-park, handler-resume, park-timeout, `instance_killed`, etc.). Written by the state-transition apply path that drives the state machine.
+
+`instance_killed` is the forced-instance-teardown reason: it drives a resource-holding node-run (running or parked — the states that hold or await a claim) to failed, and is accepted by the next-state function only from those two states. Non-resource-holding non-terminal states (fresh, stale) are not force-failed — a terminated instance's pending node-runs are left inert — so the next-state function rejects `instance_killed` from them as an illegal transition. It is **state-machine-validation-only** — it is NOT emitted as an audit-event kind. When the force-terminate control path tears an instance down, the teardown's auditable cause is the single administrative `instance_terminated` event-log row, not the per-node reason kind (the per-node state update writes run-row state only, with no audit row). It is distinct from `policy_give_up` (policy-chain-driven) and the operator reset/invalidate reasons.
 
 ## Purpose
 
@@ -3296,6 +3287,7 @@ Adjacent: `concept:signal`, `concept:cascade`, `concept:event-log`.
 - The handler-error reason is a deliberate dead-end sentinel: legal in audit but rejected as a transition reason by the next-state function.
 - Reason values are enumerated as named values, each a reason value carrying a kind discriminator; the form is not a closed type-system enum (a caller could in principle construct a reason value with an arbitrary kind string), but the next-state function rejects any reason whose kind is not in the known per-state switch with the illegal-transition sentinel. The runtime guard, not the type system, enforces the closed set.
 - Reason is written at every state transition; absence from the audit row for non-signal transitions is a defect. Signal-bearing transitions emit their signal type-path as the audit kind instead.
+- `instance_killed` is a state-machine-validation-only reason: the next-state function accepts it from the resource-holding states (running, parked), driving each to failed, and rejects it from the non-resource-holding non-terminal states (fresh, stale) as an illegal transition. It is never written as an audit-event kind. Forced instance teardown records its auditable cause once via the administrative `instance_terminated` event-log row, not per node-run.
 
 ## Aliases and historical names
 
@@ -3305,6 +3297,7 @@ None live. Pre-migration-004 code used a boolean changed flag for the cascade-fi
 
 - 2026-05-23 — Scope narrowed per spec:2026-05-23-signal-taxonomy-and-policy-decoupling. The enum stays for state-machine validation in the next-state function; the audit-write role retires for signal-bearing transitions (which use signal type-paths as the audit-event kind). Non-signal transitions (`dispatch_claimed`, `pure_cascade`, `infra_reenqueue`, `handler_resume`, `park_timeout`, etc.) continue to write the transition reason's kind discriminator as the audit kind — part of the un-taxonomized audit-kind set left open by `tension:events-kind-no-enum`. The last-outcome concept is retired; the relationship table is dropped as the sibling no longer exists.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — instance_killed transition reason added per spec:2026-05-28-quality-of-life-features for forced instance teardown of in-flight node-runs; validation-only, not an audit kind.
 
 
 ---
@@ -3449,7 +3442,7 @@ Pre-`spec:2026-05-12-nomenclature-resolution` Group C, the operator-facing confi
 
 # Implementing a claim producer
 
-This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `protocols/proto/v1/claim_producer.proto`; the mechanically-generated field/message/RPC reference is at [`reference/claim-producer.md`](reference/claim-producer.md). This guide is the practical companion — the "how to implement this, what to watch out for" narrative the generated reference can't express.
+This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `lib/protocols/proto/v1/claim_producer.proto`; the mechanically-generated field/message/RPC reference is at [`reference/claim-producer.md`](reference/claim-producer.md). This guide is the practical companion — the "how to implement this, what to watch out for" narrative the generated reference can't express.
 
 For Go services, the `protocols` module's `claimproducer` package gives you hand-written types over this wire contract (see [`go-packages.md`](go-packages.md)). It's a convenience, not a requirement: you can code straight against the generated wire types in any language.
 
@@ -3536,7 +3529,7 @@ Resume detection is the producer's responsibility. If `Open` arrives with a `cla
 - For `sync`-mode `rw` claims: producer-side no-op (writes already live).
 - For pick-policy claims: apply the configured commit-default action.
 
-Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional fields, both inert to rimsky: `version_id` (set by `DataProcessing`-capable producers; rimsky persists it in `col:rimsky_claim_handles.version_id` and the lineage record) and `producer_metadata` (surfaced verbatim in the fan-out parent's writeback row). Plain producers leave both empty.
+Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional fields, both inert to rimsky: `version_id` (set by `DataProcessing`-capable producers; rimsky persists it in the `rimsky_claim_handles.version_id` column and the lineage record) and `producer_metadata` (surfaced verbatim in the fan-out parent's writeback row). Plain producers leave both empty.
 
 ### `Abandon(AbandonRequest) → AbandonResponse`
 
@@ -3599,13 +3592,19 @@ The two transactions are decoupled. A failure on one side does not roll back the
 
 ## 8. Conformance
 
-The `cmd/rimsky-claim-producer-conformance` binary exercises a producer against the wire-protocol contract. Run it pointing at your producer endpoint to verify the verbs behave correctly. The same checks are exposed as a Go library under `protocols/conformance/claimproducer` so you can invoke them from your own tests.
+The `rimsky conformance claim-producer` subcommand exercises a producer against the wire-protocol contract. Run it pointing at your producer endpoint to verify the verbs behave correctly:
+
+```
+rimsky conformance claim-producer --endpoint grpc://your-producer:9101
+```
+
+The same checks are exposed as a Go library under `lib/protocols/conformance/claimproducer` so you can invoke them from your own tests.
 
 ## 9. Reference impls
 
-The in-tree reference producer is the stub at `stores/stub/` — an in-memory test fixture (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double, not a production starting point.
+The in-tree test-double producer is the stub at `test/support/stores/stub/` — an in-memory fixture (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double, not a production starting point.
 
-The production reference producers — the concrete-paths `filesystem` store and the regional-access / items-queue `postgres` store — live in the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/stores/...`); `stores/filesystem/testfixture/` and `stores/postgres/testfixture/` in rimsky are thin wrappers over the stub used only by rimsky's own scenario tests.
+The production reference producers — the concrete-paths `filesystem` store and the regional-access / items-queue `postgres` store — ship in rimsky's tree under `lib/services/stores/{filesystem,postgres}`. Read their `config-example.yml` and their server packages alongside the wire contract when building a store of your own.
 
 ## See also
 
@@ -3620,7 +3619,7 @@ The production reference producers — the concrete-paths `filesystem` store and
 
 # Implementing an executor
 
-This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `protocols/proto/v1/executor.proto` (the required dispatch protocol) and `protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); the mechanically-generated field/message/RPC references are at [`reference/executor.md`](reference/executor.md) and [`reference/executor-observability.md`](reference/executor-observability.md). This guide is the practical companion. There is no executor SDK; a Go service may use the `protocols` module's `serverkit` helpers ([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON bridge scaffolding, or implement straight against the wire types in any language.
+This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `lib/protocols/proto/v1/executor.proto` (the required dispatch protocol) and `lib/protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); the mechanically-generated field/message/RPC references are at [`reference/executor.md`](reference/executor.md) and [`reference/executor-observability.md`](reference/executor-observability.md). This guide is the practical companion. There is no executor SDK; a Go service may use the `protocols` module's `serverkit` helpers ([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON bridge scaffolding, or implement straight against the wire types in any language.
 
 <!-- @source: ../../.ok-planner/design/concepts/executor.md -->
 > The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
@@ -3639,7 +3638,7 @@ service Executor {
 }
 ```
 
-Source: `protocols/proto/v1/executor.proto`.
+Source: `lib/protocols/proto/v1/executor.proto`.
 
 The optional read-only observability protocol carries three:
 
@@ -3651,7 +3650,7 @@ service ExecutorObservability {
 }
 ```
 
-Source: `protocols/proto/v1/executor_observability.proto`.
+Source: `lib/protocols/proto/v1/executor_observability.proto`.
 
 Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
 
@@ -3762,19 +3761,19 @@ When `resume_context` is empty, this is a fresh dispatch. Executors that do not 
 
 ## 5. Conformance
 
-The `cmd/rimsky-executor-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
+The `rimsky conformance executor` subcommand exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
 
 ```
-rimsky-executor-conformance --endpoint <your-executor-host:port> --transport grpc
+rimsky conformance executor --endpoint <your-executor-host:port> --transport grpc
 ```
 
-For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance.
+For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance. The same checks are exposed as a Go library under `lib/protocols/conformance/executor` so you can invoke them from your own tests.
 
 ## 6. Reference impls
 
-The in-tree reference executor is the stub at `executors/stub/` — a test double (Meszaros sense) for scenario tests, conformance, and no-op smoke deployments. **Not a skeleton template** — see [`../executors/stub/README.md`](../executors/stub/README.md).
+The in-tree test-double executor is the stub at `test/support/executors/stub/` — a test double (Meszaros sense) for scenario tests and conformance. **Not a skeleton template** — see [`../executors/stub/README.md`](../executors/stub/README.md).
 
-The production-shaped reference executors — `http-node` (Go; HTTP-call workloads) and `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the async-callback path end-to-end) — live in the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/executors/...`). They are illustrative, not part of rimsky's tree.
+The production-shaped reference executors ship in rimsky's tree under `lib/services/executors/`: `http-node` (Go; HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the async-callback path end-to-end), plus the `verifier-http` and `verifier-shape-checks` verifier executors. Each carries its own README and config; read them alongside the wire contract when building an executor of your own.
 
 ## See also
 
@@ -3785,7 +3784,7 @@ The production-shaped reference executors — `http-node` (Go; HTTP-call workloa
 
 ---
 
-<!-- AUTOGENERATED by rimsky-docs-gopkg from rimsky protocols/. Do not hand-edit. -->
+<!-- AUTOGENERATED by rimsky-docs-gopkg from rimsky lib/protocols/. Do not hand-edit. -->
 
 # rimsky protocols module — Go package reference
 
@@ -5117,7 +5116,7 @@ zero value.
 
 # Implementing a lifecycle subscriber
 
-This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
+This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `lib/protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
 
 <!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
 > An opt-in protocol for services that want to react to template, instance, and run-scope state transitions. Seven methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`, `OnRunScopeTerminal`. Template/instance events fire synchronously from the control-api process; the run-scope-terminal event fires from the rimsky-side process that owns the transition (control-api for main scopes, the supervisor for sub-graph and fan-out-partition scopes).
@@ -5160,7 +5159,7 @@ Without that entry, the service is silently skipped during fan-out — there's n
 
 The flag is per-service, not per-protocol. A service that implements both `ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server registers handlers for both.
 
-There are two distinct surfaces here: the rimsky.yml `protocols: [...]` list (above) is what tells rimsky to *fan out* to the service. Separately, a producer binary that ships a no-op `LifecycleSubscriber` may gate whether it actually *registers* the handlers behind its own startup-config flag — the in-tree stub reads `enable_lifecycle: true` from its own config (`stores/stub/cmd`), not from rimsky.yml — so operators can turn the handlers on without forking the binary.
+There are two distinct surfaces here: the rimsky.yml `protocols: [...]` list (above) is what tells rimsky to *fan out* to the service. Separately, a producer binary that ships a no-op `LifecycleSubscriber` may gate whether it actually *registers* the handlers behind its own startup-config flag — the in-tree stub store (`test/support/stores/stub/`) registers its handlers only when its own server config sets `enable_lifecycle: true`, not from rimsky.yml — so operators can turn the handlers on without forking the binary.
 
 ## 3. The seven events
 
@@ -5213,7 +5212,7 @@ Implications:
 
 ## 6. Reference impl
 
-There's no standalone reference lifecycle-subscriber binary in the repo — lifecycle handlers ride inside producer binaries. The in-tree example is the stub store (`stores/stub/`), whose server registers `LifecycleSubscriber` handlers when its own startup config sets `enable_lifecycle: true`.
+There's no standalone reference `LifecycleSubscriber` binary in the tree — lifecycle handlers ride inside producer binaries. The in-tree example is the stub store (`test/support/stores/stub/`), whose server registers `LifecycleSubscriber` handlers when its own config sets `enable_lifecycle: true`. (The in-tree OpenLineage subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of the lineage projection, not a `LifecycleSubscriber` implementation — it is a different integration shape.)
 
 Two config surfaces, in two different files:
 
@@ -5245,7 +5244,7 @@ With both set, the service's gRPC server registers both `ClaimProducer` and `Lif
 
 # Publisher protocol guide
 
-The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
+The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `lib/protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
 
 ## Verbs
 
@@ -5294,18 +5293,20 @@ Rimsky validates `(publisher_subscription_id, instance_id, state='active')` is a
 
 ## Conformance
 
-A black-box conformance suite lives at `cmd/rimsky-publisher-conformance/`. Point it at any Publisher implementation to verify lifecycle + emit shape:
+The `rimsky conformance publisher` subcommand is a black-box conformance suite. Point it at any Publisher implementation to verify lifecycle + emit shape:
 
 ```sh
-rimsky-publisher-conformance --endpoint grpc://my-publisher:9100 \
+rimsky conformance publisher --endpoint grpc://my-publisher:9100 \
                              --kind cron \
                              --resolved-config '{"cron":"* * * * *"}' \
                              --instance-id <uuid>
 ```
 
+The same checks are exposed as a Go library under `lib/protocols/conformance/publisher`.
+
 ## Bundled implementations
 
-Sensors are one kind of publisher. The four reference sensors are no longer in rimsky's tree — they moved to the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/sensors`):
+Sensors are one kind of publisher. The four reference sensors ship in rimsky's tree under `lib/services/sensors/`:
 
 - `sensor-cron` — cron firing.
 - `sensor-http` — HTTP-poll with body-hash watermark.

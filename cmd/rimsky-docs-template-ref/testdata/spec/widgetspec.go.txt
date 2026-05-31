@@ -1,0 +1,47 @@
+// Package spec is a fixture package for rimsky-docs-template-ref tests. It
+// mirrors the shape of rimsky's lib/foundation/spec package: exported structs
+// with yaml/json tags, a typed string enum, and an untyped const group.
+package spec
+
+import "encoding/json"
+
+// WidgetSpec is the top-level fixture template root.
+type WidgetSpec struct {
+	// Name of the widget template.
+	Name string `yaml:"name" json:"name"`
+	// Description is optional prose.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Parts are the nested directive entries.
+	Parts []WidgetPart `yaml:"parts,omitempty" json:"parts,omitempty"`
+	// Labels is free-form metadata.
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	// Mode selects the widget mode.
+	Mode WidgetMode `yaml:"mode" json:"mode"`
+	// Config is opaque producer bytes (json-only tag).
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// WidgetPart is one nested directive in a WidgetSpec.
+type WidgetPart struct {
+	Kind     string `yaml:"kind" json:"kind"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+// WidgetMode is the fixture typed string enum.
+type WidgetMode string
+
+const (
+	// WidgetModeFast is the fast mode.
+	WidgetModeFast WidgetMode = "fast"
+	// WidgetModeSlow is the slow mode.
+	WidgetModeSlow WidgetMode = "slow"
+)
+
+// Widget-state values: a standalone untyped const group.
+const (
+	WidgetStateOn  = "on"
+	WidgetStateOff = "off"
+)
+
+// MaxWidgets is a numeric constant; it must NOT surface as an enum value.
+const MaxWidgets = 42

@@ -8,7 +8,7 @@ Two nodes; the first declares a claim on the bundled stub claim producer; the se
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub keys behavior on `node_type` only — it always emits a `Complete` event with `changed: true` and an empty `attributes_delta` (or a small fixture for known node types). This example demonstrates the all-success path: both nodes commit, the claim is auto-`Commit`ted at the acquirer's terminal.
+The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub keys behavior on `node_type` only — it always closes the stream with a terminal `StreamClose{Success}` and an empty `attributes_delta` (or a small fixture for known node types). This example demonstrates the all-success path: both nodes commit, the claim is auto-`Commit`ted at the acquirer's terminal.
 
 ## 1. The template
 
@@ -41,7 +41,7 @@ nodes:
     # the explicit `subscribes:` entry below makes that coupling
     # obvious to readers.
     subscribes:
-      - { node: acquirer, on: state }
+      - { node: acquirer, type: terminal/success }
     attributes:
       schema:
         type: object

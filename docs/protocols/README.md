@@ -6,7 +6,7 @@ For Go projects, rimsky publishes its **`protocols` module** as a convenience. I
 
 - **Contract ergonomics** — `claimproducer`, `lifecycle`: hand-written Go types over the wire contract.
 - **Optional helpers** — `serverkit` (gRPC + HTTP/JSON bridge scaffolding), `publisherkit` (publisher-side retry/backoff), `action` (claim-producer pick-policy vocabulary).
-- **Conformance library** — `conformance/`: the executable contract spec, invocable from your own Go tests as well as the `rimsky-*-conformance` CLIs.
+- **Conformance library** — `conformance/`: the executable contract spec, invocable from your own Go tests as well as the `rimsky conformance <protocol>` CLI subcommands.
 
 None of these are required. They exist so a Go service doesn't have to re-derive the boilerplate.
 
@@ -26,4 +26,4 @@ These cover the gap between *understanding the concepts* and *implementing a cus
 
 Two further protocols are **mix-ins** a service advertises alongside its primary protocol rather than implements standalone: `DataProcessing` (for producers that materialize partitioned content) and `Validation` (template-registration-time validation). They have no separate prose guide; their wire contracts are in the generated reference ([`reference/data-processing.md`](reference/data-processing.md), [`reference/validation.md`](reference/validation.md)). A service advertises them via its `protocols` capability list (e.g. `data_processing`, `validation`).
 
-The proto definitions live in the rimsky repo at `protocols/proto/v1/`; the generated wire reference is published here under [`reference/`](reference/). Generate language bindings with `protoc` (the rimsky build uses `make proto-gen`).
+The proto definitions live in the rimsky repo at `lib/protocols/proto/v1/`; the generated wire reference is published here under [`reference/`](reference/). Generate language bindings with `protoc` (the rimsky build uses `make proto-gen`).

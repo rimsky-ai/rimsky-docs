@@ -28,10 +28,6 @@ Owns: the message itself, the single template-configurable emit site (operator A
 
 The verb "invalidate" replaced an earlier richer message set under the v3 redesign.
 
-## Open within this concept
-
-(no open items distinct from the parent `cascade`/`frame` concepts)
-
 ## Notes
 
 - 2026-05-14: emitter list updated. Operator API, scheduler tick, and the cascade walk from subscription-edge matches remain as emitters. The error-types policy's `action: invalidate` and lifecycle-handler `invalidate.targets:` are retired; their effects are now declared as receiver-side subscriptions (see `concept:node-subscription`). Per `spec:2026-05-14-subscription-cascade-and-quality-of-life`.

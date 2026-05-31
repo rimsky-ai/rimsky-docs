@@ -1,6 +1,6 @@
 # Control-API MCP surface
 
-The rimsky control-API exposes its operational surface as an MCP (Model Context Protocol) tool catalog. This is **not** a standalone sidecar binary — it is a JSON-RPC protocol skin mounted directly inside the control-API process at `route:POST /mcp` (wired in `control/controlapi/mcp_route.go`; the catalog and JSON-RPC envelope live in `control/controlapi/mcp/`). An agentic client speaks MCP to the same process and port that serves the HTTP API, and every tool re-enters the control-API's own routing and auth pipeline.
+The rimsky control-API exposes its operational surface as an MCP (Model Context Protocol) tool catalog. This is **not** a standalone sidecar binary — it is a JSON-RPC protocol skin mounted directly inside the control-API process at `POST /mcp` (wired in `lib/control/controlapi/mcp_route.go`; the catalog and JSON-RPC envelope live in `lib/control/controlapi/mcp/`). An agentic client speaks MCP to the same process and port that serves the HTTP API, and every tool re-enters the control-API's own routing and auth pipeline.
 
 ## When to use it
 
@@ -33,22 +33,29 @@ Error codes follow JSON-RPC: `-32700` parse error, `-32600` invalid request, `-3
 
 ## Tool catalog
 
-Tools are declared in the canonical action registry (`control/controlapi/actions.go`); each maps to one control-API action and its HTTP route(s). The catalog is the source of truth — the list below is grouped for orientation, not hand-maintained field-by-field.
+Tools are declared in the canonical action registry (`lib/control/controlapi/actions.go`); each maps to one control-API action and its HTTP route(s). The catalog is the source of truth — the list below is grouped for orientation, not hand-maintained field-by-field.
 
 - **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate`, `instance_pause`, `instance_resume`.
 - **Breakpoints:** `breakpoint_list`, `breakpoint_create`, `breakpoint_resume_hit`, `breakpoint_delete`.
 - **Templates:** `template_list`, `template_get`, `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
 - **Tags:** `tag_list`, `tag_create`, `tag_set`, `tag_delete`.
-- **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `route:POST /nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
+- **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `POST /nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
 - **Messages:** `message_send`, `message_list`, `message_get`.
 - **Events:** `event_list`.
+- **Audit:** `audit_list` — read the auth audit log (`GET /audit`). Gated by `audit:read`, granted separately from `event:read` because actor identity / IP / user-agent / action are sensitive.
 - **Lineage:** `lineage_get`, `lineage_prune`.
 - **Backfills:** `backfill_create`, `backfill_list`, `backfill_get`, `backfill_partitions`, `backfill_cancel`.
 - **Assets:** `asset_list`, `asset_get`, `asset_versions`, `asset_materialization_history`, `asset_materialize`, `asset_delete`.
 - **Diagnostics:** `parked_node_list`, `waitset_list`, `claim_holders_list`, `held_frames_list`.
 - **Auth (self-administration):** `auth_list`, `auth_get`, `auth_status`, `auth_create_key`, `auth_revoke_key`, `auth_rotate_key`.
 
-`instance_create` accepts `{template, instance_key?, params?, attribute_overrides?}`. `attribute_overrides` mirrors the control-API's per-instance overrides surface (`{by_executor, by_node, by_match}`); `by_match` is an ordered list of `{matcher, overlay}` entries keyed on a content predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`) — see `concept:attribute`.
+`instance_create` accepts `{template, instance_key?, params?, attribute_overrides?}`. `attribute_overrides` mirrors the control-API's per-instance overrides surface (`{by_executor, by_node, by_match}`); `by_match` is an ordered list of `{matcher, overlay}` entries keyed on a content predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`) — see the [attribute concept](../../concepts/attribute.md).
+
+## Dry-run
+
+Dry-run is a per-request modifier, not a separate tool or grant: the auth middleware reads a `?dry_run=true` query flag and tags the request as `dry_run` mode. A mutating handler in that mode runs full validation, returns a synthetic `{ dry_run: true, would_have_X: ... }` envelope, and skips the state mutation. Reads run normally (there is nothing to skip). Because a `tools/call` re-enters the chi router, an MCP tool inherits the same behavior when its forwarded request carries the flag — the call still requires the matching write grant, it just doesn't commit.
+
+Every request (including dry-run) is recorded in the durable audit log, which captures actor identity, IP, user-agent, the action, the resolved mode, and the protocol skin (`mcp` for tool calls vs the HTTP API otherwise). Read the audit log with the `audit_list` tool (`GET /audit`, gated by `audit:read`).
 
 ## Security
 

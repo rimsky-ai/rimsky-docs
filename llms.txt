@@ -4,7 +4,7 @@
 
 ## Concepts
 
-The canonical concept catalog lives in the rimsky source repo at [`.ok-planner/design/concepts.md`](https://github.com/fallguyconsulting/rimsky/blob/main/.ok-planner/design/concepts.md) — an auto-generated TOC over the per-concept files in [`.ok-planner/design/concepts/`](https://github.com/fallguyconsulting/rimsky/tree/main/.ok-planner/design/concepts). Each file carries a definition, purpose, boundaries, and invariants, plus a Notes section recording how the concept evolved. Inline `@concept: <slug>` annotations in the source code point at enforcement sites for each concept; `rg '@concept: <slug>'` finds them.
+The canonical concept catalog lives in the rimsky source repo at [`.ok-planner/design/concepts.md`](https://github.com/rimsky-ai/rimsky-core/blob/main/.ok-planner/design/concepts.md) — an auto-generated TOC over the per-concept files in [`.ok-planner/design/concepts/`](https://github.com/rimsky-ai/rimsky-core/tree/main/.ok-planner/design/concepts). Each file carries a definition, purpose, boundaries, and invariants, plus a Notes section recording how the concept evolved. Inline `@concept: <slug>` annotations in the source code point at enforcement sites for each concept; `rg '@concept: <slug>'` finds them.
 
 Read the TOC first to know what nouns the project traffics in, then read the per-concept files for the specific ones load-bearing for your task.
 
@@ -12,7 +12,7 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 
 - [ClaimProducer](protocols/claim-producer.md): How to implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
 - [Executor](protocols/executor.md): How to implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (Capabilities / GetTrace / StreamTrace).
-- [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (six template/instance state-transition hooks).
+- [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus OnRunScopeTerminal).
 
 ## Examples
 
@@ -21,8 +21,6 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 - [Two-node template with a claim dependency](agents/examples/two-node-with-claim.md)
 - [Template demonstrating attribute-default inertness](agents/examples/claude-agent-attribute-defaults.md)
 - [Holding-subgraph template demonstrating held-claim resolution](agents/examples/holding-subgraph.md)
-- [rimsky-compose multi-template project](agents/examples/rimsky-compose-multi-template.md)
-- [Atomic staging via a held subgraph](agents/examples/atomic-staging.md)
 
 ## Errors
 

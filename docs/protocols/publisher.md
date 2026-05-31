@@ -1,6 +1,6 @@
 # Publisher protocol guide
 
-The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
+The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `lib/protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
 
 ## Verbs
 
@@ -49,18 +49,20 @@ Rimsky validates `(publisher_subscription_id, instance_id, state='active')` is a
 
 ## Conformance
 
-A black-box conformance suite lives at `cmd/rimsky-publisher-conformance/`. Point it at any Publisher implementation to verify lifecycle + emit shape:
+The `rimsky conformance publisher` subcommand is a black-box conformance suite. Point it at any Publisher implementation to verify lifecycle + emit shape:
 
 ```sh
-rimsky-publisher-conformance --endpoint grpc://my-publisher:9100 \
+rimsky conformance publisher --endpoint grpc://my-publisher:9100 \
                              --kind cron \
                              --resolved-config '{"cron":"* * * * *"}' \
                              --instance-id <uuid>
 ```
 
+The same checks are exposed as a Go library under `lib/protocols/conformance/publisher`.
+
 ## Bundled implementations
 
-Sensors are one kind of publisher. The four reference sensors are no longer in rimsky's tree — they moved to the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/sensors`):
+Sensors are one kind of publisher. The four reference sensors ship in rimsky's tree under `lib/services/sensors/`:
 
 - `sensor-cron` — cron firing.
 - `sensor-http` — HTTP-poll with body-hash watermark.

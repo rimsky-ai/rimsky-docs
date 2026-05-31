@@ -84,7 +84,7 @@ trigger), **XCom** (small inter-task data), **hooks** (clients to
 external systems), **connections**, **operators** (work units),
 parameter-driven runs, **backfills** as a first-class operation.
 
-Where rimsky overlaps: DAG + templates + instances + admin force-fire
+Where rimsky overlaps: DAG + templates + instances + admin invalidate
 covers the same ground for most cases. Cascade gives rimsky a stronger
 story for "node X changed; recompute its dependents" than Airflow's
 manual re-runs.

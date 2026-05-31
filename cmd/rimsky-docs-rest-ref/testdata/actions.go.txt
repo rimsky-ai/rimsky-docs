@@ -1,0 +1,40 @@
+// Fixture: a miniature control-api action registry for rimsky-docs-rest-ref
+// tests. Mirrors the shape of lib/control/controlapi/actions.go — an
+// ActionEntry/Route pair plus a v1Actions registry slice — without compiling
+// against the cmd module (stored as .go.txt).
+package controlapi
+
+type ActionEntry struct {
+	Action      string
+	IsWrite     bool
+	Routes      []Route
+	MCPTools    []string
+	Description string
+}
+
+type Route struct {
+	Method string
+	Path   string
+}
+
+var v1Actions = []ActionEntry{
+	{Action: "instance:read", IsWrite: false,
+		Routes:      []Route{{"GET", "/instances"}, {"GET", "/instances/{idOrKey}"}},
+		MCPTools:    []string{"instance_list", "instance_get"},
+		Description: "Read instances; list all or get one by id-or-key."},
+	{Action: "instance:create", IsWrite: true,
+		Routes:      []Route{{"POST", "/instances"}},
+		MCPTools:    []string{"instance_create"},
+		Description: "Create a new instance from a template."},
+	{Action: "node:invalidate", IsWrite: true,
+		Routes: []Route{
+			{"POST", "/nodes/{id}/invalidate"},
+			{"POST", "/admin/instances/{instance}/nodes/{node_id}/invalidate"},
+		},
+		MCPTools:    []string{"node_invalidate"},
+		Description: "Invalidate a node."},
+	{Action: "observability:read", IsWrite: false,
+		Routes:      []Route{{"GET", "/v1/observability/*"}},
+		MCPTools:    nil,
+		Description: "Read observability data via /v1/observability/*."},
+}

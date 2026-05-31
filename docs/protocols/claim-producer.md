@@ -1,6 +1,6 @@
 # Implementing a claim producer
 
-This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `protocols/proto/v1/claim_producer.proto`; the mechanically-generated field/message/RPC reference is at [`reference/claim-producer.md`](reference/claim-producer.md). This guide is the practical companion — the "how to implement this, what to watch out for" narrative the generated reference can't express.
+This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `lib/protocols/proto/v1/claim_producer.proto`; the mechanically-generated field/message/RPC reference is at [`reference/claim-producer.md`](reference/claim-producer.md). This guide is the practical companion — the "how to implement this, what to watch out for" narrative the generated reference can't express.
 
 For Go services, the `protocols` module's `claimproducer` package gives you hand-written types over this wire contract (see [`go-packages.md`](go-packages.md)). It's a convenience, not a requirement: you can code straight against the generated wire types in any language.
 
@@ -87,7 +87,7 @@ Resume detection is the producer's responsibility. If `Open` arrives with a `cla
 - For `sync`-mode `rw` claims: producer-side no-op (writes already live).
 - For pick-policy claims: apply the configured commit-default action.
 
-Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional fields, both inert to rimsky: `version_id` (set by `DataProcessing`-capable producers; rimsky persists it in `col:rimsky_claim_handles.version_id` and the lineage record) and `producer_metadata` (surfaced verbatim in the fan-out parent's writeback row). Plain producers leave both empty.
+Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional fields, both inert to rimsky: `version_id` (set by `DataProcessing`-capable producers; rimsky persists it in the `rimsky_claim_handles.version_id` column and the lineage record) and `producer_metadata` (surfaced verbatim in the fan-out parent's writeback row). Plain producers leave both empty.
 
 ### `Abandon(AbandonRequest) → AbandonResponse`
 
@@ -150,13 +150,19 @@ The two transactions are decoupled. A failure on one side does not roll back the
 
 ## 8. Conformance
 
-The `cmd/rimsky-claim-producer-conformance` binary exercises a producer against the wire-protocol contract. Run it pointing at your producer endpoint to verify the verbs behave correctly. The same checks are exposed as a Go library under `protocols/conformance/claimproducer` so you can invoke them from your own tests.
+The `rimsky conformance claim-producer` subcommand exercises a producer against the wire-protocol contract. Run it pointing at your producer endpoint to verify the verbs behave correctly:
+
+```
+rimsky conformance claim-producer --endpoint grpc://your-producer:9101
+```
+
+The same checks are exposed as a Go library under `lib/protocols/conformance/claimproducer` so you can invoke them from your own tests.
 
 ## 9. Reference impls
 
-The in-tree reference producer is the stub at `stores/stub/` — an in-memory test fixture (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double, not a production starting point.
+The in-tree test-double producer is the stub at `test/support/stores/stub/` — an in-memory fixture (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double, not a production starting point.
 
-The production reference producers — the concrete-paths `filesystem` store and the regional-access / items-queue `postgres` store — live in the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/stores/...`); `stores/filesystem/testfixture/` and `stores/postgres/testfixture/` in rimsky are thin wrappers over the stub used only by rimsky's own scenario tests.
+The production reference producers — the concrete-paths `filesystem` store and the regional-access / items-queue `postgres` store — ship in rimsky's tree under `lib/services/stores/{filesystem,postgres}`. Read their `config-example.yml` and their server packages alongside the wire contract when building a store of your own.
 
 ## See also
 

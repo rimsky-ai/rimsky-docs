@@ -28,10 +28,6 @@ Owns: the per-name capacity declaration in YAML, the named-lock rows in the clai
 
 No live aliases. A CHECK constraint on the claim-handle lock-kind column enumerates `{'named','scope'}`.
 
-## Open within this concept
-
-(no specific tensions distinct from the broader `claim-handle` / `claim-producer` set)
-
 ## Notes
 
 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

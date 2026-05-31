@@ -15,3 +15,7 @@ coverage.html
 
 # OS noise
 .DS_Store
+
+# build-docs run scratch: the resolved rimsky-core release-tag checkout cache,
+# the per-run decision/flag/round journal, and the rendered run report.
+.build-docs/

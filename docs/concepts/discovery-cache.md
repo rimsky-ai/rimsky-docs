@@ -29,10 +29,6 @@ Owns: the in-memory cache structure, the per-service entry shape, the registrati
 
 The cache and its handshake population were previously documented inside `observability`; promoted to its own concept under the `2026-05-11-design-log-convergence` spec.
 
-## Open within this concept
-
-(no live tensions.)
-
 ## Notes
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

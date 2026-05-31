@@ -1,136 +1,134 @@
 ---
 concept: domain-stores
 definition: |
-  Consumer-built MCP servers that hold project-specific resources (records, jobs, queue items) and expose them as claim producers. The colloquial "stores" terminology at the bundled-services layer.
-proto_symbol: ClaimProducer in protocols/proto/v1/claim_producer.proto
-config_field: rimsky.yml:claim_producers
+  A would-be pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. Not wired in v0.4.0: the reference claude-agent executor consumes no external MCP servers. The real, narrower surface is the executor's own internal rimsky-callback MCP tools plus per-node attributes.
+proto_symbol: (none — MCP, not a rimsky service protocol)
+config_field: claude-agent per-node attributes (attributes.cli.*); internal rimsky-callback MCP tools
 api_surface: (none)
-related: [claim-producer, claim, scope]
+related: [executor, attribute, named-event]
 deprecated_terms: []
 ---
 
 # Domain stores
 
-A **domain store** is a project-built MCP server that holds
-project-specific state — prompt context, learnings, examples,
-corrections, glossaries, evaluation rubrics, partial pipeline state —
-and exposes it as a tool catalog that an agent executor can consume
-during a dispatch. Rimsky does not ship a domain store; the platform
-provides the wiring that makes them composable.
+> **Status (v0.4.0).** The reference `claude-agent` executor does **not**
+> consume consumer-built MCP servers. It wires exactly one MCP server
+> into each dispatch — its own internal `rimsky-callback` — and reads its
+> per-dispatch configuration from the node's attributes. There is no
+> operator catalog of external MCP servers, no `ref`-based catalog
+> resolution, and no way for a template to register an additional MCP
+> server for a dispatch to reach. This page describes the real surface
+> the executor offers today and how an agent node's outputs flow into the
+> graph. The broader "domain store as a pluggable MCP tool catalog"
+> pattern is aspirational and not implemented.
 
-This page covers the pattern and the contract a domain store satisfies
-to participate in the rimsky control plane.
+A **domain store**, as a pattern, would be a project-built MCP server
+that holds project-specific state — prompt context, learnings, examples,
+corrections, glossaries, evaluation rubrics, partial pipeline state — and
+exposes it as a tool catalog that an agent executor consumes during a
+dispatch. Rimsky does not ship a domain store, and the reference executor
+does not yet provide the wiring to plug one in.
 
-## What a domain store is
+This page covers what the `claude-agent` executor actually exposes today,
+and how the outputs an agent node produces become inputs to downstream
+nodes.
 
-Mechanically: an HTTP or stdio MCP server registered in the executor's
-catalog (claude-agent uses an `mcp_catalog` block in its startup
-config — see `docs/executors/claude-agent/expected-attributes.md`). Templates
-reference catalog entries by `ref` in their attribute schema's `cli.mcpServers`
-default. Dispatch wires the entry into the agent's tool space.
+## What the executor actually exposes
 
-Conceptually: rimsky stays domain-agnostic; the domain store is where a
-consuming project lands its vocabulary, its data, and its operations.
-The store presents the project as a tool surface to agents, while the
-graph (nodes, attributes, claims) handles flow control.
+The `claude-agent` reference executor (in-tree at
+`lib/services/executors/claude-agent/`) gives a dispatch exactly one MCP
+surface: an internal HTTP MCP server named `rimsky-callback` that the
+executor hosts itself. The agent reaches it through the
+`RIMSKY_CALLBACK_URL` passed into the spawned `claude` process. Its tools:
 
-## Why this split
+- `report_complete` — terminal success, with an optional
+  `attributes_delta` carrying the agent's structured writeback.
+- `report_error` / `report_blocked` — terminal failure signals.
+- `report_park` — pause the node (await-callback or snooze).
+- `emit_named_event` — emit a non-terminal named event (the name must be
+  one the executor declares).
+- `attributes_read` / `attributes_set` — read the dispatch-time
+  attributes snapshot, and persist incremental attribute writes through
+  the supervisor.
 
-- **Re-use across templates.** A single project-tracker MCP can serve
-  a dozen graphs without each template re-defining the integration.
-- **Operator-managed catalogs.** Catalog entries live in the operator's
-  startup config; templates only carry refs. Adding a new domain store
-  is an operator change, not a template change.
-- **Auditable tool surfaces.** `policy.allow_inline: false` blocks
-  templates from injecting unconfigured MCP servers at dispatch time.
-  The operator's allow-list is the single source of truth for which
-  MCP surfaces dispatches may reach.
+That callback surface is how the agent's work re-enters rimsky. There is
+no second, consumer-supplied MCP server in the picture.
 
-## The minimal contract
+## How a dispatch is configured
 
-A domain store needs:
+Each dispatch is configured by the node's `attributes`, not by an
+operator-managed catalog. The executor reads:
 
-1. An MCP-protocol HTTP or stdio endpoint.
-2. A `tools/list` response advertising its tool catalog.
-3. Per-tool input schemas for argument validation.
-4. Idempotency on the tools that can be retried by the agent
-   (rimsky's retry policy may dispatch the same node multiple times).
+- `model`, `system_prompt`, `user_prompt` — the core agent inputs.
+- An optional `cli.*` sub-object that tunes the spawned `claude` CLI:
+  `cli.bare`, `cli.permission_mode`, `cli.allowed_tools`,
+  `cli.disallowed_tools`, `cli.add_dirs`, `cli.max_budget_usd`,
+  `cli.handle_rate_limits`, `cli.max_schema_corrections`. Each maps to a
+  `claude` flag (or a recovery behavior); rimsky never inspects the
+  values.
 
-What rimsky does **not** require:
-
-- Any persistence model (use Postgres, SQLite, files, an in-memory
-  cache, or a remote service).
-- Any specific authentication scheme (the operator wires this through
-  the catalog config — env vars, headers, mTLS).
-- A specific language or runtime.
-
-## Worked example: a project-tracker domain store
-
-```yaml
-# operator config
-mcp_catalog:
-  project-tracker:
-    transport: http
-    url: ${PROJECT_TRACKER_URL}
-    headers:
-      Authorization: ${PROJECT_TRACKER_TOKEN}
-policy:
-  allow_inline: false
-  allow_modules_from: ["@project-alpha/*"]
-```
+See the [operator guide](../operator-guide.md) for the executor's
+startup environment, and
+[`docs/agents/examples/claude-agent-attribute-defaults.md`](../agents/examples/claude-agent-attribute-defaults.md)
+for a worked example of how attribute defaults flow through a node.
 
 ```yaml
-# template node
+# template node — claude-agent inputs via attribute defaults
 nodes:
-  ingest:
+  - type: ingest
     executor: claude-agent
     attributes:
       schema:
         type: object
         properties:
+          model:
+            type: string
+            default: "claude-sonnet-4-5"
+          system_prompt:
+            type: string
+            default: "Summarize the input and report your findings."
           cli:
             type: object
             default:
-              mcpServers:
-                - ref: project-tracker
-          system_prompt:
-            type: string
-            default: "Use tools to fetch tickets and update status."
+              allowed_tools: ["Read", "Grep"]
 ```
 
-The project-tracker server exposes `tickets.list`, `tickets.get`,
-`tickets.update_status` and similar. The agent invokes them through
-MCP. The dispatch's `attributes_delta` carries the agent's structured
-findings back into rimsky.
+The agent does its work, then calls `report_complete` with an
+`attributes_delta` (or makes incremental `attributes_set` calls during
+the run). That writeback is what the graph consumes downstream.
 
-## Substituting domain-store outputs into the graph
+## Substituting an agent node's outputs into the graph
 
-When a domain-store call's result is needed by a downstream node,
-expose it through the standard substitution path. Two main idioms:
+When an upstream agent node's result is needed by a downstream node,
+expose it through the standard substitution grammar. Two idioms:
 
 - **Through the agent's `report_complete`.** The agent stores its
-  findings in `attributes_delta`; downstream nodes read them via
-  `source: nodes.<this>.value.<path>`.
-- **Through named events.** If the executor emits non-terminal
-  domain-shaped signals (e.g. `ticket.updated`, `learning.captured`),
-  downstream nodes read them via
-  `source: nodes.<this>.event.<name>.<path>`.
+  findings in `attributes_delta` (validated against the node's
+  attributes schema at commit); a downstream node reads them with a
+  `source: "{{nodes.<upstream>.attribute.<field-path>}}"` directive on
+  one of its own schema properties.
+- **Through named events.** If the agent emits non-terminal signals via
+  `emit_named_event` (e.g. `ticket.updated`, `learning.captured`), a
+  downstream node reads them with
+  `source: "{{nodes.<upstream>.event.<name>.<field-path>}}"`.
 
-Pick whichever shape the data fits — `value` for terminal outputs,
+Pick whichever shape the data fits — `attribute` for terminal writeback,
 `event` for mid-flight signals — and the substitution layer treats
-them identically once persisted.
+them identically once persisted. Both are members of the closed
+substitution grammar; see [`concepts/attribute.md`](../concepts/attribute.md).
 
-## Operational notes
+## If you need external state today
 
-- **Per-dispatch vs. persistent lifetimes.** Stdio MCP servers can run
-  per-dispatch (spawned and reaped each run) or persistent (one
-  process per claude-agent process). Persistent is the cheaper choice
-  for stateless tooling.
-- **Module / http-loopback transports.** For tools tightly coupled to
-  the executor's runtime (e.g. project-shaped helpers in TypeScript),
-  prefer the `module` transport. It runs in-process and the wire path
-  collapses to a loopback HTTP listener.
-- **Audit logging.** Domain stores are the right place for audit
-  trails of agent-driven mutation. Rimsky's events log captures node
-  state transitions; the domain store captures domain-level state
-  changes.
+Because the reference executor cannot dial a consumer MCP server, the
+practical ways to give an agent project-specific state in v0.4.0 are:
+
+- **Through the prompt and attributes.** Inject context as
+  `system_prompt` / `user_prompt` text, or as substituted attribute
+  values pulled from upstream nodes, claim payloads, or `params`.
+- **Through the agent's own filesystem tools.** The agent runs with the
+  `claude` CLI's built-in tools (`Read`, `Grep`, etc., gated by
+  `cli.allowed_tools`) over its working directory and any `cli.add_dirs`
+  paths — so project state staged on a shared volume is reachable.
+
+Bringing a true external MCP tool catalog into a dispatch would require
+new wiring in the reference executor that does not exist as of v0.4.0.

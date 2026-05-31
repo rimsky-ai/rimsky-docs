@@ -56,35 +56,52 @@ Backend choices:
 handles whose retention window has elapsed. The blob backend itself
 sees only `Delete(handle)`.
 
-## claude-agent: MCP catalogs
+## claude-agent: configuration
 
-The `claude-agent` reference executor reads its startup config from
-`CLAUDE_AGENT_CONFIG` (default `/etc/claude-agent/config.yaml`):
+The `claude-agent` reference executor is configured two ways: process
+environment at startup, and per-node attributes at dispatch time. It
+has no separate config file or catalog of external MCP servers.
 
-```yaml
-mcp_catalog:
-  project-tracker:
-    transport: http
-    url: ${PROJECT_TRACKER_URL}
-    headers:
-      Authorization: ${PROJECT_TRACKER_TOKEN}
-  workspace-files:
-    transport: stdio
-    command: project-fs-server
-    args: ["--root", "/workspace"]
-    lifetime: persistent
+**Startup environment.** Set on the executor process (the
+`claude-agent` service in `deploy/`):
 
-policy:
-  allow_inline: false
-  allow_modules_from: ["@project-alpha/*"]
-```
+- `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` — at least one is
+  required in non-stub mode; the executor refuses to start without one.
+  In API-key mode the key is written to a 0600 temp file behind an
+  `apiKeyHelper` and never enters the spawned `claude` process's
+  environment.
+- `RIMSKY_EXECUTOR_STUB_MODE=1` — stub mode: the executor spawns no
+  `claude` subprocess and returns a canned completion. The published
+  `deploy/` stack ships claude-agent in stub mode.
+- `RIMSKY_EXECUTOR_HOST`, `RIMSKY_EXECUTOR_PORT_GRPC` (default `9090`),
+  `RIMSKY_EXECUTOR_PORT_HTTP` (default `9190`) — bind addresses for the
+  gRPC executor and the HTTP+JSON bridge.
+- `RIMSKY_EXECUTOR_SILENCE_MS` (default `120000`) — how long the
+  subprocess may produce no stdout before the silence-tracker acts.
+- `RIMSKY_DISPATCH_MAX_USD` — deployment-wide spend cap forwarded to the
+  CLI as `--max-budget-usd`. A per-node `cli.max_budget_usd` attribute
+  wins over this when set.
 
-Templates reference catalog entries by `ref`. `policy.allow_inline:
-false` (the strict default) blocks templates from injecting
-unconfigured MCP servers at dispatch time. `policy.allow_modules_from`
-gates the `module` and `http-loopback` transports against an
-allow-list of glob patterns. See `docs/executors/claude-agent/expected-attributes.md`
-for the full expected-attributes schema.
+**Per-node attributes.** Templates drive each dispatch through the
+node's `attributes`, not through an operator catalog. The executor
+reads `model`, `system_prompt`, `user_prompt`, and an optional `cli.*`
+sub-object that tunes the spawned `claude` CLI: `cli.bare`,
+`cli.permission_mode`, `cli.allowed_tools`, `cli.disallowed_tools`,
+`cli.add_dirs`, `cli.max_budget_usd`, `cli.handle_rate_limits`, and
+`cli.max_schema_corrections`. Each maps to a `claude` CLI flag (or a
+recovery behavior); rimsky never inspects the values. The full
+expected-attributes schema is defined by the claude-agent executor
+itself (in-tree at `lib/services/executors/claude-agent/`); see
+[`docs/agents/examples/claude-agent-attribute-defaults.md`](agents/examples/claude-agent-attribute-defaults.md)
+for a worked example of how attribute defaults flow through it.
+
+**MCP wiring.** The executor wires exactly one MCP server into each
+dispatch: its own internal `rimsky-callback` (an HTTP MCP server it
+hosts), through which the agent reports terminal outcomes
+(`report_complete`, `report_error`, `report_blocked`, `report_park`),
+emits named events, and reads/writes node attributes. There is no
+operator-configured catalog of external MCP servers, and templates
+cannot register additional MCP servers for a dispatch to reach.
 
 ## Observability: Prometheus metrics
 
@@ -96,7 +113,7 @@ Each rimsky binary can expose a `/metrics` endpoint:
   (default `127.0.0.1`).
 - `rimsky-supervisor` — same as scheduler.
 
-The metric set is documented in `control/observability/metrics.go`.
+The metric set is documented in `lib/control/observability/metrics.go`.
 Counters cover dispatches, terminal verdicts, invalidates, claim
 acquisitions. Gauges cover nodes-by-state, parked-by-reason, held
 frames, dispatch queue depth. Histograms cover dispatch latency,
@@ -113,34 +130,44 @@ The control API exposes:
 - `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` — admin
   invalidate. Dispatches by node state: `parked` resumes,
   `fresh` invalidates, `running`/`failed` returns 409.
+- `POST /admin/lineage/prune` — prune lineage records.
 
-`force-fire` (admin: `POST /admin/scheduled-nodes/{node_id}/force-fire`)
-remains scheduled-node-specific. It bypasses cron-next-fire calculation
-to fire a scheduled node immediately. It is a separate surface from
-`/admin/instances/{instance}/nodes/{node_id}/invalidate`, which is the
-general-purpose admin invalidation surface for any node state.
+`/admin/instances/{instance}/nodes/{node_id}/invalidate` is the
+general-purpose admin invalidation surface for any node state. (There is
+no scheduled-node `force-fire` route — template-level schedules were
+retired; cron firing now lives in the standalone `sensor-cron` publisher
+service, which sources its own messages.)
 
-## Conformance binaries
+## Conformance probes
 
-Three conformance binaries ship under `cmd/`:
+The conformance probes are subcommands of the `rimsky` CLI —
+`rimsky conformance <protocol> ...`. (They were folded in from the
+former standalone `cmd/rimsky-*-conformance` binaries; the underlying
+runners remain importable as Go libraries under
+`lib/protocols/conformance/...`.) The protocols:
 
-- `rimsky-executor-conformance` — exercises an executor against the protocol.
-  Stub mode is mandatory for LLM-calling executors
+- `rimsky conformance executor` — exercises an executor against the
+  protocol. Stub mode is mandatory for LLM-calling executors
   (`--require-stub-mode`).
-- `rimsky-claim-producer-conformance` — exercises a claim-producer.
-- `rimsky-blob-backend-conformance` — exercises a blob backend
+- `rimsky conformance claim-producer` — exercises a claim-producer.
+- `rimsky conformance publisher` — exercises a publisher (`--kind`).
+- `rimsky conformance validation` — exercises the Validation mix-in.
+- `rimsky conformance data-processing` — exercises the DataProcessing mix-in.
+- `rimsky conformance blob-backend` — exercises a blob backend
   against the `BlobBackend` interface (in-process; pass
   `--backend <name>` plus the backend's required config).
+- `rimsky conformance probe` — the protocol-agnostic stub-mode probe.
 
 Each exits 0 on all checks passing.
 
 ## Pre-v1 caveats
 
-- The Helm chart at `deploy/kubernetes/rimsky-chart/` may lag behind
-  binary env-var renames; verify before deploying.
-- The unified image (`rimsky/all`) defaults to SQLite at
-  `/var/lib/rimsky/state.db`. Replicas > 1 break (independent SQLite
-  databases). Use the per-process images plus the postgres driver for
-  multi-replica deployments.
+- No Helm chart or Kubernetes manifests ship yet. The reference deploy
+  surface is the docker-compose stack at `deploy/docker-compose.yml`;
+  a chart is on the roadmap but not published.
+- The unified image (`rimsky-all-in-one`, built `FROM` the multi-role `rimsky`
+  image) defaults to SQLite at `/var/lib/rimsky/state.db`. Replicas > 1 break
+  (independent SQLite databases). Use the per-process images plus the postgres
+  driver for multi-replica deployments.
 - Pre-v1 has no backwards-compat guarantees on schema or wire shapes.
   Migrations may drop and recreate tables.

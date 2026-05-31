@@ -15,9 +15,9 @@ Rimsky ships four reference backends:
 - [`memory`](./memory.md) — in-process map; **dev-only**, rejected at
   startup unless `RIMSKY_PROCESS_ROLE=unified`.
 
-Configuration: `cfg:persistence.blob.backend` plus per-backend sub-blocks
+Configuration: the `persistence.blob.backend` key plus per-backend sub-blocks
 (`spill_threshold_bytes`, `filesystem.root`, `pg_largeobject`, `retention`).
-The schema is parsed in `control/config/` (`persistence.blob` block) and
+The schema is parsed in `lib/control/config/` (`persistence.blob` block) and
 defaults to `inline` with a 64 KiB notional threshold when the key is absent.
 
 ## Cross-backend invariants
@@ -39,7 +39,8 @@ defaults to `inline` with a 64 KiB notional threshold when the key is absent.
 
 ## Conformance
 
-`go run ./cmd/rimsky-blob-backend-conformance --backend <name> [args]`
-runs the in-process conformance suite (six checks: round-trip 1KB +
-10MB, range read, delete-then-read, idempotent delete, concurrent
-writes).
+`rimsky conformance blob-backend --backend <name> [args]` runs the
+in-process conformance suite (checks include round-trip 1KB + 10MB,
+range read, delete-then-read, idempotent delete, and concurrent writes).
+The same checks are exposed as a Go library under
+`lib/protocols/conformance/blobbackend`.

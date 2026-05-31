@@ -34,10 +34,6 @@ Owns: the file shape, validations at startup (write-semantics-allowed subset, bl
 
 Pre-`spec:2026-05-12-nomenclature-resolution`, the YAML accepted `stores:` as an alias for `claim_producers:` and accepted `write_semantics: <single value>` as a one-element shortcut for `write_semantics_envelope:`. Both aliases (and the `_envelope` suffix itself) are retired; the parser rejects them with a precise error message. The pre-2026 vocabulary used "peer" colloquially for service-orchestrated binaries; the current vocabulary is `service` (see `concept:service`).
 
-## Open within this concept
-
-(none live; tensions on `stores:` alias retirement, `write_semantics:` single-value shortcut, and `write_semantics_envelope` rename all resolved by `spec:2026-05-12-nomenclature-resolution`.)
-
 ## Notes
 
 - `stores:` alias retired (Group B.6 / C.1); `write_semantics:` single-value shortcut retired (Group C.1); `write_semantics_envelope` → `write_semantics_allowed` (Group C.2); peer → service vocabulary swept (Group G). Per `spec:2026-05-12-nomenclature-resolution`.

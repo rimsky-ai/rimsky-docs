@@ -2,8 +2,8 @@
 
 Patterns one level more general than a single tutorial: a problem you
 recognize, the rimsky shape that solves it, a runnable walkthrough on the
-published [`quickstart/`](../../quickstart/) or [`deploy/`](../../deploy/)
-stack, and a "without rimsky" baseline so the trade is legible.
+published [`deploy/`](../../deploy/) stack, and a "without rimsky" baseline
+so the trade is legible.
 
 Each recipe states:
 
@@ -12,36 +12,61 @@ Each recipe states:
 3. **A runnable walkthrough** — copy-paste steps that work on the published stack.
 4. **Without rimsky** — what you'd hand-roll otherwise, for contrast.
 
-## Status
+This is a *spanning* set, not an exhaustive one: each recipe teaches a
+distinct lesson about what the primitives can do, and near-duplicates are
+folded into one canonical representative. The patterns combine — a queue
+worker that loops is the queue recipe plus the loop recipe; a reactive
+graph behind a capacity limit is two recipes composed.
 
-This section is being built out — no recipes are published yet. Recipes are
-authored one at a time via the docs pipeline (`/build-docs cookbook add
-"<pattern name>"`), each verified runnable against the published stack before
-it lands.
+## The recipes
 
-## Planned recipes
+All recipes run on the published [`deploy/`](../../deploy/) stack.
 
-The patterns slated for this cookbook, drawn from rimsky's primitives and the
-published stacks:
+- **[A single-node queue worker](queue-worker.md)** — a claim producer as
+  a work queue (the postgres `@review-queue` pick policy) drained by a
+  self-subscribing node.
+- **[Recompute dependents when something upstream changes](reactive-recompute.md)**
+  — subscriber-driven cascade: a downstream node auto-subscribes to an
+  upstream attribute and recomputes only the affected nodes on change.
+- **[Cap concurrency with a counting semaphore](capacity-limit.md)** — a
+  named lock as a deployment-wide capacity counter (`model-budget`,
+  limit 50).
+- **[Loop until the work settles](convergence-loop.md)** — a
+  self-subscribing node that re-fires under a `payload.changed` gate and is
+  bounded by the no-progress retry cap. On `deploy/`'s stub-mode executor
+  the gate fires every iteration, so the recipe demonstrates the loop shape
+  and the runaway cap as the safety net.
+- **[Drive a node from an external event](event-driven-node.md)** — an
+  inbound message (operator- or publisher/sensor-emitted) delivered at a
+  frame boundary and matched to a node by subscription.
+- **[Hand a claim from one node to the next](claim-handoff.md)** — a claim
+  co-held across a chain of nodes so the whole chain is one all-or-nothing
+  transaction, committed or abandoned once at the end.
 
-- **Build a one-node queue worker** — a Postgres claim-producer feeding a
-  single-node template through an executor. Runnable on the `deploy/` stack.
-- **Fan out over a group of folders with a partitioned claim** — `fan-out` with
-  sub-claims over a filesystem store. Runnable on `deploy/`.
-- **Trigger an instance from an external event** — wire one of the bundled
-  sensors (cron / http / object-store / webhook) to publish a message that
-  creates or advances an instance. Runnable on `deploy/`.
-- **Cascade with a claim dependency between nodes** — a claim handed off between
-  a producer node and a consumer node. Runnable on `quickstart/`.
-- **Backfill / reprocess a fan-out node** — an invalidate-kind message with a
-  partition-request override targeting a fan-out node. Builds on the fan-out
-  recipe.
-- **A bounded loop template** — a self-subscribing node that converges under a
-  no-progress cap (see the [surprises page](../humans/03-surprises.md) for why
-  loops are first-class and recursion is not). Runnable on `quickstart/`.
-- **Hold a subgraph while a claim is staged** — held-claim resolution across a
-  subgraph (generalizes the [holding-subgraph example](../agents/examples/holding-subgraph.md)).
-- **Modify local files through an executor proxy** — run an executor against
-  files on a developer machine via the host-agent proxy. *Note: the published
-  `quickstart/` and `deploy/` stacks do not yet wire a host-agent service, so
-  this recipe needs a stack change before it can be made runnable.*
+## Related surfaces
+
+Two write-ups live in [`docs/patterns/`](../patterns/) rather than here —
+they are operator/architecture patterns, not single-problem recipes:
+
+- [Domain stores](../patterns/domain-stores.md) — holding project-specific
+  state in an MCP server an agent executor consumes.
+- [Operational health](../patterns/operational-health.md) — observing and
+  maintaining a running deployment (lifecycle subscribers, watchdog
+  graphs, diagnostics, retry-loop detection).
+
+## Patterns that need a stack change first
+
+Two patterns the primitives support are **not** runnable on the published
+stacks as they stand, so they are not written up as recipes:
+
+- **Fan out over a partitioned claim** (and the **backfill** that targets a
+  fan-out node) requires a claim producer that advertises
+  `supports_split_scope`. Neither bundled store does — the filesystem
+  (`content`) and postgres (`topics-ring`) producers advertise only their
+  write semantics — so a `fan_out:` node is rejected at template
+  registration on both stacks. This recipe needs a split-scope-capable
+  producer wired into a stack before it can be made runnable.
+- **Modify local files through an executor proxy** (run an executor against
+  files on a developer machine) requires a
+  [host-agent proxy](../concepts/host-agent-proxy.md) service. Neither
+  stack wires one, so this needs a stack change first.

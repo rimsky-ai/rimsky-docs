@@ -30,10 +30,6 @@ Owns: the agent ↔ proxy bidi-stream protocol, the spawn-lifecycle state machin
 
 None.
 
-## Open within this concept
-
-None at creation time.
-
 ## Notes
 
 - [2026-05-24] Concept created per spec 2026-05-24-host-agent-and-proxy-design. v1 implements `concept:executor` and `concept:claim-producer` supervisor-facing handlers (late-bound service fronting) plus `concept:lifecycle-subscriber` as the proxy's own consumer-role handler (consuming the instance-created event for the binding cache and the run-scope-terminal event for reap; the other lifecycle methods no-op with an acknowledgement). `concept:publisher` / `concept:validation` / `concept:data-processing` handlers ship registered but unimplemented. `concept:blob-backend` is intentionally excluded — it's an in-process Go interface, not a gRPC wire protocol.

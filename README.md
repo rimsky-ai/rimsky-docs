@@ -1,7 +1,7 @@
 # rimsky-docs
 
 Public documentation, lint tooling, and compilable reference examples for
-[rimsky](https://github.com/fallguyconsulting/rimsky), the reactive
+[rimsky](https://github.com/rimsky-ai/rimsky-core), the reactive
 node-graph orchestration platform.
 
 ## Layout
@@ -21,7 +21,7 @@ node-graph orchestration platform.
   - `rimsky-docs-glossary` — publishes `docs/glossary.md` as a verbatim
     copy of rimsky's concept catalog (`.ok-planner/design/concepts.md`).
 - `examples/` — compilable Go reference impls (own `go.mod`, imports
-  `github.com/fallguyconsulting/rimsky/protocols`). Today contains
+  `github.com/rimsky-ai/rimsky-core/protocols`). Today contains
   `atomic-staging-fs-producer/` with four scenario tests under
   `scenarios/`.
 - `llms.txt`, `llms-full.txt` — repo-root copies of the agent-oriented

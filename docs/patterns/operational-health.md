@@ -4,8 +4,8 @@ definition: |
   How operators observe and maintain a running rimsky deployment: lifecycle subscribers for audit and per-tenant rollups, retry-loop detection, parked-node watchdogs, frame-stuck warnings.
 proto_symbol: (none)
 config_field: (none)
-api_surface: GET /v1/observability/summary
-related: [lifecycle-subscriber, parked, frame, retry-no-progress]
+api_surface: GET /admin/diagnostics/held-frames, GET /admin/diagnostics/parked-nodes, GET /metrics
+related: [lifecycle-subscriber, parked-state, frame, error-policy]
 deprecated_terms: []
 ---
 
@@ -21,28 +21,41 @@ operational patterns that compose them.
 ### Lifecycle-subscriber services
 
 Any service registered with `protocols: [claim_producer, lifecycle_subscriber]`
-in `rimsky.yml` receives the six lifecycle events at the points they
-fire (template registered/deployed/undeployed/deregistered, instance
-created/terminated). Wire a domain-shaped audit log to a
-LifecycleSubscriber and the audit trail composes for free. The events
-are persistently idempotent (rimsky records each `(producer,
-scope_kind, scope_id)` triple it has already fired); a
-re-fire under the same `(producer, scope_kind, scope_id)` is a no-op
-on the consumer side.
+in `rimsky.yml` receives the seven lifecycle events at the points they
+fire: the four template events (registered / deployed / undeployed /
+deregistered), the two instance events (created / terminated), and the
+run-scope-terminal event (carrying the run-scope id and a terminal
+reason). Template and instance events fire from the control-api; the
+run-scope-terminal event fires from the supervisor that closes the
+scope. Wire a domain-shaped audit log to a lifecycle subscriber and the
+audit trail composes for free. The events are persistently idempotent:
+rimsky tracks a per-`(service, event)` ledger and fires each pair
+exactly once, so a re-fire is a no-op on the consumer side.
 
 ### Watchdog graphs
 
 A graph instance can run forever and check itself: a scheduled node
-that polls a metric, queries the control API, and either sleeps until
-the next tick or invalidates a downstream remediation node when an
-alarm condition fires. This pattern lets operators express incident
-response as a graph rather than as ad hoc scripts.
+that polls a metric, queries the control API, and emits a terminal
+signal that a downstream remediation node subscribes to when an alarm
+condition fires. This pattern lets operators express incident response
+as a graph rather than as ad hoc scripts.
 
-The scheduling primitives:
-- `cron:` on a node fires it at the configured cadence.
-- `force-fire` on a scheduled node bypasses the cadence (admin-only).
-- `on_executor_complete` with `invalidate` chains the watchdog into a
-  remediation graph.
+The primitives that compose the watchdog:
+- The standalone **`sensor-cron` publisher** fires the cadence. It is a
+  Publisher-protocol service that evaluates cron expressions and POSTs a
+  message envelope into the control API (`POST /instances/{id}/messages`,
+  `sender_kind=publisher`) on each tick; the watchdog node subscribes to
+  that message. (Template-level `cron:` node fields and the admin
+  force-fire route were retired — cron firing lives only in `sensor-cron`
+  now.)
+- A receiver-side **node subscription** chains the watchdog into a
+  remediation graph: the remediation node subscribes to the watchdog
+  node's settling signal — `{ node: <watchdog-type>, type: terminal/success,
+  when: <CEL over the payload>, frame: next }` — and fires only when the
+  watchdog's payload signals an alarm. (This replaces the retired
+  send-side `on_executor_complete: { invalidate: ... }` form; propagation
+  is now driven by subscriber matches against the emitted signal, not by
+  the sender. See [`concepts/node-subscription.md`](../concepts/node-subscription.md).)
 
 ### Control-API polling
 

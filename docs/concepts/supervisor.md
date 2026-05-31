@@ -34,10 +34,6 @@ Executor name resolution now carries the dispatch's instance / run-scope identit
 
 The supervisor's role was once split differently pre-phase-5; the unified runner is the current home.
 
-## Open within this concept
-
-(no live tensions distinct from `claim-handle`, `node-run`, and the verify-before-run / acquisition-tx invariants)
-
 ## Notes
 
 - 2026-05-24 — Adds breakpoint checkpoint cooperation per spec:2026-05-24-instance-debugger. Pause-mode breakpoints block the runner until resume; notify_only breakpoints emit a hit row and continue. Pause-mode block uses polling (250ms) on the persisted breakpoint-hit row's resume marker; no cross-process IPC bus.

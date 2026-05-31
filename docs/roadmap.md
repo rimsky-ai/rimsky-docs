@@ -96,7 +96,7 @@ Major work landed since the previous roadmap pass:
   `rimsky-cli` → `rimsky` with new `auth` subcommand group.
 
 Each cycle has its archived spec and plan under `.ok-planner/history/`;
-the published `CHANGELOG.md` tracks what shipped.
+the public release tags track what shipped.
 
 ## Active design
 

@@ -5,11 +5,13 @@ description: "ONLY activated by explicit /build-docs slash command. Never auto-t
 
 # Build Docs: Reconcile the published docs against rimsky
 
-`rimsky-docs` publishes documentation, lint tooling, runnable examples, and
-deployment bundles for [rimsky](https://github.com/fallguyconsulting/rimsky).
-This skill drives one job: **bring every published artifact in this repo
-current against the rimsky source of truth**, then prove it by building,
-testing, generating, and linting.
+`rimsky-docs` publishes **agent-facing** documentation, lint tooling, and a
+deployment bundle for [rimsky](https://github.com/rimsky-ai/rimsky-core). The
+docs are written for a coding agent pointed at rimsky ("can rimsky help with my
+project? if so, build a template / deployment plan for it") — not for a human
+reading a tour. This skill drives one job: **bring every published artifact in
+this repo current against the rimsky source of truth**, then prove it by
+building, testing, generating, and linting.
 
 The skill is the orchestrator. It does not write docs or run builds itself —
 it dispatches one subagent per surface, calls the repo's Go binaries for
@@ -19,24 +21,71 @@ smoke checks, and lints are all green.
 
 ## The source of truth
 
-rimsky is checked out as a sibling of this repo. Three kinds of source feed the
-published surface; every surface reconciles against one of them:
+The source of truth is the **latest public release** of rimsky — the official
+repo `https://github.com/rimsky-ai/rimsky-core` at its newest release tag, not
+an unreleased `dev` working tree. Preflight (step 0) resolves that tag and
+acquires a read-only checkout of it; `${RIMSKY_REPO}` points there. Three kinds
+of source feed the published surface; every surface reconciles against one of
+them:
 
 - **Design concept catalog** — `${RIMSKY_REPO}/.ok-planner/design/concepts/*.md`.
   One file per noun in rimsky, carrying the full architectural story. Feeds
-  `docs/concepts/` and the conceptual material in the five-pager.
-- **Code, protos, and config schema** — `${RIMSKY_REPO}/protocols/proto/v1/*.proto`,
+  `docs/concepts/`.
+- **Code, protos, and config schema** — `${RIMSKY_REPO}/lib/protocols/proto/v1/*.proto`,
   the protocols module's hand-written Go packages
-  (`${RIMSKY_REPO}/protocols/{claimproducer,lifecycle,action,serverkit,publisherkit,conformance}`),
-  rimsky's code-side READMEs (`executors/`, etc.), the `rimsky.yml`
+  (`${RIMSKY_REPO}/lib/protocols/{claimproducer,lifecycle,action,serverkit,publisherkit,conformance}`),
+  rimsky's code-side READMEs (`lib/services/executors/`, etc.), the `rimsky.yml`
   config schema, and the control-API routes. Feeds the protocol / store /
   executor / blob-backend / mcp-server reference and the operator material.
   These docs are **generated from the code**.
 - **Runtime behavior** — verified by actually building and running the
-  executable bundles (`examples/`, `quickstart/`, `deploy/`).
+  executable `deploy/` bundle.
 
 Treat the rimsky checkout as read-only. This skill never writes into rimsky;
 it only reads from it.
+
+### rimsky layout (v0.4.0 and later)
+
+rimsky restructured at v0.4.0 — its Go code moved under `lib/` and the module
+was renamed. The orchestrator must thread these paths into every subagent
+prompt (the templates below assume them) and into the mechanical binaries:
+
+- **Wire protos** — `${RIMSKY_REPO}/lib/protocols/proto/v1/*.proto`.
+- **Public Go module** (the single module a service imports) —
+  `${RIMSKY_REPO}/lib/protocols`, module path
+  `github.com/rimsky-ai/rimsky-core/lib/protocols`. It carries the wire bindings
+  (`proto/v1/gen`) plus the optional helper packages `claimproducer`,
+  `lifecycle`, `action`, `serverkit`, `publisherkit`, `conformance`. There is
+  **no separate Go SDK**.
+- **Reference services** — reintegrated in-tree under
+  `${RIMSKY_REPO}/lib/services/{stores,executors,sensors,subscribers}`, each with
+  its own `Dockerfile.*`. There is **no separate `rimsky-services` repo** and the
+  deploy stack does **not** pull their images from ghcr — it builds them from the
+  checkout. The standalone stub executor (`lib/services/test/stubexecutor/`) is
+  Execute-only — it advertises no attribute schema, so a node with an
+  `attributes:` block on it fails dispatch with `executor_schema_unavailable`;
+  the `deploy/` stack's `http-node`/`claude-agent` (stub mode) *do* advertise a
+  schema. The stub claim-producer is an in-process test double at
+  `test/support/stores/stub/` with **no** standalone binary, so the `deploy/`
+  stack uses the filesystem store as its claim-producer.
+- **Control plane + MCP server** — `${RIMSKY_REPO}/lib/control/controlapi` (MCP
+  server under `.../mcp`); config loader at `lib/control/config`. The control-API
+  health route is `/health` (the dashboard's is `/healthz`).
+- **Dockerfiles** — `${RIMSKY_REPO}/dockerfiles/`: `Dockerfile.rimsky` (all role
+  binaries + `rimsky-entrypoint` under one PID-1, self-contained — the all-in-one
+  role image), `Dockerfile.all-in-one` (zero-config layer
+  `FROM rimsky:latest`, not self-contained), `Dockerfile.go-base` (single-binary
+  builder selected by the `BINARY` arg, e.g. `rimsky-control-api`). Per-service
+  Dockerfiles live under `lib/services/.../Dockerfile.*`. All build contexts are
+  the rimsky-core repo root.
+- **Conformance** — the `rimsky conformance <protocol>` CLI subcommand
+  (`cmd/rimsky/conformance.go`), not the retired standalone
+  `cmd/rimsky-*-conformance` binaries; the importable runners live under
+  `lib/protocols/conformance/`.
+
+The dashboard is a separate sibling repo (`rimsky-dashboard`, default
+`../rimsky-dashboard`, override `RIMSKY_DASHBOARD_REPO`) that the `deploy/` stack
+builds from source.
 
 ## What this skill owns
 
@@ -44,46 +93,93 @@ it only reads from it.
 |---|---|---|
 | `docs/concepts/*.md` | design concept catalog | Skill-owned. Near-verbatim copy of `design/concepts/*.md`, minus design-process scaffolding (tensions/discovery refs). Overwrite. |
 | `docs/protocols/*.md` guides, `docs/stores/`, `docs/executors/`, `docs/blob-backends/`, `docs/mcp-servers/` | code + protos + rimsky READMEs + the generated references | Agent-written explanation layer; refine against source. |
-| `docs/protocols/reference/*.md` | rimsky `protocols/proto/v1/*.proto` | Mechanical (`rimsky-docs-proto`); never hand-edit. |
-| `docs/protocols/go-packages.md` | rimsky `protocols/` hand-written Go packages (godoc) | Mechanical (`rimsky-docs-gopkg`); never hand-edit. |
+| `docs/protocols/reference/*.md` | rimsky `lib/protocols/proto/v1/*.proto` | Mechanical (`rimsky-docs-proto`); never hand-edit. |
+| `docs/protocols/go-packages.md` | rimsky `lib/protocols/` hand-written Go packages (godoc) | Mechanical (`rimsky-docs-gopkg`); never hand-edit. |
+| `docs/reference/template-schema.md` | rimsky `lib/foundation/spec/` structs | Mechanical (`rimsky-docs-template-ref`); never hand-edit. |
+| `docs/reference/rest-api.md` | rimsky `lib/control/controlapi/actions.go` | Mechanical (`rimsky-docs-rest-ref`); never hand-edit. |
+| `docs/reference/cli.md` | the `rimsky` CLI's `help` output | Mechanical (`rimsky-docs-cli-ref`); never hand-edit. |
 | `docs/operator-guide.md`, `docs/comparison.md`, `docs/roadmap.md`, `docs/licensing.md` | code + design + `deploy/` | Generated/derived; refine. |
 | `docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
-| `docs/humans/` (five-pager) | rimsky `README.md` + concepts | Hand-shaped. Refine facts/vocab/links; preserve narrative. |
-| `docs/cookbook/*.md` | cookbook entries + concepts + `deploy/`, `quickstart/` | Hand-initiated, skill-drafted. New entries via `cookbook add`. |
+| `docs/cookbook/*.md` | rimsky's primitives + concepts + `deploy/` | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts and the published `deploy/` stack. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. |
 | `docs/agents/llms.txt` | the files it links to | Curated index. Flag drift; do not overwrite. |
-| `docs/agents/errors/`, `docs/agents/examples/` | code error classes + examples | Mostly human. Flag drift/additions; do not overwrite. |
-| `examples/` | rimsky protos + claim-producer API | Runtime artifact. `go build` + `go test` every run. |
-| `quickstart/` | `rimsky.yml` schema + image/CLI surface | Runtime artifact. Config + link validation + live smoke test. |
-| `deploy/` | `rimsky.yml` schema + Helm + images | Runtime artifact. Config + Helm validation + `smoke-test.sh`. |
+| `docs/agents/errors/`, `docs/agents/examples/` | code error classes + template/instance examples | Mostly human. Flag drift/additions; do not overwrite. |
+| `docs/services/` | rimsky `lib/services/` + `deploy/` config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
+| `docs/images/` | rimsky `dockerfiles/` + per-service Dockerfiles + `deploy/` | Derive-and-verify catalog of the official images. Refine against source. |
+| `deploy/` | `rimsky.yml` schema + `lib/services/` images | Runtime artifact. Config + link validation + full-stack smoke (compose `up --build` → control-API `/health` → `down`). All services build from the rimsky checkout — no ghcr. |
 
 "Refine" on a hand-shaped surface means: **bring the facts, vocabulary, and
 links current against source while preserving the human's narrative
 structure** — update what is stale, never flatten editorial work. Generated
 surfaces have no such constraint; they are fully skill-owned.
 
+## The run journal
+
+Every run keeps an append-only journal at `.build-docs/journal.md` (gitignored
+run scratch — the durable output is the printed `report.md`, not the journal).
+It is the shared spine and the handoff to the review stage: the reconcile
+subagents and the orchestrator append `decision` and `flag` entries as they go
+(judgment calls among materially different options; things that can't be
+resolved from this repo), then `/refine-docs` appends `round` entries and renders
+the journal into the report. **`/refine-docs` is the canonical owner of the
+journal schema (`decision` / `flag` / `round`) and the report renderer** — see
+that skill for the entry format and the attention-table layout.
+
 ## Invocation
 
-- `/build-docs` — full reconcile pass over every surface.
-- `/build-docs cookbook add "<pattern name>"` — draft a new cookbook entry for
-  the named pattern, then fold it into the normal pass.
+- `/build-docs` — full reconcile pass over every surface (preflight → reconcile →
+  mechanical → build/test → lint → review/refine → report). The review/refine
+  loop is the separate **`/refine-docs`** skill, which this skill invokes at its
+  review stage.
 
-There is no single-surface or delta-only mode. Every run reconciles the full
+There is no single-surface or delta-only mode. Every run reconciles the whole
 surface from the current source. The model is **create if missing, refine if
 present, idempotent** — running twice against unchanged source changes nothing.
+To re-run just the review → fix → converge loop afterward, use `/refine-docs`.
 
 ## Process
 
 ### 0. Preflight
 
-1. Resolve the rimsky checkout. Default: `../rimsky` relative to this repo
-   root. Confirm it exists and looks like rimsky (`.ok-planner/design/concepts/`
-   and `protocols/proto/v1/` both present). If not, stop and tell the user the
-   sibling rimsky checkout is missing — this is a genuine blocker.
-2. Export `RIMSKY_REPO` as an absolute path to that checkout. Every Go binary
-   and every subagent prompt uses it.
-3. If invoked as `cookbook add "<name>"`, note the new entry name; it joins the
-   cookbook surface's work list in step 1.
+1. **Resolve the source-of-truth release.** The published docs track the latest
+   *public release* of rimsky, not unreleased `dev` work. Resolve the latest
+   release tag of `https://github.com/rimsky-ai/rimsky-core`:
+
+   ```bash
+   RIMSKY_TAG=$(gh api repos/rimsky-ai/rimsky-core/releases/latest --jq .tag_name)
+   # fallback when gh is unavailable:
+   #   RIMSKY_TAG=$(git ls-remote --tags --sort=-v:refname \
+   #     https://github.com/rimsky-ai/rimsky-core \
+   #     | grep -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's@refs/tags/@@' | head -1)
+   ```
+
+2. **Acquire that tag, read-only.** Shallow-clone it into the gitignored
+   run-scratch cache (reuse if the tag already matches), and point `RIMSKY_REPO`
+   at it. Every Go binary and every subagent prompt uses `RIMSKY_REPO`.
+
+   ```bash
+   dest=".build-docs/rimsky-core@${RIMSKY_TAG}"
+   [ -d "$dest" ] || git clone --depth 1 --branch "$RIMSKY_TAG" \
+     https://github.com/rimsky-ai/rimsky-core "$dest"
+   export RIMSKY_REPO="$(cd "$dest" && pwd)"
+   ```
+
+   Treat the checkout as read-only (standing rule). Confirm it looks like rimsky
+   (`.ok-planner/design/concepts/` and `lib/protocols/proto/v1/` both present —
+   note the `lib/` prefix as of v0.4.0). If the repo is unreachable and no
+   override is set, stop — this is a genuine blocker.
+
+   **Override for local dev / offline.** If `RIMSKY_REPO` is already exported
+   (e.g. pointing at a local sibling checkout), use it as-is and skip the
+   resolve+clone. Record in the report which ref the run reconciled against (the
+   resolved tag, or `local: <branch>@<sha>`), because a local `dev` tree may be
+   ahead of the latest release.
+
+3. **Open the run journal.** Create the gitignored `.build-docs/journal.md` (see
+   "The run journal"). Its first line records the resolved ref. Every phase —
+   reconcile subagents, the orchestrator, and the review/refine loop — appends
+   `decision` / `flag` / `round` entries to it; step 6 renders it.
+
 
 ### 1. Reconcile every surface (parallel subagents)
 
@@ -93,17 +189,29 @@ calls. Each subagent reconciles its whole surface (create-if-missing /
 refine-if-present) and returns a per-surface change list plus any items it
 flagged for human attention.
 
+Every surface prompt must also instruct the subagent to return, separately from
+its change list, two structured lists for the run journal (see "The run
+journal"): **`decision`** entries — judgment calls it made among materially
+different options (what it chose, the alternative, one-line why) — and
+**`flag`** entries — things it could not resolve from this repo (`source-conflict`
+/ `unimplemented` / `declined-addition`). The orchestrator appends every
+returned entry to `.build-docs/journal.md`, plus its own entries for
+orchestrator-level calls (e.g. a bundle-topology decision, or choosing to flag
+rather than edit a verbatim concept page).
+
 Surfaces:
 - concepts
 - code-reference (the prose guides for protocols / stores / executors /
   blob-backends / mcp-servers, including the protocols module's optional Go
   helper packages — the *generated* references under `docs/protocols/reference/`
   (wire) and `docs/protocols/go-packages.md` (Go packages) are mechanical, step 2)
-- humans (five-pager)
 - cookbook
+- catalogs (the `docs/services/` and `docs/images/` derive-and-verify
+  catalogs — the *generated* references under `docs/reference/` are mechanical,
+  step 2)
 - agents-index (llms.txt + errors/ + examples/ drift flagging)
-- bundles (examples / quickstart / deploy prose reconciliation only — the
-  build/test/smoke happens in step 3, not here)
+- bundles (`deploy/` prose reconciliation only — the build/test/smoke happens in
+  step 3, not here)
 
 ### 2. Mechanical generation
 
@@ -114,6 +222,9 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-llms-full
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-glossary
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-proto
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-gopkg
+cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-template-ref
+cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-rest-ref
+cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-cli-ref
 ```
 
 `rimsky-docs-llms-full` writes `docs/agents/llms-full.txt` + the repo-root copy
@@ -121,46 +232,57 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-gopkg
 guides). `rimsky-docs-glossary` publishes `docs/glossary.md` as a verbatim copy
 of rimsky's `.ok-planner/design/concepts.md` catalog. `rimsky-docs-proto`
 generates the wire-protocol reference under `docs/protocols/reference/` from
-rimsky's `protocols/proto/v1/*.proto` (services, messages, fields, enums + their
+rimsky's `lib/protocols/proto/v1/*.proto` (services, messages, fields, enums + their
 proto comments). `rimsky-docs-gopkg` generates `docs/protocols/go-packages.md`
 from the godoc of the protocols module's hand-written Go packages
 (`claimproducer`, `lifecycle`, `action`, `serverkit`, `publisherkit`,
 `conformance`) — the optional helpers a Go service may import; the `proto/`
-bindings are excluded (they are the wire reference's job). All of
-these are mechanical — never hand-edit them.
+bindings are excluded (they are the wire reference's job).
+
+The three `docs/reference/` generators are the **definitive specifics layer** an
+agent reads to build a template / deployment plan: `rimsky-docs-template-ref`
+writes `docs/reference/template-schema.md` (the complete template / `rimsky.yml`
+schema, from the spec structs under `lib/foundation/spec/`); `rimsky-docs-rest-ref`
+writes `docs/reference/rest-api.md` (every control-API route + method + per-action
+auth gate, from the action registry `lib/control/controlapi/actions.go`); and
+`rimsky-docs-cli-ref` writes `docs/reference/cli.md` from the `rimsky` CLI's own
+`help` output (it shells `go run ./cmd/rimsky` inside `${RIMSKY_REPO}`, so that
+checkout must build — slower than the others).
+
+All of these are mechanical — never hand-edit them.
 
 ### 3. Build and test everything — always
 
 No gating, no flags. Run all of it every pass:
 
 ```bash
-# Go tooling
+# Go tooling (the docs generators + lint)
 cd cmd && go build ./... && go test ./...
 
-# Runnable example — scenario tests against the sibling rimsky checkout
-# (examples/go.mod replaces protocols with ../../rimsky/protocols)
-cd examples && go build ./... && go test ./...
-
-# quickstart smoke — compose builds the images from the rimsky checkout
-cd quickstart && docker compose up -d --build && ./rimsky health && docker compose down
-
-# deploy smoke — compose builds the rimsky images; rimsky-services images pull
-cd deploy && docker compose up -d --build && curl -fsS http://localhost:8080/healthz && docker compose down
+# deploy smoke — compose builds ALL images from the rimsky checkout (core
+# processes via dockerfiles/Dockerfile.go-base, the reintegrated lib/services
+# stores/executors/sensors via their own Dockerfiles, dashboard from the
+# sibling). The control-API health route is /health. Many host ports are
+# published; override the *_HOST_PORT vars if they collide.
+cd deploy && docker compose up -d --build && curl -fsS http://localhost:8080/health && docker compose down -v
 ```
 
-If `examples` or the bundles fail to build/run, the artifact has drifted from
-rimsky's current proto / config / image surface. That is a real finding —
-hand it to a fixer subagent (step 5), do not paper over it.
+If the `deploy/` bundle fails to build/run, the artifact has drifted from
+rimsky's current config / image surface. That is a real finding — hand it to a
+fixer subagent (step 5), do not paper over it.
 
-**Docker-build precondition.** The quickstart and deploy compose files build
-rimsky's images directly via `build:` sections whose context is the rimsky
-checkout (`${RIMSKY_REPO:-../../rimsky}`); the Dockerfiles live in rimsky
-(`Dockerfile.all`, `Dockerfile.go-base` at its root, the stub Dockerfiles in
-their packages). So `RIMSKY_REPO` must resolve to a rimsky checkout. The deploy
-stack additionally pulls `rimsky-services/*` images from ghcr (a separate repo);
-without registry access its smoke test can't complete — note that rather than
-treating it as drift. If Docker itself is unavailable, that is a blocker for the
-smoke portion — report it rather than skipping silently.
+**Docker-build precondition.** The `deploy/` compose file builds
+every rimsky image directly via `build:` sections whose context is the rimsky
+checkout (`${RIMSKY_REPO:-../../rimsky-core}`); the Dockerfiles live under
+`${RIMSKY_REPO}/dockerfiles/` (`Dockerfile.rimsky`, `Dockerfile.all-in-one`,
+`Dockerfile.go-base`) and per-service under `lib/services/.../Dockerfile.*` (see
+the layout note above). So `RIMSKY_REPO` must resolve to a rimsky-core checkout.
+As of the services-reintegration there is **no ghcr pull** — the deploy stack
+builds its stores/executors/sensors from `lib/services/`, so its smoke runs
+fully offline. The dashboard builds from the `rimsky-dashboard` sibling
+(`RIMSKY_DASHBOARD_REPO`, default `../../rimsky-dashboard`). If Docker itself is
+unavailable, that is a blocker for the smoke portion — report it rather than
+skipping silently.
 
 ### 4. Lint gate
 
@@ -171,20 +293,30 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-lint all
 If any lint fails, hand the failures to a fixer subagent (step 5) and re-run
 until clean.
 
-### 5. Review and fix loop
+### 5. Review/refine — invoke `/refine-docs`
 
-For each surface that changed, dispatch a reviewer subagent (template below)
-that reads the surface as it now exists and reports real issues. Hand every
-issue — plus any red test, red smoke check, or failed lint — to a fixer
-subagent. Re-review, re-test, re-lint. Iterate until everything is green and
-review is clean. Do not triage or defer findings.
+Invoke the `/refine-docs` skill (via the Skill tool). It runs the review → fix →
+converge loop over the surfaces this run changed, against the same `RIMSKY_REPO`
+and the same `.build-docs/journal.md` this run has been writing; it re-runs the
+lint gate each round, converges (two dry rounds, or nine rounds max), and renders
+the convergence summary + attention table into `.build-docs/report.md`. Pass it
+any red test or smoke result from step 3 as seed issues. See `/refine-docs` for
+the loop mechanics and the journal / report format — including the reviewer and
+fixer subagent templates, which now live there.
 
 ### 6. Report
 
-Print a per-surface summary: what was created, what was refined, what was
-flagged for human attention (hand-shaped surfaces the skill chose not to
-overwrite), and the final test / smoke / lint results. Do not commit — this
-repo's rules forbid commits unless the user explicitly asks.
+`/refine-docs` (step 5) has already rendered the **convergence summary** and the
+**attention table** (judgment calls · source-side conflicts · declined
+additions) into `.build-docs/report.md` from the run journal. Prepend the run
+header and print the whole thing:
+
+- the ref reconciled against (release tag, or `local: <branch>@<sha>` override);
+- the final build / test / smoke / lint results;
+- the per-surface change summary: created / refined / removed.
+
+Do not commit — this repo's rules forbid commits unless the user explicitly
+asks.
 
 ## Surface subagent templates
 
@@ -253,11 +385,18 @@ the subagent has not seen this conversation. Always pass the absolute
 > narrative belongs in `docs/protocols/` guides, cross-linking into
 > `docs/protocols/go-packages.md` rather than restating signatures.
 >
-> Sources: `${RIMSKY_REPO}/protocols/proto/v1/*.proto` and the generated
-> `docs/protocols/reference/`; the protocols module's hand-written Go packages
-> and the generated `docs/protocols/go-packages.md`; rimsky's code-side READMEs,
-> the `rimsky.yml` config schema, and the control-API routes. When the code says
-> something different from a guide, the code wins.
+> Sources (rimsky v0.4.0 — the Go code lives under `lib/`):
+> `${RIMSKY_REPO}/lib/protocols/proto/v1/*.proto` and the generated
+> `docs/protocols/reference/`; the protocols module's hand-written Go packages at
+> `${RIMSKY_REPO}/lib/protocols/{claimproducer,lifecycle,action,serverkit,publisherkit,conformance}`
+> and the generated `docs/protocols/go-packages.md`; rimsky's code-side READMEs
+> and concrete service implementations under
+> `${RIMSKY_REPO}/lib/services/{stores,executors,sensors,subscribers}` (reintegrated
+> in-tree — there is **no** separate `rimsky-services` repo); the `rimsky.yml`
+> config schema (loader at `lib/control/config`); and the control-API routes
+> (`lib/control/controlapi`). Conformance is the `rimsky conformance <protocol>`
+> CLI subcommand, not a standalone `cmd/rimsky-*-conformance` binary. When the
+> code says something different from a guide, the code wins.
 >
 > For each guide: create if the underlying protocol/store/executor/helper exists
 > in rimsky but no guide does; refine if present; remove if the underlying thing
@@ -269,50 +408,40 @@ the subagent has not seen this conversation. Always pass the absolute
 > Return: guides created / refined / removed, and any named symbol / field /
 > route that does not resolve in the source.
 
-### humans (five-pager)
-
-> Reconcile the human-facing five-pager under `docs/humans/` against current
-> rimsky.
->
-> Primary source: rimsky's `README.md` (the canonical five-pager narrative) plus
-> the concept pages it references. This surface is hand-shaped: **refine, do not
-> regenerate.** Bring facts, vocabulary, links, and primitive names current;
-> preserve the existing narrative structure and voice. The five-pager must
-> include a page that calls out the surprises a reader would not expect —
-> notably rimsky's loop and recursion support.
->
-> If `docs/humans/` is empty or missing pages, create the page set from the
-> README narrative, split into coherent pages (what rimsky is; mental model and
-> vocabulary; the surprises; a worked example end-to-end; where to go next —
-> handing off to the agents docs and the cookbook). Validate that every internal
-> link resolves into the published surface.
->
-> Return: pages created / refined, links that don't resolve, and any place where
-> source and the existing narrative conflict in a way you chose not to overwrite
-> (flag for human attention rather than flattening).
-
 ### cookbook
 
-> Reconcile `docs/cookbook/` — patterns one level more general than tutorials
-> (e.g. "build a one-node queue worker", "fan out over a group of folders with a
-> partitioned claim", "modify local files via an executor proxy").
+> Reconcile `docs/cookbook/` to the **minimal canonical set of patterns rimsky's
+> primitives span** — patterns one level more general than tutorials (e.g. "build
+> a one-node queue worker", "fan out over a group of folders with a partitioned
+> claim", "modify local files via an executor proxy", "a loop that retries until
+> a payload settles"). The cookbook is a *derived* surface: its membership comes
+> from what rimsky can actually do, not from ad-hoc ideas.
 >
-> For each existing cookbook entry: refine it against the current concepts it
-> references and against `deploy/` and `quickstart/`. Every recipe must be
-> executable on top of the published `quickstart/` or `deploy/` stack — a reader
-> should be able to run it. Structure each: problem statement, the rimsky shape
-> (which primitives and why), a complete walkthrough that runs on the published
-> stack, and a "without rimsky" baseline.
+> Work it as coverage → parsimony, not intake:
+> 1. **Enumerate broadly.** From the published concepts (`docs/concepts/`) and
+>    rimsky's primitives — claims, claim scopes, named locks, fan-out, cascade,
+>    loops/recursion, the executor/publisher/subscriber protocols, sensors —
+>    enumerate the distinct usage patterns those primitives and their
+>    combinations enable.
+> 2. **Reduce to a minimal unique set.** Cluster near-duplicates and pick one
+>    canonical representative per cluster; drop variations that teach no distinct
+>    lesson. The goal is a small spanning set, not an exhaustive pile.
+> 3. **Check coverage.** Look for primitive-combinations no canonical pattern
+>    exercises yet — those are gaps to add. Do not silently prune: every
+>    candidate you merged or dropped is a `decision` entry (what you kept, what it
+>    subsumed, why), and any combination you can't yet ground on the stacks is a
+>    `flag`.
+> 4. **Reconcile the cookbook to that set.** Create canonical patterns that are
+>    missing; merge/retire entries that are redundant or no longer canonical;
+>    refine the survivors. Structure each: problem statement, the rimsky shape
+>    (which primitives and why), a complete walkthrough that runs on the published
+>    `deploy/` stack, and a "without rimsky" baseline. Every recipe must be
+>    runnable on the `deploy/` stack — a reader should be able to run it.
 >
-> {{IF cookbook add}} Additionally, draft a new entry for the pattern named
-> "<NAME>": pick the concepts it exercises, write the walkthrough against the
-> published stack, and place it at `docs/cookbook/<slug>.md`. {{END IF}}
->
-> Do not invent new patterns beyond existing entries and any explicitly
-> requested one.
->
-> Return: entries created / refined, and any recipe whose walkthrough you could
-> not make runnable against the current `quickstart/` or `deploy/` stack.
+> Return: the canonical pattern set (created / refined / merged / retired, with a
+> one-line rationale each), the `decision` entries for merges and drops, and any
+> pattern whose walkthrough you could not make runnable against the current
+> `deploy/` stack (as `flag` entries).
 
 ### agents-index
 
@@ -321,9 +450,10 @@ the subagent has not seen this conversation. Always pass the absolute
 > Read `docs/agents/llms.txt` and every file it links to; verify the links
 > resolve and the index still describes what those files contain. Read
 > `docs/agents/errors/` against rimsky's actual error classes and
-> `docs/agents/examples/` against the runnable examples. These surfaces are
-> human-curated — your job is to flag drift (dead links, missing error classes
-> newly present in rimsky, examples that no longer match), not to rewrite.
+> `docs/agents/examples/` (template/instance walkthroughs) against rimsky's
+> current behavior. These surfaces are human-curated — your job is to flag drift
+> (dead links, missing error classes newly present in rimsky, walkthroughs that
+> no longer match rimsky), not to rewrite.
 >
 > Do not touch `docs/agents/llms-full.txt` — it is mechanically regenerated.
 >
@@ -331,42 +461,43 @@ the subagent has not seen this conversation. Always pass the absolute
 
 ### bundles (prose only)
 
-> Reconcile the prose of the executable bundles against their code and against
-> the published docs. Surfaces: `examples/atomic-staging-fs-producer/README.md`,
-> `quickstart/README.md`, `deploy/` docs, and the published walkthrough
-> `docs/agents/examples/atomic-staging.md`.
+> Reconcile the prose of the `deploy/` bundle against its code/config and the
+> published docs. Surface: the `deploy/` compose + config comments and the
+> operator-facing deploy guidance in `docs/operator-guide.md`.
 >
 > Do not build or test here — that happens in the orchestrator. Your job is text
-> coherence: the READMEs and walkthroughs must match what the code and configs
-> actually do, and every doc link must resolve into the published surface (the
-> quickstart README's links to `docs/concepts/`, `docs/humans/`, etc. must
-> point at real files).
+> coherence: the compose/config comments and the operator guide must match what
+> the code and configs actually do, and every doc link must resolve into the
+> published surface.
 >
 > Return: prose reconciled, and any link or claim that does not match the code /
 > config / published surface.
 
-## Reviewer subagent template
+### catalogs (services + images)
 
-> Review the `<SURFACE>` documentation surface in rimsky-docs as it now exists
-> (read the files; this is not a diff review). Source of truth for this surface
-> is `<SOURCE>`. Report real issues only — factual drift from source, broken
-> links, citation-grammar violations, internal
-> inconsistency, recipes that won't run. Do not nitpick style. Return a flat
-> list of issues, each with a file:line and a one-line description of what is
-> wrong and what it should be.
-
-## Fixer subagent template
-
-> Fix every issue in the list below in the `<SURFACE>` surface of rimsky-docs.
-> Do not triage, defer, or mark anything out of scope — fix them all, including
-> any that look pre-existing. Source of truth: `<SOURCE>`. Follow rimsky's
-> citation grammar in `${RIMSKY_REPO}/.claude/rules/citation-grammar.md`, and
-> treat the source's vocabulary as the reference. After fixing, confirm the
-> relevant generation / test / lint command for this surface passes. Return what
-> you changed.
+> Reconcile the two derive-and-verify reference catalogs against rimsky source.
+> Surfaces: `docs/services/` (the bundled services —
+> `${RIMSKY_REPO}/lib/services/{stores,executors,sensors,subscribers}` plus the
+> `deploy/` config that wires them) and `docs/images/` (the official images —
+> `${RIMSKY_REPO}/dockerfiles/` + per-service `lib/services/.../Dockerfile.*` +
+> the image names in `deploy/docker-compose.yml`).
 >
-> Issues:
-> <ISSUE LIST>
+> For each service: what it is, the protocol(s) it implements, its config keys /
+> env vars, ports, and the Dockerfile that builds it — verified against the
+> service's own config struct and the `deploy/` wiring; the code wins. For each
+> image: name (as tagged in deploy compose), contents (binary/service), base, and
+> the Dockerfile + build context. Note that all images build from the rimsky
+> checkout (no ghcr) and the dashboard builds from the `rimsky-dashboard`
+> sibling. Clean end-user prose; every internal link resolves; cross-link to the
+> relevant `docs/concepts/` and `docs/protocols/` pages.
+>
+> Return: services / images cataloged (created / refined), and any service or
+> image whose config / ports / Dockerfile you could not resolve in the source
+> (as `flag` entries).
+
+The **reviewer** and **fixer** subagent templates used by the review/refine loop
+live in the `/refine-docs` skill (which owns that loop). They are not duplicated
+here.
 
 ## Notes
 

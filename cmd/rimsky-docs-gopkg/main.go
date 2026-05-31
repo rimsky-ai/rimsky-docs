@@ -4,7 +4,7 @@
 
 // main.go — rimsky-docs-gopkg. Generates a markdown reference for the
 // hand-written Go packages of rimsky's protocols module
-// (`${RIMSKY_REPO}/protocols/`) using only the standard library's go/parser
+// (`${RIMSKY_REPO}/lib/protocols/`) using only the standard library's go/parser
 // and go/doc. The protocols module is the single public Go module a service
 // implementer imports: the wire contract plus a few optional helper packages.
 // This tool documents those Go packages — the contract ergonomics
@@ -33,8 +33,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	defaultProtocolsDir := rimskyRepo + "/protocols"
-	protocolsDir := flag.String("protocols-dir", defaultProtocolsDir, "rimsky protocols module directory (defaults to ${RIMSKY_REPO}/protocols)")
+	defaultProtocolsDir := rimskyRepo + "/lib/protocols"
+	protocolsDir := flag.String("protocols-dir", defaultProtocolsDir, "rimsky protocols module directory (defaults to ${RIMSKY_REPO}/lib/protocols)")
 	out := flag.String("out", "../docs/protocols/go-packages.md", "path to write the Go package reference (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()

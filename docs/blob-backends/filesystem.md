@@ -47,7 +47,7 @@ persistence:
 ## Conformance
 
 ```sh
-go run ./cmd/rimsky-blob-backend-conformance \
+rimsky conformance blob-backend \
   --backend filesystem \
   --root /tmp/blob-conformance
 ```

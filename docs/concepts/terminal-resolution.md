@@ -55,10 +55,6 @@ Owns: the four-stage flow as one coherent narrative, the kind→signal-type-path
 
 The "auto-terminal" name applies specifically to the held-claim branch of Stage 4 (`auto-terminal-aggregate-resolution`). The spine as a whole has no canonical name in the source; this concept introduces "terminal resolution" as the umbrella. Pre-2026-05-12 the wire proto had separate per-terminal messages (complete, blocked, errored, park-requested, async-accepted); post-E.2 the wire shape is a single stream-close event carrying one outcome variant (success, error, park, await-async-callback), with the park outcome's reason drawn from the closed set `AWAIT_CALLBACK | SNOOZE`, and the supervisor's internal terminal-kind classification synthesizes the legacy `executor_blocked` error class from the error outcome's error-class field.
 
-## Open within this concept
-
-(none live; the blocked-vs-errored routing tension was resolved by `spec:2026-05-12-nomenclature-resolution` Group E.2 / E.9 / E.10.)
-
 ## Notes
 
 - Wire-event vocabulary updated for the post-`spec:2026-05-12-nomenclature-resolution` Group E.2 proto restructure (a single stream-close event + an outcome variant; the error-handling step was renamed and the app-error handler folded into the error-policy step). The five-stage spine narrative survives unchanged at the supervisor-internal level; only the wire shape and the internal handler names move.

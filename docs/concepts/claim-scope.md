@@ -46,10 +46,6 @@ The pre-v3 codebase used "region" as a synonym; that term is fully retired (per 
 
 Renamed from `scope` to `claim-scope` per `spec:2026-05-22-fan-out-safety-scope-first-design`, to disambiguate from `concept:run-scope` (the execution-context concept). The legacy bare-`scope` term is fully retired.
 
-## Open within this concept
-
-(none live; the `region` legacy-synonym tension was resolved by the schema rebase and the in-code comment removal in the conflict predicate.)
-
 ## Common pitfalls
 
 - Confusing selector with claim scope. The selector is what the template author writes (and may contain unresolved substitution directives); the claim scope is the canonical-byte form returned by the producer post-acquisition.

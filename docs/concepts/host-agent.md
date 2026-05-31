@@ -30,10 +30,6 @@ Owns: dev-machine process spawn/exec, local HTTP listener termination, the agent
 
 None.
 
-## Open within this concept
-
-None at creation time.
-
 ## Notes
 
 - [2026-05-24] Concept created per spec 2026-05-24-host-agent-and-proxy-design. The agent is bundled into the `rimsky` CLI and runs as `rimsky agent {start, status, stop}`; it connects outbound to a `concept:host-agent-proxy` and serves spawn/dispatch/reap/local-HTTP-forward against dev-machine binaries named per-instance via `concept:instance` service bindings.

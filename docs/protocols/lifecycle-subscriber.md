@@ -1,6 +1,6 @@
 # Implementing a lifecycle subscriber
 
-This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
+This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `lib/protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
 
 <!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
 > An opt-in protocol for services that want to react to template, instance, and run-scope state transitions. Seven methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`, `OnRunScopeTerminal`. Template/instance events fire synchronously from the control-api process; the run-scope-terminal event fires from the rimsky-side process that owns the transition (control-api for main scopes, the supervisor for sub-graph and fan-out-partition scopes).
@@ -43,7 +43,7 @@ Without that entry, the service is silently skipped during fan-out — there's n
 
 The flag is per-service, not per-protocol. A service that implements both `ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server registers handlers for both.
 
-There are two distinct surfaces here: the rimsky.yml `protocols: [...]` list (above) is what tells rimsky to *fan out* to the service. Separately, a producer binary that ships a no-op `LifecycleSubscriber` may gate whether it actually *registers* the handlers behind its own startup-config flag — the in-tree stub reads `enable_lifecycle: true` from its own config (`stores/stub/cmd`), not from rimsky.yml — so operators can turn the handlers on without forking the binary.
+There are two distinct surfaces here: the rimsky.yml `protocols: [...]` list (above) is what tells rimsky to *fan out* to the service. Separately, a producer binary that ships a no-op `LifecycleSubscriber` may gate whether it actually *registers* the handlers behind its own startup-config flag — the in-tree stub store (`test/support/stores/stub/`) registers its handlers only when its own server config sets `enable_lifecycle: true`, not from rimsky.yml — so operators can turn the handlers on without forking the binary.
 
 ## 3. The seven events
 
@@ -96,7 +96,7 @@ Implications:
 
 ## 6. Reference impl
 
-There's no standalone reference lifecycle-subscriber binary in the repo — lifecycle handlers ride inside producer binaries. The in-tree example is the stub store (`stores/stub/`), whose server registers `LifecycleSubscriber` handlers when its own startup config sets `enable_lifecycle: true`.
+There's no standalone reference `LifecycleSubscriber` binary in the tree — lifecycle handlers ride inside producer binaries. The in-tree example is the stub store (`test/support/stores/stub/`), whose server registers `LifecycleSubscriber` handlers when its own config sets `enable_lifecycle: true`. (The in-tree OpenLineage subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of the lineage projection, not a `LifecycleSubscriber` implementation — it is a different integration shape.)
 
 Two config surfaces, in two different files:
 

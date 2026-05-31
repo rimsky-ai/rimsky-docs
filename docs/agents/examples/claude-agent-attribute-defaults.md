@@ -10,7 +10,7 @@ This example demonstrates the structural-inertness discipline (see `concept:iner
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub ignores attribute values for behavior selection — its job here is simply to receive the dispatch and emit a terminal `Complete`. The proof that Rimsky did not substitute the static default is upstream of the executor: the `attributes_substituted` event in the events log records the fields Rimsky resolved at dispatch.
+The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub ignores attribute values for behavior selection — its job here is simply to receive the dispatch and close the stream with a terminal `StreamClose{Success}`. The proof that Rimsky did not substitute the static default is upstream of the executor: the `attributes_substituted` event in the events log records the fields Rimsky resolved at dispatch.
 
 ## 1. The template
 

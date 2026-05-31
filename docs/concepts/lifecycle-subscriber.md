@@ -29,10 +29,6 @@ Owns: the seven event types, the synchronous fan-out timing, the opt-in subscrip
 
 The protocol was extracted from the claim-producer protocol under the layer-crystallization plan, Phase 4.
 
-## Open within this concept
-
-(no specific live tensions)
-
 ## Notes
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

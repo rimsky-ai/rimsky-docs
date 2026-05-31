@@ -38,10 +38,6 @@ Owns: the enum values, the envelope handshake, the realized-per-claim value, the
 
 Pre-`spec:2026-05-12-nomenclature-resolution` Group C, the operator-facing config key was the "write-semantics envelope" (with a single-value shortcut accepted as a one-element list). Both forms are retired: the canonical key is the "write-semantics allowed" setting, and the single-value shortcut is rejected with a precise error message. The corresponding capabilities field was renamed to match.
 
-## Open within this concept
-
-(none live; the write-semantics-envelope rename and the single-value alias retirement both landed under `spec:2026-05-12-nomenclature-resolution`.)
-
 ## Notes
 
 - Write-semantics-envelope → write-semantics-allowed key rename per `spec:2026-05-12-nomenclature-resolution` Group C.2. Single-value config shortcut retired per Group C.1.

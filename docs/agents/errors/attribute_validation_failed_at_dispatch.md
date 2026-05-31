@@ -7,11 +7,13 @@ surfaced_to: cli-user
 
 ## What it means
 
-After resolving `{{...}}` substitution directives, the resulting input attributes did not validate against the node's `attributes:` schema. The dispatch was rejected; the node did not run.
+After resolving `{{...}}` substitution directives, the resulting input attributes did not validate against the node's effective `attributes:` schema (composition violations, type mismatches, override-vs-schema conflicts, or a dispatch-bag failure against the executor's advertised `expected_attributes_schema`). The supervisor routed the failure through `Error{ error_class: "template_validation_failed" }` and emitted a `template_validation_failed` event; the dispatch was rejected and the node did not run.
 
 ## When it happens
 
-Most commonly when an upstream node's committed attributes don't match the consuming node's expected types — a substitution returns a value whose JSON shape doesn't fit the schema. Also: a `{{params.<key>}}` reference resolved to an unexpected type, or a missing-but-required field.
+Most commonly when an upstream node's committed attributes don't match the consuming node's expected types — a substitution returns a value whose JSON shape doesn't fit the schema. Also: a `{{params.<key>}}` reference resolved to an unexpected type, a template default that conflicts with the schema, or a value the executor's advertised `expected_attributes_schema` rejects.
+
+(A *missing* required source — a strict directive that resolved to nothing — is a different class, `template_resolution_failed`, the canonical retry-after-cascade case. An executor whose `expected_attributes_schema` is not yet visible at dispatch surfaces as `executor_schema_unavailable`.)
 
 ## What to do
 

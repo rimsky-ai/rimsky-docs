@@ -7,5 +7,3 @@ Complete, copy-pasteable, no-ellipsis examples. Each file is runnable as written
 - [`two-node-with-claim.md`](two-node-with-claim.md) — claim dependency between two nodes.
 - [`claude-agent-attribute-defaults.md`](claude-agent-attribute-defaults.md) — claude-agent executor receiving model and prompts via attribute `default:` entries.
 - [`holding-subgraph.md`](holding-subgraph.md) — held-claim resolution via `holds:`.
-- [`rimsky-compose-multi-template.md`](rimsky-compose-multi-template.md) — multi-template project.
-- [`atomic-staging.md`](atomic-staging.md) — atomic stage / verify / commit via a held subgraph and a filesystem claim-producer (the runnable bundle in `examples/atomic-staging-fs-producer/`).

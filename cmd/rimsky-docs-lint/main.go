@@ -4,7 +4,7 @@
 
 // main.go — rimsky-docs-lint. Five structural lints enforce the integrity of
 // the public-documentation surface (docs/concepts/, docs/protocols/,
-// docs/agents/, docs/humans/, docs/glossary.md): frontmatter (concept +
+// docs/agents/, docs/glossary.md): frontmatter (concept +
 // error-file frontmatter shape), glossary-parity (docs/glossary.md matches the
 // rimsky concept catalog), citation-drift (every `concept:<slug>` reference
 // resolves to a published concept page), llms-txt-validity (llms.txt

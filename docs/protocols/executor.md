@@ -1,6 +1,6 @@
 # Implementing an executor
 
-This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `protocols/proto/v1/executor.proto` (the required dispatch protocol) and `protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); the mechanically-generated field/message/RPC references are at [`reference/executor.md`](reference/executor.md) and [`reference/executor-observability.md`](reference/executor-observability.md). This guide is the practical companion. There is no executor SDK; a Go service may use the `protocols` module's `serverkit` helpers ([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON bridge scaffolding, or implement straight against the wire types in any language.
+This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `lib/protocols/proto/v1/executor.proto` (the required dispatch protocol) and `lib/protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); the mechanically-generated field/message/RPC references are at [`reference/executor.md`](reference/executor.md) and [`reference/executor-observability.md`](reference/executor-observability.md). This guide is the practical companion. There is no executor SDK; a Go service may use the `protocols` module's `serverkit` helpers ([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON bridge scaffolding, or implement straight against the wire types in any language.
 
 <!-- @source: ../../.ok-planner/design/concepts/executor.md -->
 > The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
@@ -19,7 +19,7 @@ service Executor {
 }
 ```
 
-Source: `protocols/proto/v1/executor.proto`.
+Source: `lib/protocols/proto/v1/executor.proto`.
 
 The optional read-only observability protocol carries three:
 
@@ -31,7 +31,7 @@ service ExecutorObservability {
 }
 ```
 
-Source: `protocols/proto/v1/executor_observability.proto`.
+Source: `lib/protocols/proto/v1/executor_observability.proto`.
 
 Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
 
@@ -142,19 +142,19 @@ When `resume_context` is empty, this is a fresh dispatch. Executors that do not 
 
 ## 5. Conformance
 
-The `cmd/rimsky-executor-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
+The `rimsky conformance executor` subcommand exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
 
 ```
-rimsky-executor-conformance --endpoint <your-executor-host:port> --transport grpc
+rimsky conformance executor --endpoint <your-executor-host:port> --transport grpc
 ```
 
-For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance.
+For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance. The same checks are exposed as a Go library under `lib/protocols/conformance/executor` so you can invoke them from your own tests.
 
 ## 6. Reference impls
 
-The in-tree reference executor is the stub at `executors/stub/` — a test double (Meszaros sense) for scenario tests, conformance, and no-op smoke deployments. **Not a skeleton template** — see [`../executors/stub/README.md`](../executors/stub/README.md).
+The in-tree test-double executor is the stub at `test/support/executors/stub/` — a test double (Meszaros sense) for scenario tests and conformance. **Not a skeleton template** — see [`../executors/stub/README.md`](../executors/stub/README.md).
 
-The production-shaped reference executors — `http-node` (Go; HTTP-call workloads) and `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the async-callback path end-to-end) — live in the separate `rimsky-services` repository (`pkg:github.com/fallguyconsulting/rimsky-services/executors/...`). They are illustrative, not part of rimsky's tree.
+The production-shaped reference executors ship in rimsky's tree under `lib/services/executors/`: `http-node` (Go; HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the async-callback path end-to-end), plus the `verifier-http` and `verifier-shape-checks` verifier executors. Each carries its own README and config; read them alongside the wire contract when building an executor of your own.
 
 ## See also
 

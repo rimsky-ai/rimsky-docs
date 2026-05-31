@@ -43,7 +43,7 @@ persistence:
 ## Conformance
 
 ```sh
-go run ./cmd/rimsky-blob-backend-conformance \
+rimsky conformance blob-backend \
   --backend pg-largeobject \
   --pg-conn-string "postgres://user:pass@host:5432/db"
 ```

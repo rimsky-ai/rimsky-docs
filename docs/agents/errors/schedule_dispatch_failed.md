@@ -7,17 +7,17 @@ surfaced_to: operator
 
 ## What it means
 
-A scheduled fire-time arrived but the corresponding node could not be dispatched. The schedule advances to the next fire-time per its cron expression; the missed fire is NOT backfilled.
+A scheduled fire from the cron sensor could not be delivered: posting the observation message to the control plane failed. The fire is not lost — the sensor does not advance `next_fire_at`, so the same fire is retried on the next tick.
 
 ## When it happens
 
-The target node was missing, the instance had been deleted, the executor was unreachable, or claim/lock acquisition failed and the scheduler did not retry within the configured window.
+When the cron sensor's fire path cannot post its message envelope (for example the control plane is unreachable, returns an error, or rejects the message). The sensor logs `sensor-cron.message_post_failed` and leaves the watch's `next_fire_at` unchanged so the next tick retries the same fire window. Because the idempotency key is `subscription_id + fire-window`, a retry within the same window dedupes server-side rather than double-firing.
 
 ## What to do
 
-Check the dispatch failure event in the event log to identify the root cause. Schedule cron advances from the recorded next-fire-at, not from the wall clock — if you need to re-fire the missed time manually, use the admin force-fire endpoint (`POST /admin/scheduled-nodes/{node_id}/force-fire`).
+Check that the control plane is reachable from the sensor and that the target node and message kind are valid. Inspect the sensor logs for the `sensor-cron.message_post_failed` entry and its `error` field. Once the underlying delivery problem clears, the next tick delivers the pending fire automatically.
 
 ## See also
 
-- [`../../concepts/cascade.md`](../../concepts/cascade.md)
-- [`../../concepts/node.md`](../../concepts/node.md)
+- [`../../concepts/sensor.md`](../../concepts/sensor.md)
+- [`../../concepts/publisher-subscription.md`](../../concepts/publisher-subscription.md)

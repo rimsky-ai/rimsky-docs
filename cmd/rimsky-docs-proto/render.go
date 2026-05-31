@@ -45,7 +45,7 @@ func renderFile(fdp *descriptorpb.FileDescriptorProto) string {
 
 	fmt.Fprintf(&b, "%s\n\n", autogenBanner)
 	fmt.Fprintf(&b, "# %s\n\n", titleize(fdp.GetName()))
-	fmt.Fprintf(&b, "Source: `protocols/proto/v1/%s`\n\n", fdp.GetName())
+	fmt.Fprintf(&b, "Source: `lib/protocols/proto/v1/%s`\n\n", fdp.GetName())
 
 	// File-level comment: protoc records it under the package-declaration
 	// location ([2]) or an empty path.

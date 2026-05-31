@@ -61,10 +61,6 @@ Pre-2026-05-23 the policy vocabulary included `invalidate(targets)`, `discard_th
 
 The policy-chain resolver was renamed per `spec:2026-05-12-nomenclature-resolution` (audit ride-along I.2).
 
-## Open within this concept
-
-(none live; the previously open tensions on action-count drift and blocked-vs-errored routing were resolved by `spec:2026-05-12-nomenclature-resolution` Groups E.2 / E.9 / E.10 / I.2.)
-
 ## Notes
 
 - Action vocabulary consolidated to four (`retry`, `invalidate(targets)`, `give_up`, `pass`) per `spec:2026-05-12-nomenclature-resolution` audit cross-layer #9. The policy-chain resolver was renamed (ride-along I.2). Wire-level blocked terminal collapsed into an error outcome bearing the `executor_blocked` error class (Group E.2); the `on_executor_blocked` lifecycle-handler slot retired (E.10).

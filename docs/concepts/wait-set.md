@@ -44,10 +44,6 @@ Drained rows are the durable record of "which senders contributed to this receiv
 
 None. The pre-2026-05-14 model used a per-node declared-dependencies list for both cascade fan-out and eligibility gating; the wait-set replaces the eligibility role.
 
-## Open within this concept
-
-None at present.
-
 ## Notes
 
 - 2026-05-14: concept introduced by `spec:2026-05-14-subscription-cascade-and-quality-of-life`. The wait-set ledger is added to the baseline schema; cascade walks insert rows + settled-state drain deletes them.

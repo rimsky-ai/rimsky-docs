@@ -33,10 +33,6 @@ Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fi
 
 The foreign-key column on the holders table was renamed from a lock-holder reference to a claim-handle reference. Pre-Phase-5 the same algorithm ran against an earlier lock-holders table; post-baseline-rebase it runs against the claim-handles ledger. Pre-2026-05-17 the main path was a claimant-guarded delete; post-refactor it's a Promote (active → committed/abandoned) followed by retention-sweep or Release-path absence-guarded deletion later.
 
-## Open within this concept
-
-(no live tensions distinct from `claim-handle`)
-
 ## Notes
 
 State-column refactor per spec:2026-05-17-post-data-platform-cleanup: the main auto-terminal path moved from a direct delete to a Promote; the row is preserved past terminal for forensics. Carve-out paths (the shared abandon helper) still delete directly because those rows never went through Promote.
