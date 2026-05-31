@@ -27,7 +27,7 @@ var linkRE = regexp.MustCompile(`\]\(([^)]+)\)`)
 // another surface removed.
 func runLinkValidity(args []string) error {
 	fs := flag.NewFlagSet("link-validity", flag.ContinueOnError)
-	scope := fs.String("scope", "../docs", "comma-separated doc roots to scan (relative to cmd/ cwd)")
+	scope := fs.String("scope", "../rimsky/skills/rimsky/docs", "comma-separated doc roots to scan (relative to cmd/ cwd)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

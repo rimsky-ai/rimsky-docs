@@ -32,7 +32,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	out := flag.String("out", "../docs/reference/cli.md", "path to write the CLI reference (relative to cmd/ cwd)")
+	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/cli.md", "path to write the CLI reference (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 

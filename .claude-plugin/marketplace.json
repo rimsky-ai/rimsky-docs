@@ -1,0 +1,14 @@
+{
+  "name": "rimsky-docs",
+  "owner": {
+    "name": "Fall Guy Consulting"
+  },
+  "description": "Agent-facing documentation for rimsky, the reactive node-graph orchestration platform, packaged as an installable Claude Code skill. Reconciled against a pinned rimsky release.",
+  "plugins": [
+    {
+      "name": "rimsky",
+      "source": "./rimsky",
+      "description": "Rimsky knowledge skill: design, build, deploy, and debug rimsky workflows against the bundled docs corpus."
+    }
+  ]
+}

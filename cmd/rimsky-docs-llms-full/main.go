@@ -32,8 +32,8 @@ func main() {
 	// protocol guides live in this repo under `docs/protocols/`.
 	defaultConcepts := rimskyRepo + "/.ok-planner/design/concepts"
 	conceptsDir := flag.String("concepts-dir", defaultConcepts, "path to concept files (defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts)")
-	protocolsDir := flag.String("protocols-dir", "../docs/protocols", "path to protocol guides (relative to cmd/ cwd)")
-	outputFile := flag.String("output", "../docs/agents/llms-full.txt", "path to write generated llms-full.txt (relative to cmd/ cwd)")
+	protocolsDir := flag.String("protocols-dir", "../rimsky/skills/rimsky/docs/protocols", "path to protocol guides (relative to cmd/ cwd)")
+	outputFile := flag.String("output", "../rimsky/skills/rimsky/docs/agents/llms-full.txt", "path to write generated llms-full.txt (relative to cmd/ cwd)")
 	rootOutputFile := flag.String("root-output", "../llms-full.txt", "path to write repo-root copy (empty to skip; relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches generated; exit non-zero on diff")
 	flag.Parse()

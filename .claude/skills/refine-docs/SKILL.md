@@ -72,8 +72,14 @@ Each **round**:
    changed when invoked by build-docs), dispatch a reviewer subagent (template
    below) that reads the surface as it now exists and reports real issues —
    factual drift from source, broken links, internal inconsistency, recipes that
-   won't run.
-2. Hand every issue — plus any red test, smoke check, or failed lint passed in
+   won't run. The **skill-packaging** surface is in scope like any other: the
+   corpus lives under `rimsky/skills/rimsky/docs/`, wrapped by the `rimsky` skill
+   (`rimsky/skills/rimsky/SKILL.md`) inside the marketplace's one plugin
+   (`rimsky/.claude-plugin/plugin.json`). A "real issue" there is a `SKILL.md`
+   router link that does not resolve under the corpus, drift between the two
+   entry points (`SKILL.md` vs `rimsky/skills/rimsky/docs/agents/llms.txt`), or a
+   `plugin.json` `version` that no longer matches the reconciled rimsky release.
+2. Hand every issue — plus any red test or failed lint passed in
    as a seed — to a fixer subagent. Fixers never triage or defer; they fix
    everything and return `decision`/`flag` entries for the journal.
 3. Re-run the lint gate (below). Append a `round` entry: round number, found,
@@ -115,7 +121,7 @@ Render the journal into `.build-docs/report.md` and print it:
      left for human curation.
 
 When `build-docs` invoked this skill, it prepends the run header (the resolved
-ref, the build / test / smoke results, and the per-surface created/refined/
+ref, the build / test results, and the per-surface created/refined/
 removed summary) to this report. Do not commit — repo rules forbid commits
 unless the user explicitly asks.
 

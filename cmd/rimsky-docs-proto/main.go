@@ -30,7 +30,7 @@ func main() {
 
 	defaultProtoDir := rimskyRepo + "/lib/protocols/proto/v1"
 	protoDir := flag.String("proto-dir", defaultProtoDir, "directory of .proto files (defaults to ${RIMSKY_REPO}/lib/protocols/proto/v1)")
-	outDir := flag.String("out-dir", "../docs/protocols", "directory to write reference markdown into (relative to cmd/ cwd)")
+	outDir := flag.String("out-dir", "../rimsky/skills/rimsky/docs/protocols", "directory to write reference markdown into (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 

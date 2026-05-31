@@ -38,7 +38,7 @@ func main() {
 
 	defaultSpecDir := rimskyRepo + "/lib/foundation/spec"
 	specDir := flag.String("spec-dir", defaultSpecDir, "rimsky spec package directory (defaults to ${RIMSKY_REPO}/lib/foundation/spec)")
-	out := flag.String("out", "../docs/reference/template-schema.md", "path to write the template schema reference (relative to cmd/ cwd)")
+	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/template-schema.md", "path to write the template schema reference (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 

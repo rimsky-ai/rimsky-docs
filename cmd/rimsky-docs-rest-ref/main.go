@@ -37,7 +37,7 @@ func main() {
 
 	defaultActionsFile := rimskyRepo + "/lib/control/controlapi/actions.go"
 	actionsFile := flag.String("actions-file", defaultActionsFile, "rimsky control-api action registry source (defaults to ${RIMSKY_REPO}/lib/control/controlapi/actions.go)")
-	out := flag.String("out", "../docs/reference/rest-api.md", "path to write the REST API reference (relative to cmd/ cwd)")
+	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/rest-api.md", "path to write the REST API reference (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 

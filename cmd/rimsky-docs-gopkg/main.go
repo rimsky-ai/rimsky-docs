@@ -35,7 +35,7 @@ func main() {
 
 	defaultProtocolsDir := rimskyRepo + "/lib/protocols"
 	protocolsDir := flag.String("protocols-dir", defaultProtocolsDir, "rimsky protocols module directory (defaults to ${RIMSKY_REPO}/lib/protocols)")
-	out := flag.String("out", "../docs/protocols/go-packages.md", "path to write the Go package reference (relative to cmd/ cwd)")
+	out := flag.String("out", "../rimsky/skills/rimsky/docs/protocols/go-packages.md", "path to write the Go package reference (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 

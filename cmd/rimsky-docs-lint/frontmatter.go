@@ -45,8 +45,8 @@ var surfacedToAllowlist = map[string]struct{}{
 
 func runFrontmatter(args []string) error {
 	fs := flag.NewFlagSet("frontmatter", flag.ContinueOnError)
-	dir := fs.String("dir", "../docs/concepts", "concept directory to validate (relative to cmd/ cwd)")
-	errorsDir := fs.String("errors-dir", "../docs/agents/errors", "errors directory to validate (relative to cmd/ cwd)")
+	dir := fs.String("dir", "../rimsky/skills/rimsky/docs/concepts", "concept directory to validate (relative to cmd/ cwd)")
+	errorsDir := fs.String("errors-dir", "../rimsky/skills/rimsky/docs/agents/errors", "errors directory to validate (relative to cmd/ cwd)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

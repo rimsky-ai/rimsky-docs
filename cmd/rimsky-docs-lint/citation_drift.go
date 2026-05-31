@@ -21,8 +21,8 @@ var conceptRefRE = regexp.MustCompile(`concept:([a-z0-9-]+)`)
 
 func runCitationDrift(args []string) error {
 	fs := flag.NewFlagSet("citation-drift", flag.ContinueOnError)
-	publicSurface := fs.String("scope", "../docs/concepts,../docs/protocols", "comma-separated public-surface roots (relative to cmd/ cwd)")
-	conceptsDir := fs.String("concepts-dir", "../docs/concepts", "path to published concept pages (reference targets; relative to cmd/ cwd)")
+	publicSurface := fs.String("scope", "../rimsky/skills/rimsky/docs/concepts,../rimsky/skills/rimsky/docs/protocols", "comma-separated public-surface roots (relative to cmd/ cwd)")
+	conceptsDir := fs.String("concepts-dir", "../rimsky/skills/rimsky/docs/concepts", "path to published concept pages (reference targets; relative to cmd/ cwd)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

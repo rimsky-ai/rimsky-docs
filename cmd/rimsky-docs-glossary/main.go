@@ -28,7 +28,7 @@ func main() {
 	// IS the public glossary. We publish it verbatim.
 	defaultCatalog := rimskyRepo + "/.ok-planner/design/concepts.md"
 	catalogFile := flag.String("catalog", defaultCatalog, "path to the source concept catalog (defaults to ${RIMSKY_REPO}/.ok-planner/design/concepts.md)")
-	outputFile := flag.String("output", "../docs/glossary.md", "path to write the published glossary (relative to cmd/ cwd)")
+	outputFile := flag.String("output", "../rimsky/skills/rimsky/docs/glossary.md", "path to write the published glossary (relative to cmd/ cwd)")
 	check := flag.Bool("check", false, "verify existing output matches source catalog; exit non-zero on diff")
 	flag.Parse()
 

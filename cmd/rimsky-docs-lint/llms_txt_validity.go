@@ -19,9 +19,9 @@ var markdownLinkRE = regexp.MustCompile(`\[[^\]]+\]\(([^)]+)\)`)
 
 func runLLMSTxtValidity(args []string) error {
 	fs := flag.NewFlagSet("llms-txt-validity", flag.ContinueOnError)
-	llmsTxt := fs.String("llms-txt", "../docs/agents/llms.txt", "path to llms.txt (relative to cmd/ cwd)")
-	llmsFull := fs.String("llms-full", "../docs/agents/llms-full.txt", "path to llms-full.txt (relative to cmd/ cwd)")
-	repoRoot := fs.String("repo-root", "..", "rimsky-docs repo root for link resolution (relative to cmd/ cwd)")
+	llmsTxt := fs.String("llms-txt", "../rimsky/skills/rimsky/docs/agents/llms.txt", "path to llms.txt (relative to cmd/ cwd)")
+	llmsFull := fs.String("llms-full", "../rimsky/skills/rimsky/docs/agents/llms-full.txt", "path to llms-full.txt (relative to cmd/ cwd)")
+	repoRoot := fs.String("repo-root", "../rimsky/skills/rimsky", "base dir whose docs/ subtree resolves docs-root-relative llms.txt link targets (relative to cmd/ cwd)")
 	rootLLMSTxt := fs.String("root-llms-txt", "../llms.txt", "repo-root copy (relative to cmd/ cwd)")
 	rootLLMSFull := fs.String("root-llms-full", "../llms-full.txt", "repo-root copy (relative to cmd/ cwd)")
 	if err := fs.Parse(args); err != nil {

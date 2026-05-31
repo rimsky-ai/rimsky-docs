@@ -17,7 +17,7 @@ import (
 // from the source concept catalog.
 func runGlossaryParity(args []string) error {
 	fs := flag.NewFlagSet("glossary-parity", flag.ContinueOnError)
-	outputPath := fs.String("output", "../docs/glossary.md", "path to existing glossary file (relative to exec cwd)")
+	outputPath := fs.String("output", "../rimsky/skills/rimsky/docs/glossary.md", "path to existing glossary file (relative to exec cwd)")
 	// repoRoot is the cwd for the inner `go run ./rimsky-docs-glossary`.
 	// Default "." resolves the module path from the lint binary's own cwd
 	// (rimsky-docs/cmd/). Tests override it to point at the module root.
