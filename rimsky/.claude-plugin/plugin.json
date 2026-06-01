@@ -1,7 +1,8 @@
 {
   "name": "rimsky",
-  "version": "0.4.1",
-  "description": "Agent-facing knowledge for rimsky, the reactive node-graph orchestration platform: the node-graph model, the full concept catalog, protocol implementation guides, the rimsky.yml/template schema, REST and CLI references, cookbook and systems-design patterns, deployment, and an error catalog. The version tracks the rimsky release this corpus was reconciled against.",
+  "version": "1.0.0",
+  "reconciledAgainst": "v0.4.1",
+  "description": "Agent-facing knowledge for rimsky, the reactive node-graph orchestration platform: the node-graph model, the full concept catalog, protocol implementation guides, the rimsky.yml/template schema, REST and CLI references, cookbook and systems-design patterns, deployment, and an error catalog. Its reconciledAgainst field records the rimsky release this corpus documents; version is this plugin's own release version.",
   "author": {
     "name": "Fall Guy Consulting"
   },

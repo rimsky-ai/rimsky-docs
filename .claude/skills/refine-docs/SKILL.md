@@ -78,7 +78,9 @@ Each **round**:
    (`rimsky/.claude-plugin/plugin.json`). A "real issue" there is a `SKILL.md`
    router link that does not resolve under the corpus, drift between the two
    entry points (`SKILL.md` vs `rimsky/skills/rimsky/docs/agents/llms.txt`), or a
-   `plugin.json` `version` that no longer matches the reconciled rimsky release.
+   `plugin.json` `reconciledAgainst` that no longer names the rimsky release the
+   corpus reconciles against (the `version` field is rimsky-docs' own release
+   semver, owned by `/release` — not a reconciliation concern).
 2. Hand every issue — plus any red test or failed lint passed in
    as a seed — to a fixer subagent. Fixers never triage or defer; they fix
    everything and return `decision`/`flag` entries for the journal.

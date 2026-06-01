@@ -18,10 +18,13 @@ The corpus is packaged as an installable Claude Code skill. This repo is a
 `rimsky`, whose skill bundles the whole corpus under `rimsky/skills/rimsky/`.
 An agent reaches the corpus through one of two entry points — `SKILL.md` (the
 Claude Code skill router) and `rimsky/skills/rimsky/docs/agents/llms.txt` (the
-llms.txt entry for other agents) — and the plugin version
-(`rimsky/.claude-plugin/plugin.json`) tracks the rimsky release this run
-reconciles against. The skill router and that version stamp are reconciled
-surfaces too (see the ownership table and the `skill-packaging` surface), not
+llms.txt entry for other agents) — and the plugin manifest
+(`rimsky/.claude-plugin/plugin.json`) records the rimsky release this run
+reconciles against in its `reconciledAgainst` field (the manifest's own
+`version` is rimsky-docs' release semver, owned by the `/release` skill — this
+run never touches it). The skill router and that `reconciledAgainst` stamp are
+reconciled surfaces too (see the ownership table and the `skill-packaging`
+surface), not
 set-and-forget files.
 
 The skill is the orchestrator. It does not write docs or run builds itself —
@@ -135,7 +138,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
 | `rimsky/skills/rimsky/docs/images/` | rimsky `dockerfiles/` + per-service Dockerfiles | Derive-and-verify catalog of the published images. Refine against source. |
 | `rimsky/skills/rimsky/SKILL.md` | the corpus it routes to | Skill-owned router. Keep the mental model, the fit→design→implement→deploy→diagnose routing, and the concept-triage current as concepts / protocols / recipes are added or removed; every path it links must resolve. Refine, don't flatten. |
-| `rimsky/.claude-plugin/plugin.json` | the reconciled rimsky release | Set `version` to the release tag this run reconciled against ("the skill is the version"). |
+| `rimsky/.claude-plugin/plugin.json` | the reconciled rimsky release | Set `reconciledAgainst` to the rimsky release tag this run reconciled against (e.g. `v0.4.1`). Do **not** touch `version` — that is rimsky-docs' own release semver, owned by the `/release` skill. |
 | `.claude-plugin/marketplace.json` | the plugin set | Stable. Flag drift only (e.g. a renamed plugin or changed `source`); do not churn. |
 | `rimsky/skills/rimsky/docs/reference/config/` | `rimsky.yml` schema + the bundled services | Worked example configs (the unified `rimsky.yml`, the store and supervisor configs). Refine against the schema; keep them valid and copyable, with no removed-stack hostnames. |
 
@@ -265,8 +268,8 @@ Surfaces:
 - config-examples (the worked configs under `docs/reference/config/` — verify
   against the schema and the services they configure)
 - skill-packaging (the `SKILL.md` router, the two-entry-point parity between
-  `SKILL.md` and `docs/agents/llms.txt`, the `plugin.json` version stamp, and
-  any prose statement of the reconciled-against version)
+  `SKILL.md` and `docs/agents/llms.txt`, the `plugin.json` `reconciledAgainst`
+  stamp, and any prose statement of the reconciled-against rimsky version)
 - narrative (the higher-altitude derived prose: `docs/comparison.md`,
   `docs/roadmap.md`, `docs/licensing.md`, and `docs/patterns/*.md`)
 
@@ -582,12 +585,15 @@ not), reasoning kept as tight prose, source-anchored.
 >    `rimsky/skills/rimsky/docs/agents/llms.txt` (other agents) are the two entry
 >    points into the same corpus. Flag drift between what they advertise (a
 >    surface present in one entry's map but absent from the other).
-> 3. **`plugin.json` version.** Set `version` to the rimsky release tag this run
->    reconciled against — the skill *is* that version. (`marketplace.json` is
->    stable; flag drift, don't churn it.)
+> 3. **`plugin.json` `reconciledAgainst`.** Set `reconciledAgainst` to the
+>    rimsky release tag this run reconciled against (e.g. `v0.4.1`). Do **not**
+>    touch `version` — that is rimsky-docs' own release semver, owned by the
+>    `/release` skill, not the rimsky version. (`marketplace.json` is stable;
+>    flag drift, don't churn it.)
 > 4. **Prose version statements defer to `plugin.json`.** `plugin.json`'s
->    `version` is the single source of the reconciled-against release. Corpus
->    prose must NOT hard-code a release tag that can silently drift: phrase any
+>    `reconciledAgainst` is the single source of the rimsky release the corpus
+>    documents. Corpus prose must NOT hard-code that release tag where it can
+>    silently drift: phrase any
 >    "reconciled against …" sentence to defer to the plugin manifest rather than
 >    naming a version inline. Sweep the corpus for a concrete version pin
 >    (`currently vX.Y.Z`, `as of vX.Y.Z` outside an intentional historical note);

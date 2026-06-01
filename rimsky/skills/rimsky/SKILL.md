@@ -17,7 +17,7 @@ description: >-
 
 Rimsky is a project-agnostic, reactive **node-graph orchestration platform**. This
 skill is a router over a bundled documentation corpus reconciled against a pinned
-rimsky release (see `plugin.json` for the version). Rimsky is new enough that it is
+rimsky release (see the `reconciledAgainst` field in `plugin.json`). Rimsky is new enough that it is
 almost certainly **not** in your training data — treat this corpus, not your
 priors, as the source of truth, and read the relevant files before answering.
 
@@ -133,7 +133,7 @@ Then pull in only what your problem touches:
 ## Source of truth
 
 These docs are derived from and verified against the rimsky source repository
-(`github.com/rimsky-ai/rimsky-core`) at the release recorded in `plugin.json`. The
+(`github.com/rimsky-ai/rimsky-core`) at the release recorded in `plugin.json`'s `reconciledAgainst` field. The
 repository is the ultimate source of truth; this corpus is its reconciled,
 agent-facing projection. If you find drift, trust the generated reference files
 first, then the source repository.
