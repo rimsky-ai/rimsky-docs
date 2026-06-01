@@ -13,4 +13,9 @@ callback:
   # In a container deployment it should be the supervisor's service name; in k8s it is
   # the Service DNS. Falls back to the listener addr when empty — which is
   # wrong for any non-loopback deployment because the listener binds 0.0.0.0.
-  advertise_host: ${CALLBACK_ADVERTISE_HOST:-}
+  #
+  # Precedence: the env var RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST wins; this
+  # YAML value is the fallback. The file is os.ExpandEnv-expanded at load (Go
+  # syntax: ${VAR}, no bash ${VAR:-default} defaults), so the example below
+  # expands to empty when CALLBACK_ADVERTISE_HOST is unset.
+  advertise_host: ${CALLBACK_ADVERTISE_HOST}

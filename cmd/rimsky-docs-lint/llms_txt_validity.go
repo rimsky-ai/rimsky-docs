@@ -35,8 +35,10 @@ func runLLMSTxtValidity(args []string) error {
 	// resolve from the concatenated file's location. Only validate
 	// title + description on llms-full.
 	hits = append(hits, validateLLMSTxtShape(*llmsFull, *repoRoot, "docs/agents", false)...)
-	hits = append(hits, validateRootCopy(*llmsTxt, *rootLLMSTxt)...)
-	hits = append(hits, validateRootCopy(*llmsFull, *rootLLMSFull)...)
+	// The root llms.txt is a manual mirror of the curated index — refresh by copying it.
+	hits = append(hits, validateRootCopy(*llmsTxt, *rootLLMSTxt, fmt.Sprintf("copy the curated index to the repo root: `cp %s %s`", *llmsTxt, *rootLLMSTxt))...)
+	// The root llms-full.txt is generated; running the generator writes both the corpus and root copies.
+	hits = append(hits, validateRootCopy(*llmsFull, *rootLLMSFull, "rerun `rimsky-docs-llms-full` to refresh the generated copy")...)
 	if len(hits) > 0 {
 		return fmt.Errorf("llms-txt-validity failed:\n  - %s", strings.Join(hits, "\n  - "))
 	}
@@ -100,7 +102,7 @@ func validateLLMSTxtShape(path, repoRoot, baseDir string, validateLinks bool) []
 	return hits
 }
 
-func validateRootCopy(canonical, rootCopy string) []string {
+func validateRootCopy(canonical, rootCopy, refreshHint string) []string {
 	canon, err := os.ReadFile(canonical)
 	if err != nil {
 		return []string{fmt.Sprintf("%s: %v", canonical, err)}
@@ -110,7 +112,7 @@ func validateRootCopy(canonical, rootCopy string) []string {
 		return []string{fmt.Sprintf("%s: %v", rootCopy, err)}
 	}
 	if !bytes.Equal(canon, got) {
-		return []string{fmt.Sprintf("%s does not byte-equal %s; rerun `rimsky-docs-llms-full -root-output` to refresh both copies", rootCopy, canonical)}
+		return []string{fmt.Sprintf("%s does not byte-equal %s; %s", rootCopy, canonical, refreshHint)}
 	}
 	return nil
 }

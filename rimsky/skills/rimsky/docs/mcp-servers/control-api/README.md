@@ -9,7 +9,7 @@ The rimsky control-API exposes its operational surface as an MCP (Model Context 
 
 ## How it is mounted
 
-`POST /mcp` is gated by the `mcp:read` umbrella action, which the bundled `viewer` role covers via wildcard `*:read`. `initialize` and `tools/list` run inside the MCP server and never reach a tool. A `tools/call` re-enters the chi router through the catalog, so the call picks up the **per-tool action gate** there — a mutating tool still requires the matching write permission (e.g. `instance_create` requires `instance:create`).
+`POST /mcp` is gated by the `mcp:read` umbrella action, which the bundled `read-only` role covers via wildcard `*:read` (the `debug-operator` and `agent-supervisor` bundled roles also carry `*:read`). `initialize` and `tools/list` run inside the MCP server and never reach a tool. A `tools/call` re-enters the chi router through the catalog, so the call picks up the **per-tool action gate** there — a mutating tool still requires the matching write permission (e.g. `instance_create` requires `instance:create`).
 
 There is no separate MCP config block, no `CONTROL_API_URL` / `CONTROL_API_TOKEN` / `BIND_ADDR` / `PORT` environment surface, and no second process to deploy. The MCP surface inherits the control-API's bind address, TLS, and auth.
 
@@ -35,9 +35,9 @@ Error codes follow JSON-RPC: `-32700` parse error, `-32600` invalid request, `-3
 
 Tools are declared in the canonical action registry (`lib/control/controlapi/actions.go`); each maps to one control-API action and its HTTP route(s). The catalog is the source of truth — the list below is grouped for orientation, not hand-maintained field-by-field.
 
-- **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate`, `instance_pause`, `instance_resume`.
+- **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate` (graceful, `DELETE /instances/{idOrKey}`), `instance_kill` (force-terminate — mark terminal and abandon in-flight node-runs, `POST /instances/{idOrKey}/terminate`), `instance_pause`, `instance_resume`.
 - **Breakpoints:** `breakpoint_list`, `breakpoint_create`, `breakpoint_resume_hit`, `breakpoint_delete`.
-- **Templates:** `template_list`, `template_get`, `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
+- **Templates:** `template_list`, `template_get`, `template_validate` (read action; `POST /templates/validate`, gated by `template:validate`), `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
 - **Tags:** `tag_list`, `tag_create`, `tag_set`, `tag_delete`.
 - **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `POST /nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
 - **Messages:** `message_send`, `message_list`, `message_get`.

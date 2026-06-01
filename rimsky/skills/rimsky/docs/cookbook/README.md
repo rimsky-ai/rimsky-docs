@@ -37,8 +37,11 @@ All recipes run against a rimsky deployment — stand one up from the published 
   inbound message (operator- or publisher/sensor-emitted) delivered at a
   frame boundary and matched to a node by subscription.
 - **[Hand a claim from one node to the next](claim-handoff.md)** — a claim
-  co-held across a chain of nodes so the whole chain is one all-or-nothing
-  transaction, committed or abandoned once at the end.
+  co-held (`holds:`) across a chain of nodes so the whole chain is one
+  all-or-nothing transaction, committed or abandoned once at the end.
+- **[Call a reusable sub-graph like a function](sub-graph.md)** — a named
+  sub-graph invoked via `delegate:`; the entry node absorbs into the calling
+  node and the exit node's writeback carries back as the result.
 
 ## Related surfaces
 

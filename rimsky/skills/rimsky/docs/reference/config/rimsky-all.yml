@@ -1,6 +1,7 @@
-# Default rimsky.yml baked into rimsky/all. Operators override via:
+# Default rimsky.yml baked into the rimsky-all-in-one image. Operators
+# override via:
 #
-#   docker run -v ./my.yml:/etc/rimsky/rimsky.yml:ro rimsky/all
+#   docker run -v ./my.yml:/etc/rimsky/rimsky.yml:ro rimskyai/rimsky-all-in-one
 #
 # The unified image targets local development. Per spec §7.4, stores: {}
 # and executors: {} are intentionally empty — end-to-end work is exercised

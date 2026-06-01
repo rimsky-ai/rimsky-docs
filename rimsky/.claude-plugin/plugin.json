@@ -1,6 +1,6 @@
 {
   "name": "rimsky",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Agent-facing knowledge for rimsky, the reactive node-graph orchestration platform: the node-graph model, the full concept catalog, protocol implementation guides, the rimsky.yml/template schema, REST and CLI references, cookbook and systems-design patterns, deployment, and an error catalog. The version tracks the rimsky release this corpus was reconciled against.",
   "author": {
     "name": "Fall Guy Consulting"

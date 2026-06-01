@@ -13,6 +13,7 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 - [ClaimProducer](protocols/claim-producer.md): How to implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
 - [Executor](protocols/executor.md): How to implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (Capabilities / GetTrace / StreamTrace).
 - [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus OnRunScopeTerminal).
+- [Publisher](protocols/publisher.md): How to implement a publisher (four verbs — Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via POST /instances/{id}/messages). Sensors (cron / http / object-store / webhook) are one kind of publisher.
 
 ## Examples
 

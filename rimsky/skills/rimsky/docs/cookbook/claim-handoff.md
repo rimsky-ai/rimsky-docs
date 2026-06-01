@@ -11,7 +11,7 @@ commit. Exclusive access spans multiple steps, not just one.
 
 One node acquires a [claim](../concepts/claim.md) on a
 [claim producer](../concepts/claim-producer.md); downstream nodes co-hold
-the *same* claim handle via the `inherits:` directive
+the *same* claim handle via the `holds:` directive
 ([claim co-holdership](../concepts/claim-co-holdership.md)). The claim's
 holding subgraph extends to every co-holder, and
 [auto-terminal](../concepts/auto-terminal.md) resolution fires the
@@ -21,16 +21,22 @@ commits, any-failure abandons. This is rimsky's atomic-by-default posture
 (see [claim co-holdership](../concepts/claim-co-holdership.md)): the chain
 is a transaction whose boundary is the holding subgraph.
 
+`holds:` is the modern co-holdership directive;
+[`inherits:`](../reference/template-schema.md#inheritentry) is its legacy
+singular form. Prefer `holds:` — as of v0.4.1 a node co-holding via
+`holds:` and reading `{{claim.<alias>.address}}` validates at
+`template register` (see Gotchas).
+
 The downstream nodes are coupled two ways, deliberately separated:
 [subscription](../concepts/node-subscription.md) decides *when* they fire
-(after the acquirer settles), and `inherits:` decides *what claim* they
+(after the acquirer settles), and `holds:` decides *what claim* they
 co-hold. The address resolves into each holder through
 `{{claim.<alias>.address}}`, so every node in the chain operates on the
 same producer-managed region.
 
 Primitives: **claim producer** (the filesystem `content` store),
 **claim** + **claim-handle** (the shared lock), **claim co-holdership**
-(`inherits:`), **auto-terminal** (the end-of-chain commit/abandon),
+(`holds:`), **auto-terminal** (the end-of-chain commit/abandon),
 **node-subscription** (chain ordering).
 
 ## Walkthrough
@@ -73,8 +79,8 @@ nodes:
     executor: http-node
     subscribes:
       - { node: acquire, type: terminal/success }
-    inherits:
-      - { claim: region }
+    holds:
+      region: { from: acquire }
     attributes:
       schema:
         type: object
@@ -88,9 +94,16 @@ nodes:
 ```
 
 The `content` producer is concrete-paths only, so the selector resolves to
-a fixed path under the shared content root. `process` inherits `acquire`'s
+a fixed path under the shared content root. `process` co-holds `acquire`'s
 `region` claim — the same handle, not a second open — and both nodes see
-the same `address`.
+the same `address`. The `holds:` outer key (`region`) is the local alias
+the address binds under in `process`'s leaf request, and it MUST match the
+alias `acquire` declared on its `stores:` entry (`alias: region`) — the
+validator looks the claim up on the upstream by that name. Each `holds:`
+entry value is `{ from: <upstream-node-type> }`, with an optional `as:`
+that overrides the local alias (defaulting to the outer key) — per the
+`HoldsBinding` shape in
+[`reference/template-schema.md`](../reference/template-schema.md#holdsbinding).
 
 Register, deploy, instantiate:
 
@@ -111,7 +124,14 @@ curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders | jq
 
 Both dispatches close with success on the stub, so both nodes settle
 `fresh`; at that point the aggregate outcome is all-success, so the held
-claim auto-resolves to `Commit` and the handle is deleted:
+claim auto-resolves to `Commit`. Terminal does NOT delete the claim
+handle — it *promotes* it: every terminal flips
+`rimsky_claim_handles.state` and preserves the row past terminal for
+forensics, so an all-success commit promotes the handle to the
+`committed` state (a later retention sweep reaps non-durable terminal
+rows). See the `ClaimHandleState` enum in
+[`reference/template-schema.md`](../reference/template-schema.md#claimhandlestate)
+(`committed`: "row preserved past terminal"):
 
 ```sh
 curl -s http://localhost:8080/instances/<instance_id>/nodes \
@@ -119,21 +139,32 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 # → [{"node_type":"acquire","state":"fresh"},
 #    {"node_type":"process","state":"fresh"}]
 
-# The handle is gone — holders list returns empty (200, not 404).
+# The handle row is preserved, promoted to state=committed (not deleted).
+# Its holder rows are likewise preserved, transitioned to state=completed
+# with completed_at set — ListByClaimHandleID returns ALL rows regardless
+# of state, so the 2-party handoff still lists two holders (200, two rows).
 curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
   | jq '.holders | length'
-# → 0
+# → 2
+curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
+  | jq '[.holders[] | .state]'
+# → ["completed","completed"]
 ```
 
 ## Gotchas
 
-- **Use `inherits:`, not `holds:`, on v0.4.0.** The v0.4.0 registration
-  validator derives the claim aliases available to `{{claim.<alias>}}`
-  reads only from `stores:` and `inherits:`, not from `holds:`. `holds:` is
-  the modern equivalent of `inherits:` per
-  [claim co-holdership](../concepts/claim-co-holdership.md), but a node that
-  co-holds via `holds:` and reads `{{claim.<alias>.address}}` is rejected at
-  registration on v0.4.0.
+- **`holds:` + a co-held alias read validates as of v0.4.1.** The
+  registration validator derives the claim aliases available to
+  `{{claim.<alias>}}` reads from `stores:` (acquired here), `inherits:`
+  (legacy inherited), and `holds:` (modern co-held). A node that co-holds
+  via `holds:` and reads `{{claim.<alias>.address}}` — exactly the
+  `process` node above — is accepted at `template register`. (On v0.4.0
+  this combination was rejected: the validator omitted `holds:` aliases
+  from the recognized set, so only the legacy `inherits:` form validated.
+  The v0.4.1 validator fix closes that gap; undeclared aliases — neither
+  acquired, inherited, nor co-held — are still rejected.) Prefer `holds:`;
+  it is the documented-modern directive per
+  [claim co-holdership](../concepts/claim-co-holdership.md).
 - **Both nodes must run the `http-node` executor in stub mode**
   (`RIMSKY_EXECUTOR_STUB_MODE=1`) with a permissive attribute schema, so
   each dispatch passes the schema gate and closes with a success — letting

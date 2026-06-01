@@ -68,7 +68,8 @@ cookbook recipe** — these map the primitives onto real shapes:
 For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
 `operational-health.md`). Working templates to copy live in `docs/agents/examples/`
 (`minimal-rimsky-yml.md`, `minimal-template-and-instance.md`,
-`two-node-with-claim.md`, `holding-subgraph.md`).
+`two-node-with-claim.md`, `claude-agent-attribute-defaults.md`,
+`holding-subgraph.md`).
 
 ### 3. Implementing — writing it / extending the platform
 

@@ -18,7 +18,7 @@ catalog](../images/README.md).
 Rimsky's implementation lives in the public repository
 [`github.com/rimsky-ai/rimsky-core`](https://github.com/rimsky-ai/rimsky-core).
 The documentation in this directory is generated and reconciled against that
-repository's latest release tag (currently **v0.4.0**); every fact below is
+repository's latest release tag (currently **v0.4.1**); every fact below is
 verified against the service source under `lib/services/`. The repository root
 is also the build context for every image in this catalog — there is no
 registry pull during a build.
@@ -304,9 +304,20 @@ binary. All sensors share two env vars:
   `FromDockerfile`) and registers it as a peer executor so tests about stores,
   subscribers, and observability can complete the claim loop without a real
   executor. It is **never published as a product image**.
-- **Protocol:** [Executor](../concepts/executor.md) — `Execute` only. It emits a
-  single terminal `StreamClose{Success}` (zero heartbeats) and **advertises no
-  attribute schema** (no `Validation` mix-in).
+- **Protocol:** [Executor](../concepts/executor.md) (`Execute` emits a single
+  terminal `StreamClose{Success}` — zero heartbeats, no attribute writeback)
+  plus the read-only `ExecutorObservability` mix-in.
+- **Observability / attribute schema:** `Capabilities` answers with a
+  **permissive open** [expected-attributes schema](../concepts/attribute.md)
+  `{"type":"object"}` (no `properties` block → read as "open shape"). This
+  lets a node that carries an `attributes:` block dispatch against the stub
+  and settle: the dispatch-time attribute-surface gate rejects any
+  attribute-bearing node whose executor advertises **no** schema with
+  `executor_schema_unavailable`, and a permissive open schema clears that
+  gate. The stub keeps **no traces** — `GetTrace` and `StreamTrace` return
+  gRPC `Unimplemented`, and `Capabilities` reports
+  `supports_trace_get: false` / `supports_trace_stream: false`. It carries no
+  `Validation` mix-in.
 - **Config** (env): `EXECUTOR_STUB_BIND` — gRPC bind address (default
   `0.0.0.0:9300`).
 - **Ports:** gRPC `9300` (Dockerfile `EXPOSE 9300`).

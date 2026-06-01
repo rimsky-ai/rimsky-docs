@@ -41,6 +41,8 @@ var verifiedInternalSymbols = []string{
 	// rimsky internal (lib/)
 	"FrameDeliveryMode", "FrameResolutionMode", "SweepOrphanedBlobs",
 	"NodeID", "AttributeName", "CheckGrant", "ValidateBlobConfig", "LargeObjects",
+	"IsPermissiveExecutorSchema", // lib/graph/node/template_validator.go::IsPermissiveExecutorSchema
+	"ListByClaimHandleID",        // lib/foundation/persistence/claim_holders.go::ClaimHolderTable.ListByClaimHandleID
 	// stub test-support APIs (test/support/)
 	"WhenType", "EmitNamedEvent", "EnableStubMode", "StubAttributesFor",
 	"EnableDataProcessing", "EnableLifecycle",

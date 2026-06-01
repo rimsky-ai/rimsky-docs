@@ -76,10 +76,14 @@ prompt (the templates below assume them) and into the mechanical binaries:
   `${RIMSKY_REPO}/lib/services/{stores,executors,sensors,subscribers}`, each with
   its own `Dockerfile.*`. There is **no separate `rimsky-services` repo**; the
   bundled services build from the rimsky checkout (no ghcr pull at build time).
-  The standalone stub executor (`lib/services/test/stubexecutor/`) is
-  Execute-only — it advertises no attribute schema, so a node with an
-  `attributes:` block on it fails dispatch with `executor_schema_unavailable`;
-  the bundled `http-node`/`claude-agent` executors (stub mode) *do* advertise a
+  The standalone stub executor (`lib/services/test/stubexecutor/`) returns
+  canned success for behavior, but as of v0.4.1 it also registers an
+  `ExecutorObservability` server advertising a permissive open
+  `{"type":"object"}` attribute schema, so a node with an `attributes:` block
+  on it dispatches and settles (before v0.4.1 it advertised no schema and such
+  a node failed dispatch with `executor_schema_unavailable` — that error class
+  still fires for any executor that genuinely advertises no schema); the
+  bundled `http-node`/`claude-agent` executors (stub mode) also advertise a
   schema. The stub claim-producer is an in-process test double at
   `test/support/stores/stub/` with **no** standalone binary, so a stub-based
   deployment uses the filesystem store as its claim-producer.
