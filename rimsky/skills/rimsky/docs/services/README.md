@@ -18,7 +18,8 @@ catalog](../images/README.md).
 Rimsky's implementation lives in the public repository
 [`github.com/rimsky-ai/rimsky-core`](https://github.com/rimsky-ai/rimsky-core).
 The documentation in this directory is generated and reconciled against that
-repository's latest release tag (currently **v0.4.1**); every fact below is
+repository's latest release tag (the exact pinned version is recorded in the
+plugin manifest, `.claude-plugin/plugin.json`); every fact below is
 verified against the service source under `lib/services/`. The repository root
 is also the build context for every image in this catalog — there is no
 registry pull during a build.

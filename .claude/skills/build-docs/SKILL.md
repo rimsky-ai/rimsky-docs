@@ -65,6 +65,14 @@ rimsky restructured at v0.4.0 — its Go code moved under `lib/` and the module
 was renamed. The orchestrator must thread these paths into every subagent
 prompt (the templates below assume them) and into the mechanical binaries:
 
+> These are *structural* facts (paths, module names, image roles) — stable, and
+> the orchestrator genuinely needs them to dispatch. Keep *behavioral* specifics
+> here to a minimum: detailed runtime behavior belongs in the docs that describe
+> it, not baked into this skill, because such claims drift against rimsky and no
+> gate guards this file. Any behavioral note that does appear here (e.g. the stub
+> executor's schema behavior below) is itself reconciled each run like any
+> surface — when it contradicts the current release, fix it here too.
+
 - **Wire protos** — `${RIMSKY_REPO}/lib/protocols/proto/v1/*.proto`.
 - **Public Go module** (the single module a service imports) —
   `${RIMSKY_REPO}/lib/protocols`, module path
@@ -117,7 +125,8 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/reference/template-schema.md` | rimsky `lib/foundation/spec/` structs | Mechanical (`rimsky-docs-template-ref`); never hand-edit. |
 | `rimsky/skills/rimsky/docs/reference/rest-api.md` | rimsky `lib/control/controlapi/actions.go` | Mechanical (`rimsky-docs-rest-ref`); never hand-edit. |
 | `rimsky/skills/rimsky/docs/reference/cli.md` | the `rimsky` CLI's `help` output | Mechanical (`rimsky-docs-cli-ref`); never hand-edit. |
-| `rimsky/skills/rimsky/docs/operator-guide.md`, `rimsky/skills/rimsky/docs/comparison.md`, `rimsky/skills/rimsky/docs/roadmap.md`, `rimsky/skills/rimsky/docs/licensing.md` | code + design | Generated/derived; refine. |
+| `rimsky/skills/rimsky/docs/operator-guide.md` | code + design | Generated/derived; refine (reconciled by the **config-examples** surface, alongside the worked configs). |
+| `rimsky/skills/rimsky/docs/comparison.md`, `rimsky/skills/rimsky/docs/roadmap.md`, `rimsky/skills/rimsky/docs/licensing.md`, `rimsky/skills/rimsky/docs/patterns/*.md` | code + design | Generated/derived narrative; refine (the **narrative** surface). State a feature's aspirational/partial status up front; keep version-gated status labels current. |
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
 | `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. |
@@ -199,6 +208,18 @@ To re-run just the review → fix → converge loop afterward, use `/refine-docs
    resolved tag, or `local: <branch>@<sha>`), because a local `dev` tree may be
    ahead of the latest release.
 
+   **Pin the override to the release, not the live working tree.** A live
+   checkout drifts — its working tree can be dirty or ahead of the tag, and it
+   can change *mid-run* (someone editing rimsky in another window). Reconciling
+   against a moving tree silently pulls unreleased changes into the docs and can
+   flip reference-parity red against a release the docs don't target. So when the
+   override points at a working tree, reconcile against a frozen export of the
+   release tag, not the live files — e.g. `git -C "$RIMSKY_REPO" archive <tag> |
+   tar -x -C "$dest"` (or a `git worktree` at the tag) into the run-scratch cache,
+   then point `RIMSKY_REPO` at that. Only read the live tree directly when it is
+   verified clean and exactly at the tag (`git -C "$RIMSKY_REPO" status
+   --porcelain` empty and `HEAD == <tag>`).
+
 3. **Open the run journal.** Create the gitignored `.build-docs/journal.md` (see
    "The run journal"). Its first line records the resolved ref. Every phase —
    reconcile subagents, the orchestrator, and the review/refine loop — appends
@@ -212,6 +233,13 @@ surfaces run in parallel — send them in a single message with multiple `Agent`
 calls. Each subagent reconciles its whole surface (create-if-missing /
 refine-if-present) and returns a per-surface change list plus any items it
 flagged for human attention.
+
+A subagent edits **only files in its own surface**. Drift it notices in another
+surface is a `flag` for the orchestrator, **not** an edit — the surfaces run in
+parallel against one working tree, so a cross-surface edit races the subagent
+that owns that surface (two agents writing the same file). Each file has exactly
+one owning surface (see the ownership table); if two surfaces seem to claim a
+file, that is a skill bug to fix, not a license to double-write.
 
 Every surface prompt must also instruct the subagent to return, separately from
 its change list, two structured lists for the run journal (see "The run
@@ -237,7 +265,10 @@ Surfaces:
 - config-examples (the worked configs under `docs/reference/config/` — verify
   against the schema and the services they configure)
 - skill-packaging (the `SKILL.md` router, the two-entry-point parity between
-  `SKILL.md` and `docs/agents/llms.txt`, and the `plugin.json` version stamp)
+  `SKILL.md` and `docs/agents/llms.txt`, the `plugin.json` version stamp, and
+  any prose statement of the reconciled-against version)
+- narrative (the higher-altitude derived prose: `docs/comparison.md`,
+  `docs/roadmap.md`, `docs/licensing.md`, and `docs/patterns/*.md`)
 
 ### 2. Mechanical generation
 
@@ -554,10 +585,53 @@ not), reasoning kept as tight prose, source-anchored.
 > 3. **`plugin.json` version.** Set `version` to the rimsky release tag this run
 >    reconciled against — the skill *is* that version. (`marketplace.json` is
 >    stable; flag drift, don't churn it.)
+> 4. **Prose version statements defer to `plugin.json`.** `plugin.json`'s
+>    `version` is the single source of the reconciled-against release. Corpus
+>    prose must NOT hard-code a release tag that can silently drift: phrase any
+>    "reconciled against …" sentence to defer to the plugin manifest rather than
+>    naming a version inline. Sweep the corpus for a concrete version pin
+>    (`currently vX.Y.Z`, `as of vX.Y.Z` outside an intentional historical note);
+>    `docs/README.md` is the one to watch. Make each defer to `plugin.json`, or —
+>    if a concrete tag is genuinely wanted there — update it to match this run's.
+>    (Status labels inside `patterns/` are the **narrative** surface's job, not
+>    this one.)
 >
 > Return: router / manifest changes made, any router link that does not resolve
-> under the corpus, any entry-point parity drift (as `flag` entries), and the
-> version the stamp was set to.
+> under the corpus, any entry-point parity drift (as `flag` entries), any prose
+> version pin reconciled, and the version the stamp was set to.
+
+### narrative
+
+> Reconcile the higher-altitude **derived narrative** docs against rimsky source.
+> Surfaces: `rimsky/skills/rimsky/docs/comparison.md` (rimsky vs. alternatives),
+> `rimsky/skills/rimsky/docs/roadmap.md` (planned / aspirational direction),
+> `rimsky/skills/rimsky/docs/licensing.md` (license posture), and
+> `rimsky/skills/rimsky/docs/patterns/*.md` (higher-altitude system shapes — some
+> aspirational or only partially supported).
+>
+> These are prose, not catalogs. Reconcile every load-bearing factual claim
+> against the source of truth in `${RIMSKY_REPO}` — the design concepts under
+> `.ok-planner/design/`, the code under `lib/`, the `dockerfiles/`, and the
+> license files — for feature availability, image names, comparative claims, and
+> version-gated status. For `patterns/`, follow the agent-doc style's pattern
+> template (`.claude/rules/agent-doc-style.md`): lead with the real surface, and
+> if a pattern is aspirational or only partially supported, say so **up front**
+> in a status note. Those status notes name the current rimsky release and go
+> stale: when the underlying status is unchanged, bump the label to the
+> reconciled release; when it changed, rewrite the status. Never invent a
+> capability — an aspirational pattern must be marked as such, with what rimsky
+> does and does **not** provide stated explicitly.
+>
+> Do not touch `operator-guide.md` (the config-examples surface owns it) or the
+> version pin in `docs/README.md` (the skill-packaging surface owns that).
+>
+> Reconcile in the agent-doc style; keep the reasoning prose intact; every
+> relative link must resolve under the corpus.
+>
+> Return: docs reconciled (created / refined), and `flag` entries for any factual
+> claim, image name, or version label that drifted from source
+> (`source-conflict`), or any capability described that the code does not provide
+> (`unimplemented`).
 
 The **reviewer** and **fixer** subagent templates used by the review/refine loop
 live in the `/refine-docs` skill (which owns that loop). They are not duplicated

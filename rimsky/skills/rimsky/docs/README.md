@@ -4,7 +4,7 @@ This directory hosts both the **public-documentation surface** (intended for ext
 
 ## Source code
 
-Rimsky's implementation lives in the public repository [`github.com/rimsky-ai/rimsky-core`](https://github.com/rimsky-ai/rimsky-core). The documentation here is generated and reconciled against that repository's latest release tag (currently **v0.4.1**); the prose is derived from the source and verified against it, but the source of truth is the repository, not these docs.
+Rimsky's implementation lives in the public repository [`github.com/rimsky-ai/rimsky-core`](https://github.com/rimsky-ai/rimsky-core). The documentation here is generated and reconciled against that repository's latest release tag — the exact pinned version is recorded in the plugin manifest (`.claude-plugin/plugin.json`), the single source of the reconciled-against release. The prose is derived from the source and verified against it, but the source of truth is the repository, not these docs.
 
 ## Public surface
 

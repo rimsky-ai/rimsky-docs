@@ -155,11 +155,21 @@ unless the user explicitly asks.
 > any that look pre-existing. Source of truth: `<SOURCE>`. Follow rimsky's
 > citation grammar in `${RIMSKY_REPO}/.claude/rules/citation-grammar.md`, and
 > treat the source's vocabulary as the reference. After fixing, confirm the
-> relevant generation / test / lint command for this surface passes. Return what
-> you changed, plus — separately, for the run journal — any `decision` entries (a
-> fix that could have gone more than one way: what you chose, the alternative,
-> why) and any `flag` entries (`source-conflict` / `unimplemented` /
-> `declined-addition`).
+> relevant generation / test / lint command for this surface passes.
+>
+> Edit only files in the `<SURFACE>` surface. Fixers may run in parallel against
+> one working tree, so do **not** edit another surface or a shared cross-cutting
+> file (the lint tooling under `cmd/`, the `symbol-existence`
+> `verifiedInternalSymbols` allowlist, the root `llms.txt` / `llms-full.txt`
+> copies) — two fixers touching the same file race. If a fix *requires* such a
+> change (e.g. a real new symbol the prose must name needs an allowlist entry),
+> return it as a `flag` describing the exact edit and let the orchestrator apply
+> it serially after the round.
+>
+> Return what you changed, plus — separately, for the run journal — any
+> `decision` entries (a fix that could have gone more than one way: what you
+> chose, the alternative, why) and any `flag` entries (`source-conflict` /
+> `unimplemented` / `declined-addition`).
 >
 > Issues:
 > <ISSUE LIST>
