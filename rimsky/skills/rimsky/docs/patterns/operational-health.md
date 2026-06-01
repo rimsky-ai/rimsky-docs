@@ -11,10 +11,10 @@ deprecated_terms: []
 
 # Operational health
 
-Rimsky is a long-running platform; operators who run it need
-visibility into what is healthy, what is degraded, and what is wedged.
-This page covers the surfaces rimsky exposes for that and the
-operational patterns that compose them.
+Rimsky exposes operator health signals as JSON over HTTP plus Prometheus metrics.
+This page maps those surfaces — lifecycle subscribers, watchdog graphs,
+control-API diagnostics, admin invalidate — and the patterns that compose them
+into observability and remediation.
 
 ## Surfaces
 
@@ -59,29 +59,25 @@ The primitives that compose the watchdog:
 
 ### Control-API polling
 
-The control API exposes JSON endpoints suitable for polling from
-dashboards or external monitors:
+The control API exposes JSON endpoints suitable for polling from dashboards or
+external monitors:
 
-- `GET /admin/diagnostics/held-frames` — frames currently held
-  pending node completion. Held frames are normal during agent-driven
-  work; persistently held frames may indicate stuck reviews.
-- `GET /admin/diagnostics/parked-nodes` — parked nodes with their
-  reasons and resume timestamps. Optional `?reason=<name>` filter.
-- `GET /metrics` — Prometheus text format on the per-process
-  `RIMSKY_METRICS_PORT` (default disabled). The metric set covers
-  dispatches by terminal class, claim acquisitions by producer, node
-  state gauges, parked-by-reason gauges, dispatch latency
-  histograms, and held-frame counts.
+| Endpoint | Returns |
+| --- | --- |
+| `GET /admin/diagnostics/held-frames` | Frames currently held pending node completion. Normal during agent-driven work; persistent holds may indicate stuck reviews. |
+| `GET /admin/diagnostics/parked-nodes` | Parked nodes with reasons and resume timestamps. Optional `?reason=<name>` filter. |
+| `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled). Covers dispatches by terminal class, claim acquisitions by producer, node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
 
 ### Admin invalidate
 
-`POST /admin/instances/{instance}/nodes/{node_id}/invalidate` is the
-operator escape hatch. It dispatches by node state:
+`POST /admin/instances/{instance}/nodes/{node_id}/invalidate` is the operator
+escape hatch. It dispatches by node state:
 
-- `parked` → resume with `resume_reason: "external_invalidate"`.
-- `fresh` → standard invalidate (state → stale; cascade picks up next
-  scheduler tick).
-- `running` or `failed` → 409 Conflict.
+| Node state | Effect |
+| --- | --- |
+| `parked` | Resume with `resume_reason: "external_invalidate"`. |
+| `fresh` | Standard invalidate (state → stale; cascade picks up next scheduler tick). |
+| `running` / `failed` | 409 Conflict. |
 
 Use it when something has wedged on a signal that didn't arrive (a
 review never came back, a webhook never fired). For all other states,

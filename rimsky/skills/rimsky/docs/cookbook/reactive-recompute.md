@@ -1,14 +1,13 @@
 # Recompute dependents when something upstream changes
 
-## The problem
+## Problem
 
-A value derives from another: a classification depends on a fetched
-document, a rollup depends on its inputs, a report depends on the data it
-summarizes. When the upstream changes, the downstream should recompute —
-and *only* the parts that actually depend on the change, not the whole
-graph.
+When an upstream value changes, the downstream should recompute — and
+*only* the parts that actually depend on the change, not the whole graph. A
+value derives from another: a classification depends on a fetched document,
+a rollup depends on its inputs, a report depends on the data it summarizes.
 
-## The rimsky shape
+## Rimsky shape
 
 In rimsky the downstream node owns the coupling. It declares a
 [subscription](../concepts/node-subscription.md) on the upstream node's
@@ -31,14 +30,10 @@ Primitives: **node-subscription** (the explicit + auto-subscribed edge),
 **signal** (`attribute/<key>/changed`, `terminal/success`), **cascade**
 (the downstream walk), **attribute** (the value that flows by pull).
 
-## Walkthrough
+## Template
 
-Needs a rimsky deployment with the `http-node` executor. In stub mode
-(`RIMSKY_EXECUTOR_STUB_MODE=1`) `http-node` advertises a permissive
-attribute schema, so a node that declares an `attributes:` block dispatches
-cleanly (no `executor_schema_unavailable`) and closes with a success. Stand
-rimsky up from the published images (see the
-[operator guide](../operator-guide.md)).
+Needs a rimsky deployment with the `http-node` executor. Stand rimsky up
+from the published images (see the [operator guide](../operator-guide.md)).
 
 Save the template as `recompute.yml`. `classify` reads `fetch`'s output,
 which auto-subscribes it to `fetch`'s `summary` attribute:
@@ -132,6 +127,20 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 # → [{"node_type":"fetch","state":"fresh"},
 #    {"node_type":"classify","state":"fresh"}]
 ```
+
+## Gotchas
+
+**The stub advertises a permissive schema.** In stub mode
+(`RIMSKY_EXECUTOR_STUB_MODE=1`) `http-node` advertises a permissive
+attribute schema, so a node that declares an `attributes:` block dispatches
+cleanly (no `executor_schema_unavailable`) and closes with a success.
+
+**Use the lenient `?` read when the upstream may not write the value.** The
+`?` in `{{nodes.fetch.attribute.summary?}}` makes the read resolve to null
+when the upstream value is absent instead of failing with
+`template_resolution_failed` — the right spelling for an executor that may
+not write `summary` (the stub returns `{stub: true}`, leaving `summary`
+unwritten).
 
 ## Without rimsky
 

@@ -2,10 +2,10 @@
 
 ## The problem
 
-You have a stream of work items — review tasks, scrape targets, documents
-to classify — landing in a table. You want one worker that pulls the next
-item, processes it, and comes back for more, with no two workers grabbing
-the same item and no item lost if a worker dies mid-flight.
+One worker drains a stream of work items — review tasks, scrape targets,
+documents to classify — landing in a table: pull the next item, process
+it, come back for more. No two workers grab the same item; no item is lost
+if a worker dies mid-flight.
 
 ## The rimsky shape
 
@@ -41,9 +41,8 @@ Needs a rimsky deployment whose postgres store is configured as the
 [reference config](../reference/config/store-postgres.yml) shows the
 producer and pick-policy shape.
 
-Seed a few items directly into the store's admin endpoint (port `9121` in
-the reference config). Operators talk to the store directly for seeding —
-never through rimsky:
+Seed a few items into the store's admin endpoint (port `9121` in the
+reference config). Operators seed the store directly, never through rimsky:
 
 ```sh
 curl -s -X POST http://localhost:9121/admin/items/@review-queue \
@@ -88,13 +87,7 @@ nodes:
 
 The `subscribes:` entry is the self-edge: on every `terminal/success` the
 worker opens a fresh [frame](../concepts/frame.md) (`frame: next`) and
-runs again, pulling the next item off the ring. The `http-node` executor,
-run in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`):
-with `stub_probe: true` in the dispatch bag it short-circuits its network
-path and closes the stream with a clean `StreamClose{Success}` on every
-dispatch — exactly the loop driver we want. It advertises a permissive
-attribute schema, so the `picked` source-bound attribute and the rest of
-the bag pass the dispatch-time schema gate.
+runs again, pulling the next item off the ring.
 
 Register, deploy, instantiate:
 
@@ -125,10 +118,24 @@ loop continues frame after frame. To stop it, terminate the instance:
 rimsky instance delete <instance_id>
 ```
 
-> **Want a drain-once queue instead of a ring?** That is a store-config
-> change (`on_commit: pop`), not a template change — the reference config
-> ships the `recycle` policy. Re-point the `store-postgres` config to a
-> `pop` policy to exercise the drain-once shape.
+## Gotchas
+
+- **The `http-node` executor must run in stub mode**
+  (`RIMSKY_EXECUTOR_STUB_MODE=1`). With `stub_probe: true` in the dispatch
+  bag it short-circuits its network path before the transport-config check
+  and closes the stream with a clean `StreamClose{Success}` on every
+  dispatch — exactly the loop driver we want. A schema `default:` flows
+  into the dispatch bag verbatim (it is never substituted). The stub
+  advertises a permissive attribute schema, so the `picked` source-bound
+  attribute and the rest of the bag pass the dispatch-time schema gate.
+- **Operators seed the store directly, never through rimsky** — the seed
+  `curl` hits the store's admin endpoint (port `9121`), not the rimsky API.
+- **`@review-queue` recycles on commit.** A committed item goes back to
+  the tail of the ring rather than being consumed, so the demo never runs
+  dry. To get a drain-once queue instead of a ring, change the store config
+  (`on_commit: pop`), not the template — the reference config ships the
+  `recycle` policy. Re-point the `store-postgres` config to a `pop` policy
+  to exercise the drain-once shape.
 
 ## Without rimsky
 

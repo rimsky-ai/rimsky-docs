@@ -1,11 +1,8 @@
 # Cookbook
 
-Patterns one level more general than a single tutorial: a problem you
-recognize, the rimsky shape that solves it, a copyable walkthrough you run
-against a rimsky deployment, and a "without rimsky" baseline so the trade is
-legible.
-
-Each recipe states:
+Each recipe is a problem you recognize, the rimsky shape that solves it, a
+copyable template you run against a rimsky deployment, and a "without
+rimsky" baseline so the trade is legible. Every recipe has the same slots:
 
 1. **The problem** — what you're trying to build, in plain terms.
 2. **The rimsky shape** — which primitives it uses and why.

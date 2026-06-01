@@ -1027,7 +1027,7 @@ None live.
 
 The operator interface exposed by the control-api binary. Serves two protocol skins on the same TCP port and the same operation set:
 
-- **HTTP+JSON** — routed at bare, unversioned paths covering template registration, instance lifecycle (create, pause, resume), per-instance breakpoint management (set, delete, resume), the auth surface, observability reads, and admin diagnostics and scheduled-node force-fire endpoints.
+- **HTTP+JSON** — routed at bare, unversioned paths covering template registration, instance lifecycle (create, pause, resume), per-instance breakpoint management (set, delete, resume), the auth surface, observability reads, and admin diagnostics endpoints.
 - **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at a dedicated MCP endpoint, served by an in-process MCP package. Tools-only V1, plus read-only resource list and read added by `spec:2026-05-24-instance-debugger-design`. No resource-subscribe and no server-pushed notifications in V1 — those await a transport upgrade. The tool catalog is computed from the canonical action registry; the tool-list call filters by the requesting key's permission grant.
 
 Both skins pass through the same auth + permission middleware. Fires lifecycle-subscriber events at state transitions (synchronously; see `concept:lifecycle-subscriber`).
@@ -2117,7 +2117,7 @@ None live.
 
 ## What it is
 
-A named lock is a producer-independent capacity-counter primitive. Declared in operator config (a `named_locks:` block) with `mode: mutex | counting` and a capacity. The named-lock spec carries just a name; at runtime it materializes as a `named`-kind row in the claim-handle ledger (see `concept:claim-handle`).
+A named lock is a producer-independent capacity-counter primitive. Declared in operator config (a `named_locks:` block) with a single `limit:` per name — `limit: 1` is a mutex, `limit: N` (N > 1) a counting semaphore; the mode is inferred from the limit, not declared separately. The named-lock spec carries just a name; at runtime it materializes as a `named`-kind row in the claim-handle ledger (see `concept:claim-handle`).
 
 ## Purpose
 
@@ -3442,344 +3442,507 @@ Pre-`spec:2026-05-12-nomenclature-resolution` Group C, the operator-facing confi
 
 # Implementing a claim producer
 
-This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `lib/protocols/proto/v1/claim_producer.proto`; the mechanically-generated field/message/RPC reference is at [`reference/claim-producer.md`](reference/claim-producer.md). This guide is the practical companion — the "how to implement this, what to watch out for" narrative the generated reference can't express.
+A **claim producer** is an out-of-process service that produces claim handles for
+rimsky's lock-and-claim primitives. It implements the `ClaimProducer` protocol over
+gRPC — five required methods (`Capabilities`, `Open`, `Commit`, `Abandon`,
+`Release`) plus two optional capability-gated methods (`SplitScope`,
+`ScopesConflict`). It owns the underlying state (filesystem paths, postgres rows,
+in-memory map) and the per-verb semantics; rimsky owns the lock-state bookkeeping.
 
-For Go services, the `protocols` module's `claimproducer` package gives you hand-written types over this wire contract (see [`go-packages.md`](go-packages.md)). It's a convenience, not a requirement: you can code straight against the generated wire types in any language.
+There is **no required SDK** — implement against the wire types in any language. A
+Go service may use the `protocols` module's `claimproducer` package for
+hand-written types over the wire contract
+([`go-packages.md`](go-packages.md)). Wire contract:
+`lib/protocols/proto/v1/claim_producer.proto`; generated field/message/RPC
+reference at [`reference/claim-producer.md`](reference/claim-producer.md) (do not
+hand-track field numbers here).
+
+A note on terminology: the protocol-level term is **claim producer** (the service
+implementing `ClaimProducer` over gRPC). The colloquial term **store** survives at
+the bundled-services layer for data-backed reference impls (filesystem store,
+postgres store, stub store).
 
 <!-- @source: ../../.ok-planner/design/concepts/claim-producer.md -->
-> The protocol-level term for a service that produces claim handles for Rimsky's lock-and-claim primitives. Implements five methods (`Open`, `Commit`, `Abandon`, `Release`, `Capabilities`). Out-of-process; rimsky talks to claim producers over gRPC.
 
-A note on terminology: the protocol-level term is **claim producer** (the service implementing `ClaimProducer` over gRPC). The colloquial term **store** survives at the bundled-services layer for data-backed reference impls (filesystem store, postgres store, stub store).
+## What you implement
 
-> **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
+| RPC | Required? | Purpose |
+| --- | --- | --- |
+| `Capabilities(CapabilitiesRequest) → CapabilitiesResponse` | **Yes** | Startup handshake: declare allowed write semantics, optional-RPC flags, mix-in protocols, validation roles. |
+| `Open(OpenRequest) → OpenResponse` | **Yes** | Acquire a claim inside rimsky's atomic acquisition transaction; return `Acquired` or `Unavailable`. |
+| `Commit(CommitRequest) → CommitResponse` | **Yes** | Terminal: the consumer of the claim succeeded. Idempotent in `claim_id`. |
+| `Abandon(AbandonRequest) → AbandonResponse` | **Yes** | Terminal: the consumer of the claim failed. Idempotent in `claim_id`. |
+| `Release(ReleaseRequest) → ReleaseResponse` | **Yes** | Tear down producer-side read state for a read claim. Idempotent in `claim_id`. |
+| `SplitScope(SplitScopeRequest) → SplitScopeResponse` | No — gated on `supports_split_scope` | Partition an already-`Open`'d parent scope into `SubScopeDescriptor` rows for fan-out. |
+| `ScopesConflict(ClaimScopesConflictRequest) → ScopesConflictResponse` | No — gated on `supports_scopes_conflict` | Decide whether two non-byte-equal `claim_scope` values serialize against each other. |
 
----
+`OpenResponse` is a `oneof` carrying either an `Acquired` message (with `address`,
+`payload`, `claim_scope`, and `realized_write_semantics`) or an `Unavailable`
+message (no claim available right now; rimsky retries on the next scheduler tick).
+Each terminal verb has its own request/response pair so the producer can tag
+idempotency keys and structured per-verb fields without overloading a shared
+envelope.
 
-## 1. The wire contract
+> **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or
+> access control. Encrypt sensitive bytes before handing them to rimsky if you need
+> protection. Service-to-service auth is operator-configured at the deployment
+> layer (mTLS, IAM).
 
-The producer is a service. Rimsky's processes dial it at startup, run a `Capabilities` handshake, and issue four runtime verbs over gRPC. Two further RPCs are optional and gated by capability flags:
+## Boundaries
 
-```protobuf
-service ClaimProducer {
-  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
-  rpc Open(OpenRequest)                 returns (OpenResponse);
-  rpc Commit(CommitRequest)             returns (CommitResponse);
-  rpc Abandon(AbandonRequest)           returns (AbandonResponse);
-  rpc Release(ReleaseRequest)           returns (ReleaseResponse);
+The producer **owns**:
 
-  // Optional. Implement only when you advertise the matching flag.
-  rpc SplitScope(SplitScopeRequest)              returns (SplitScopeResponse);
-  rpc ScopesConflict(ClaimScopesConflictRequest) returns (ScopesConflictResponse);
-}
-```
+- The underlying state — filesystem paths, postgres rows, in-memory map.
+- The per-verb semantics (what `Commit` / `Abandon` / `Release` actually do).
+- Its own TTL / sweep for orphan reclamation (obligation 1 below).
+- Canonicalizing `claim_scope` bytes so that acquisitions which should conflict are
+  byte-equal (obligation 5 below).
+- Resume detection — recognizing a repeated `claim_id` against its own state.
 
-`OpenResponse` is a `oneof` carrying either an `Acquired` message (with `address`, `payload`, `claim_scope`, and `realized_write_semantics`) or an `Unavailable` message (no claim available right now; rimsky retries on the next scheduler tick). Each terminal verb has its own request/response pair so the producer can tag idempotency keys and structured per-verb fields without overloading a shared envelope.
+The producer does **NOT** own (rimsky's job):
 
-The full message/field reference is generated at [`reference/claim-producer.md`](reference/claim-producer.md); do not hand-track field numbers here.
+- **Lock-state bookkeeping, the orphan reaper, the state machine, and verb
+  dispatch.** Rimsky drives these.
+- **The conflict predicate over claim content.** Rimsky compares `claim_scope`
+  byte-for-byte by default — no glob, no range-match, no canonicalization on the
+  rimsky side. The producer canonicalizes; rimsky only compares (unless the
+  producer implements the optional `ScopesConflict` RPC).
+- **Interpreting claim content.** `address`, `payload`, and `claim_scope` from
+  `OpenResponse.acquired` are opaque to rimsky (see [Inertness](#inertness)).
+- **Producer-side orphan cleanup.** When rimsky's orphan reaper deletes a stale
+  claim-handle row, it does **not** fire any producer verb — the producer's own TTL
+  handles that case (obligation 4 below).
+- **Credentials, encryption, access control.** Rimsky is auth-blind (see advisory
+  above).
 
-That's the core runtime contract. Rimsky owns the lock-state bookkeeping, the orphan reaper, the state machine, and verb dispatch. You own the underlying state (filesystem paths, postgres rows, in-memory map) and the per-verb semantics.
+## Five obligations every implementation must meet
 
-### Optional RPCs
+1. **Run your own TTL / sweep for orphan reclamation.** Rimsky-side reaping handles
+   its own claim-handle records. The producer-side state lives outside rimsky's
+   view; the producer must run its own TTL sweep so partial commits don't leak.
+   Recommended TTL: strictly greater than `5 × heartbeat_interval` (rimsky's
+   orphan-reap window) so a healthy producer doesn't strip a claim out from under a
+   live supervisor.
+2. **Record `claim_id` before any state mutation in `Open`.** `Open` is invoked
+   inside rimsky's atomic acquisition transaction. If the producer mutates state
+   but rimsky's transaction rolls back, the producer is left with orphan state.
+   Recording `claim_id` first lets the producer's TTL sweep identify and clean up
+   orphans.
+3. **All terminal verbs must be idempotent in `claim_id`.** `Commit(claim_id)`,
+   `Abandon(claim_id)`, `Release(claim_id)` must be safe to retry. Rimsky may retry
+   on transient gRPC failures.
+4. **Do not depend on rimsky calling `Abandon` for orphan cleanup.** When rimsky's
+   orphan reaper deletes a stale claim-handle row, it does not fire any producer
+   verb. The producer's own TTL handles that case.
+5. **Canonicalize `claim_scope` bytes.** Two `Open` calls that should conflict must
+   produce byte-equal `claim_scope` values. Rimsky's foundation compares
+   byte-for-byte by default; no glob, no range-match, no canonicalization on the
+   rimsky side. (If you need non-byte-equal values to conflict, implement the
+   optional `ScopesConflict` RPC.)
 
-- `SplitScope` — implement it only when you advertise `supports_split_scope = true`. Rimsky requires it for templates that fan out against your producer; it calls `SplitScope` inside the acquisition transaction to partition the already-`Open`'d parent scope into `SubScopeDescriptor` rows that seed the sub-claims. The shape of `partition_request` bytes is yours to define.
-- `ScopesConflict` — implement it only when you advertise `supports_scopes_conflict = true`. When you do not, rimsky falls back to the byte-equal default (`@blessed-invariant 4b`). Use it when two non-byte-equal `claim_scope` values should still serialize against each other (range overlap, hash-bucket collision).
-
-## 2. Five obligations every implementation must meet
-
-1. **Run your own TTL / sweep for orphan reclamation.** Rimsky-side reaping handles its own claim-handle records. The producer-side state lives outside Rimsky's view; the producer must run its own TTL sweep so partial commits don't leak. Recommended TTL: strictly greater than `5 × heartbeat_interval` (Rimsky's orphan-reap window) so a healthy producer doesn't strip a claim out from under a live supervisor.
-2. **Record `claim_id` before any state mutation in `Open`.** `Open` is invoked inside Rimsky's atomic acquisition transaction. If the producer mutates state but Rimsky's transaction rolls back, the producer is left with orphan state. Recording `claim_id` first lets the producer's TTL sweep identify and clean up orphans.
-3. **All terminal verbs must be idempotent in `claim_id`.** `Commit(claim_id)`, `Abandon(claim_id)`, `Release(claim_id)` must be safe to retry. Rimsky may retry on transient gRPC failures.
-4. **Do not depend on Rimsky calling `Abandon` for orphan cleanup.** When Rimsky's orphan reaper deletes a stale claim-handle row, it does not fire any producer verb. The producer's own TTL handles that case.
-5. **Canonicalize `claim_scope` bytes.** Two `Open` calls that should conflict must produce byte-equal `claim_scope` values. Rimsky's foundation compares byte-for-byte by default; no glob, no range-match, no canonicalization on the Rimsky side. (If you need non-byte-equal values to conflict, implement the optional `ScopesConflict` RPC.)
-
-## 3. Byte-equal-scope uniformity
-
-Across the lifetime of the producer process, two `Open` calls returning byte-equal `claim_scope` MUST return the same `realized_write_semantics`. Rimsky relies on this for the conflict predicate; producers enforce.
-
-In practice: if your producer supports both `staged_async` and `sync` modes, it must consistently return the same one for any given canonical scope. The simplest path is "one mode per producer process" (single-element envelope); supporting per-claim variation requires per-scope state.
-
-## 4. Per-verb semantics
-
-### `Open(OpenRequest) → OpenResponse`
+## `Open` — acquire a claim
 
 <!-- @source: ../../.ok-planner/design/concepts/claim.md -->
-> A node-declared assertion that the node will read or read-write a producer-defined slice of state for the duration of its run. Claims are acquired before the node's executor runs and resolved at terminal. Each claim binds an alias, an intent (`r` or `rw`), a producer name, and a selector.
 
-Inside `OpenRequest`:
+`Open` is invoked inside rimsky's atomic acquisition transaction. A claim is a
+node-declared assertion that the node will read or read-write a producer-defined
+slice of state for the duration of its run; it binds an alias, an intent (`r` or
+`rw`), a producer name, and a selector. Return one `oneof` variant in
+`OpenResponse`.
 
-- `claim_id` — Rimsky-generated UUID; record it first (obligation 2).
-- `producer_name`, `selector`, `intent`, `alias`, `template_id`, `instance_id` — the resolved claim spec. `selector` is post-substitution; the producer parses it. The proto field is named `template_id` (the wire-protocol field name) and carries the content hash; `instance_id` is the instance UUID. Both are opaque to rimsky and provided for namespace routing or trace correlation.
+### `OpenRequest`
 
-Return one of two `oneof` variants in `OpenResponse`:
+| Field | Meaning |
+| --- | --- |
+| `claim_id` | Rimsky-generated UUID; record it first (obligation 2). |
+| `producer_name`, `selector`, `intent`, `alias` | The resolved claim spec. `selector` is post-substitution; the producer parses it. |
+| `template_id`, `instance_id` | Opaque to rimsky, provided for namespace routing or trace correlation. `template_id` (the wire-protocol field name) carries the content hash; `instance_id` is the instance UUID. |
 
-- **`Acquired`** — the claim was acquired. Fields:
-    - `address` — producer-supplied bytes the executor uses to access claimed state.
-    - `payload` — producer-supplied data captured at acquisition (e.g. a picked queue item's user data).
-    - `claim_scope` — canonicalized scope bytes. Two acquisitions that should conflict must produce byte-equal `claim_scope`.
-    - `realized_write_semantics` — the per-claim value. Must be a member of the envelope returned by `Capabilities`.
-- **`Unavailable`** — no claim available right now (e.g. an empty items-table queue). No fields. Rimsky retries on the next scheduler tick. Producer-side faults flow as gRPC error status codes, not as an `Unavailable` response.
+### `OpenResponse` (`oneof`)
 
-Resume detection is the producer's responsibility. If `Open` arrives with a `claim_id` the producer has seen before, the producer recognizes the resume internally (lookup by `claim_id` against its own state). There is no `resumed` flag on `Open`.
+| Variant | Fields | Meaning |
+| --- | --- | --- |
+| `Acquired` | `address`, `payload`, `claim_scope`, `realized_write_semantics` | The claim was acquired. `address` = producer-supplied bytes the executor uses to access claimed state. `payload` = producer-supplied data captured at acquisition (e.g. a picked queue item's user data). `claim_scope` = canonicalized scope bytes; two acquisitions that should conflict must produce byte-equal `claim_scope`. `realized_write_semantics` = the per-claim value; must be a member of the envelope returned by `Capabilities`. |
+| `Unavailable` | none | No claim available right now (e.g. an empty items-table queue). Rimsky retries on the next scheduler tick. Producer-side faults flow as gRPC error status codes, not as an `Unavailable` response. |
 
-### `Commit(CommitRequest) → CommitResponse`
+Resume detection is the producer's responsibility. If `Open` arrives with a
+`claim_id` the producer has seen before, the producer recognizes the resume
+internally (lookup by `claim_id` against its own state). There is no `resumed` flag
+on `Open`.
 
-`CommitRequest` carries `claim_id`, `claim_scope`, `address`. Signals that the consumer of the claim succeeded. Producer disposition is per-producer config. Examples:
+## `Commit` — consumer succeeded
 
-- For `rw` claims on `staged_*` mode: atomically publish the staging area's contents into live state.
-- For `sync`-mode `rw` claims: producer-side no-op (writes already live).
-- For pick-policy claims: apply the configured commit-default action.
+`CommitRequest` carries `claim_id`, `claim_scope`, `address`. Signals that the
+consumer of the claim succeeded. Producer disposition is per-producer config.
+Examples: for `rw` claims on `staged_*` mode, atomically publish the staging area's
+contents into live state; for `sync`-mode `rw` claims, producer-side no-op (writes
+already live); for pick-policy claims, apply the configured commit-default action.
 
-Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional fields, both inert to rimsky: `version_id` (set by `DataProcessing`-capable producers; rimsky persists it in the `rimsky_claim_handles.version_id` column and the lineage record) and `producer_metadata` (surfaced verbatim in the fan-out parent's writeback row). Plain producers leave both empty.
+Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional
+fields, both inert to rimsky:
 
-### `Abandon(AbandonRequest) → AbandonResponse`
+| Field | Meaning |
+| --- | --- |
+| `version_id` | Set by `DataProcessing`-capable producers; rimsky persists it in the `rimsky_claim_handles.version_id` column and the lineage record. Plain producers leave it empty. |
+| `producer_metadata` | Surfaced verbatim in the fan-out parent's writeback row. Plain producers leave it empty. |
 
-`AbandonRequest` carries `claim_id`, `claim_scope`, `address` (where `address` may be empty — the producer identifies its own state by `claim_id`). Signals that the consumer of the claim failed. Producer disposition is per-producer config. Examples:
+## `Abandon` — consumer failed
 
-- For `staged_*` `rw` claims: discard the staging area without publishing.
-- For pick-policy claims: apply the configured abandon-default action.
-- For `sync` `rw` claims: degenerate — direct writes cannot be undone. Document this as an honest limitation in your producer's README.
+`AbandonRequest` carries `claim_id`, `claim_scope`, `address` (where `address` may
+be empty — the producer identifies its own state by `claim_id`). Signals that the
+consumer of the claim failed. Producer disposition is per-producer config.
+Examples: for `staged_*` `rw` claims, discard the staging area without publishing;
+for pick-policy claims, apply the configured abandon-default action; for `sync`
+`rw` claims it is degenerate — direct writes cannot be undone, so document this as
+an honest limitation in your producer's README.
 
-Not called for read-only claims (Rimsky calls `Release` instead). Idempotent in `claim_id`. `AbandonResponse` has no fields.
+Not called for read-only claims (rimsky calls `Release` instead). Idempotent in
+`claim_id`. `AbandonResponse` has no fields.
 
-### `Release(ReleaseRequest) → ReleaseResponse`
+## `Release` — tear down read state
 
-`ReleaseRequest` carries `claim_id`, `claim_scope`, `address`. Tear down producer-side read state (snapshot, MVCC transaction) for a read claim. Fires only when the producer registered such state (relevant for `staged_async`; not exercised by every reference producer). Idempotent in `claim_id`. `ReleaseResponse` has no fields.
+`ReleaseRequest` carries `claim_id`, `claim_scope`, `address`. Tear down
+producer-side read state (snapshot, MVCC transaction) for a read claim. Fires only
+when the producer registered such state (relevant for `staged_async`; not exercised
+by every reference producer). Idempotent in `claim_id`. `ReleaseResponse` has no
+fields.
 
-### `Capabilities(CapabilitiesRequest) → CapabilitiesResponse`
+## `Capabilities` — startup handshake
 
-`CapabilitiesRequest` has no fields. `CapabilitiesResponse` returns:
+`CapabilitiesRequest` has no fields. Probed once per service at process startup;
+cached for the process's lifetime. `CapabilitiesResponse` returns:
 
-- `write_semantics_allowed` — the set of `WriteSemantics` values this producer may return from `Open`. The valid values are `sync`, `staged_async`, `blocking_async`, and `read_only` (the proto enum `WRITE_SEMANTICS_*`; `WRITE_SEMANTICS_UNKNOWN` is the zero value and MUST NOT be returned).
-- `supports_split_scope` / `supports_scopes_conflict` — the optional-RPC flags (see §1). Advertise `true` only when you implement the matching RPC.
-- `protocols` — the mix-in service protocols this binary also speaks alongside `claim_producer` (e.g. `data_processing`, `validation`, `lifecycle_subscriber`). A binary that implements `LifecycleSubscriber` lists `lifecycle_subscriber` here.
-- `validation_supported_roles` — when `validation` is in `protocols`, the role discriminators this service will validate.
+| Field | Meaning |
+| --- | --- |
+| `write_semantics_allowed` | The set of `WriteSemantics` values this producer may return from `Open`. |
+| `supports_split_scope` / `supports_scopes_conflict` | The optional-RPC flags. Advertise `true` only when you implement the matching RPC. |
+| `protocols` | The mix-in service protocols this binary also speaks alongside `claim_producer` (e.g. `data_processing`, `validation`, `lifecycle_subscriber`). A binary that implements `LifecycleSubscriber` lists `lifecycle_subscriber` here. |
+| `validation_supported_roles` | When `validation` is in `protocols`, the role discriminators this service will validate. |
 
-Probed once per service at process startup; cached for the process's lifetime.
+The valid `WriteSemantics` values are `sync`, `staged_async`, `blocking_async`, and
+`read_only` (the proto enum `WRITE_SEMANTICS_*`; `WRITE_SEMANTICS_UNKNOWN` is the
+zero value and MUST NOT be returned). What each value means for concurrent claims
+on byte-equal claim scope — and the `intent` it fits — is in
+[write-semantics](../concepts/write-semantics.md).
 
-The operator declares a subset envelope per service in `rimsky.yml` under `write_semantics_allowed:`. The capability handshake validates operator-declared ⊆ producer-declared; a mismatch fails Rimsky startup.
+The operator declares a subset envelope per service in `rimsky.yml` under
+`write_semantics_allowed:`. The capability handshake validates operator-declared ⊆
+producer-declared; a mismatch fails rimsky startup.
 
-## 5. Verb-firing matrix per claim shape
+## Optional RPCs
+
+| RPC | Gate flag | When to implement |
+| --- | --- | --- |
+| `SplitScope` | `supports_split_scope = true` | Required for templates that fan out against your producer. Rimsky calls it inside the acquisition transaction to partition the already-`Open`'d parent scope into `SubScopeDescriptor` rows that seed the sub-claims. The shape of `partition_request` bytes is yours to define. |
+| `ScopesConflict` | `supports_scopes_conflict = true` | When two non-byte-equal `claim_scope` values should still serialize against each other (range overlap, hash-bucket collision). When not advertised, rimsky falls back to the byte-equal default (`@blessed-invariant 4b`). |
+
+## Byte-equal-scope uniformity
+
+Across the lifetime of the producer process, two `Open` calls returning byte-equal
+`claim_scope` MUST return the same `realized_write_semantics`. Rimsky relies on this
+for the conflict predicate; producers enforce.
+
+In practice: if your producer supports both `staged_async` and `sync` modes, it
+must consistently return the same one for any given canonical scope. The simplest
+path is "one mode per producer process" (single-element envelope); supporting
+per-claim variation requires per-scope state.
+
+## Verb-firing matrix per claim shape
 
 | Claim shape | `write_semantics` | Verbs invoked at terminal |
-|---|---|---|
+| --- | --- | --- |
 | Scoped-access `r` | `sync` / `blocking_async` | None — claim-handle deletion is sufficient |
 | Scoped-access `r` | `staged_async` | `Release(claim_id)` |
 | Scoped-access `rw` | `sync` | `Commit(claim_id)` (no-op) or `Abandon(claim_id)` (degenerate) |
 | Scoped-access `rw` | `staged_*` | `Commit(claim_id)` (atomic swap) or `Abandon(claim_id)` |
 | Pick-policy claim | (any) | `Commit(claim_id)` or `Abandon(claim_id)` |
 
-For held claims, Rimsky fires exactly one automatic resolution at holding-subgraph completion. Aggregate outcome — all-completed → `Commit`; any-failed → `Abandon` — drives the verb. From the producer's perspective, the call is indistinguishable from a non-held terminal.
+For held claims, rimsky fires exactly one automatic resolution at holding-subgraph
+completion. Aggregate outcome — all-completed → `Commit`; any-failed → `Abandon` —
+drives the verb. From the producer's perspective, the call is indistinguishable
+from a non-held terminal.
 
-## 6. Inertness — what Rimsky won't do with claim content
+## Inertness
 
 <!-- @source: ../../.ok-planner/design/concepts/claim-handle.md -->
-> The persistent row asserting "holder H has acquired scope S for purpose P." Implementation of an acquired claim. Carries the rimsky-generated `claim_id`, holder identity, scope bytes, producer-returned address and payload, the realized write semantics, and a held flag.
 
-Address, payload, and scope from `OpenResponse.acquired` are opaque to Rimsky. Rimsky reads claim content by named-field path only at substitution-leaf extraction; it never logs, validates, transforms, normalizes, decrypts, hashes, indexes, pattern-matches, attaches to traces, or includes the bytes in errors.
+What rimsky won't do with claim content. The persistent claim-handle row asserts
+"holder H has acquired scope S for purpose P" — it carries the rimsky-generated
+`claim_id`, holder identity, scope bytes, producer-returned address and payload, the
+realized write semantics, and a held flag.
 
-This means: encrypted fields stay encrypted in transit. Operators who want fields out of Rimsky's address space encrypt before passing.
+`address`, `payload`, and `claim_scope` from `OpenResponse.acquired` are opaque to
+rimsky. Rimsky reads claim content by named-field path only at substitution-leaf
+extraction; it never logs, validates, transforms, normalizes, decrypts, hashes,
+indexes, pattern-matches, attaches to traces, or includes the bytes in errors.
 
-## 7. Atomicity is decoupled
+This means: encrypted fields stay encrypted in transit. Operators who want fields
+out of rimsky's address space encrypt before passing.
 
-Rimsky opens a transaction, claims the worker-request, INSERTs claim-handle rows, RPCs `ClaimProducer.Open` (the producer runs in its own transaction), UPDATEs claim-handle addresses, INSERTs claim-holders, COMMITs.
+## Atomicity is decoupled
+
+Rimsky opens a transaction, claims the worker-request, INSERTs claim-handle rows,
+RPCs `ClaimProducer.Open` (the producer runs in its own transaction), UPDATEs
+claim-handle addresses, INSERTs claim-holders, COMMITs.
 
 Failures on either side are recovered separately:
 
-- Rimsky-side failures are recovered via Rimsky's orphan reaper.
-- Producer-side failures are recovered via the producer's own TTL/sweep (obligation 1).
+- Rimsky-side failures are recovered via rimsky's orphan reaper.
+- Producer-side failures are recovered via the producer's own TTL/sweep
+  (obligation 1).
 
-The two transactions are decoupled. A failure on one side does not roll back the other.
+The two transactions are decoupled. A failure on one side does not roll back the
+other.
 
-## 8. Conformance
+## Conformance
 
-The `rimsky conformance claim-producer` subcommand exercises a producer against the wire-protocol contract. Run it pointing at your producer endpoint to verify the verbs behave correctly:
+`rimsky conformance claim-producer` exercises a producer against the wire-protocol
+contract. Run it pointing at your producer endpoint to verify the verbs behave
+correctly:
 
 ```
 rimsky conformance claim-producer --endpoint grpc://your-producer:9101
 ```
 
-The same checks are exposed as a Go library under `lib/protocols/conformance/claimproducer` so you can invoke them from your own tests.
+The same checks are exposed as a Go library under
+`lib/protocols/conformance/claimproducer` so you can invoke them from your own
+tests.
 
-## 9. Reference impls
+## Reference impls
 
-The in-tree test-double producer is the stub at `test/support/stores/stub/` — an in-memory fixture (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double, not a production starting point.
-
-The production reference producers — the concrete-paths `filesystem` store and the regional-access / items-queue `postgres` store — ship in rimsky's tree under `lib/services/stores/{filesystem,postgres}`. Read their `config-example.yml` and their server packages alongside the wire contract when building a store of your own.
+- **Test double** — the stub at `test/support/stores/stub/`, an in-memory fixture
+  (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double,
+  not a production starting point.
+- **Production-shaped** — the concrete-paths `filesystem` store and the
+  regional-access / items-queue `postgres` store, under
+  `lib/services/stores/{filesystem,postgres}`. Read their `config-example.yml` and
+  their server packages alongside the wire contract when building a store of your
+  own.
 
 ## See also
 
-- [claim-producer](../concepts/claim-producer.md)
-- [claim](../concepts/claim.md)
-- [claim-handle](../concepts/claim-handle.md)
-- [claim-scope](../concepts/claim-scope.md)
-- [write-semantics](../concepts/write-semantics.md)
+[claim-producer](../concepts/claim-producer.md) · [claim](../concepts/claim.md) · [claim-handle](../concepts/claim-handle.md) · [claim-scope](../concepts/claim-scope.md) · [write-semantics](../concepts/write-semantics.md)
 
 
 ---
 
 # Implementing an executor
 
-This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `lib/protocols/proto/v1/executor.proto` (the required dispatch protocol) and `lib/protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); the mechanically-generated field/message/RPC references are at [`reference/executor.md`](reference/executor.md) and [`reference/executor-observability.md`](reference/executor-observability.md). This guide is the practical companion. There is no executor SDK; a Go service may use the `protocols` module's `serverkit` helpers ([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON bridge scaffolding, or implement straight against the wire types in any language.
+An **executor** runs one node's work. It implements the dispatch protocol
+`Executor` (one method, `Execute`) and, optionally, the read-only
+`ExecutorObservability` protocol. It is out-of-process: the supervisor dials it
+over gRPC at dispatch time, with an HTTP+JSON bridge available for non-Go
+services.
+
+There is **no executor SDK** — implement against the wire types in any language. A
+Go service may use the `protocols` module's `serverkit` helpers
+([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON scaffolding. Wire
+contracts: `lib/protocols/proto/v1/executor.proto` (dispatch, required) and
+`lib/protocols/proto/v1/executor_observability.proto` (observability, optional);
+generated field/message/RPC references at
+[`reference/executor.md`](reference/executor.md) and
+[`reference/executor-observability.md`](reference/executor-observability.md).
 
 <!-- @source: ../../.ok-planner/design/concepts/executor.md -->
-> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
-> **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
+## What you implement
 
----
+| RPC | Service | Required? | Purpose |
+| --- | --- | --- | --- |
+| `Execute(ExecuteRequest) → stream<ExecuteEvent>` | `Executor` | **Yes** | Run one dispatch; stream events ending in exactly one terminal. |
+| `Capabilities(ExecutorCapabilitiesRequest) → ObservabilityCapabilities` | `ExecutorObservability` | No | Startup handshake: declare accepted schema, events, error classes, trace support. |
+| `GetTrace(GetTraceRequest) → Trace` | `ExecutorObservability` | No | Pull a past dispatch's trace, keyed by `dispatch_id`. |
+| `StreamTrace(StreamTraceRequest) → stream<TraceEvent>` | `ExecutorObservability` | No | Live trace of a dispatch, keyed by `dispatch_id`. |
 
-## 1. The wire contract
+`ExecutorObservability` is opt-in but recommended for any executor whose
+dispatches are interesting to humans — dashboards dial it to pull or stream
+per-dispatch traces.
 
-The executor surface is split across two service definitions. The required dispatch protocol carries one method:
+## Boundaries
 
-```protobuf
-service Executor {
-  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
-}
-```
+The executor **owns**:
 
-Source: `lib/protocols/proto/v1/executor.proto`.
+- Running the dispatch and streaming `ExecuteEvent`s.
+- Classifying its own outcome — `Success` / `Error` / `Park` / `AwaitAsyncCallback`.
+- Declaring its accepted attribute shape, emittable events, and error classes via
+  `Capabilities`.
 
-The optional read-only observability protocol carries three:
+The executor does **NOT** own (rimsky's job):
 
-```protobuf
-service ExecutorObservability {
-  rpc Capabilities(ExecutorCapabilitiesRequest) returns (ObservabilityCapabilities);
-  rpc GetTrace(GetTraceRequest) returns (Trace);
-  rpc StreamTrace(StreamTraceRequest) returns (stream TraceEvent);
-}
-```
+- **The resolution of an error.** The executor emits an `error_class`; the
+  supervisor's template policy chain maps `(error_class, retry_counter)` to
+  `retry` / `give_up` / `pass`. The executor never decides retry-vs-give-up.
+- **Attribute substitution.** `{{...}}` directives are resolved by the supervisor
+  *before* dispatch; the executor receives resolved values.
+- **Cascade coupling.** Whether a downstream node reacts to this node's success or
+  failure is declared receiver-side, not by the executor.
+- **Credentials, encryption, access control.** Rimsky is auth-blind. Encrypt
+  sensitive bytes before handing them to rimsky; service-to-service auth is
+  operator-configured at the deployment layer (mTLS, IAM). Encrypted attribute
+  values stay encrypted in transit — decrypting at point of use is the executor's
+  job.
 
-Source: `lib/protocols/proto/v1/executor_observability.proto`.
+## `Execute` — the dispatch
 
-Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
+The supervisor dials the executor and streams events back. The response stream is
+zero or more `Heartbeat` / `NamedEvent` records (in any order) followed by
+**exactly one** terminal `StreamClose`; the executor MUST close the stream
+immediately after emitting it. A stream that closes without a `StreamClose` is an infrastructure
+error to the supervisor.
 
-`Execute` is the load-bearing method. The response stream is a sequence of `ExecuteEvent` records — each a `oneof` of `Heartbeat`, `NamedEvent`, or `StreamClose`. The stream carries zero or more `Heartbeat` and `NamedEvent` records followed by **exactly one** terminal `StreamClose`, and the executor MUST close the stream immediately after emitting it. A stream that closes without a `StreamClose` is treated by the supervisor as an infrastructure error.
+### `ExecuteRequest` (salient fields)
 
-`StreamClose` is itself a `oneof outcome` of exactly one of: `Success`, `Error`, `Park`, `AwaitAsyncCallback`.
+Full field reference: [`reference/executor.md`](reference/executor.md).
 
-## 2. The methods
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `node_id`, `instance_id`, `node_type` | string | Which dispatch this is. |
+| `attributes` | `Struct` | The **only** template-author input surface, already substituted. `attributes_schema` carries the declared JSON Schema. The historical `userdata` field was collapsed into `attributes` and is reserved on the wire. |
+| `stores` | `map<string, StoreHandle>` | One entry per referenced store, keyed by store-config name. Each `StoreHandle` carries the producer's `handle` (the `Address` bytes from `ClaimProducer.Open`, wrapped as a `Struct`), a `kind` string, and `candidate_handle` bytes for `DataProcessing` fan-out leaves. All inert to rimsky. |
+| `callback_url`, `cancel_token` | string | HTTP+JSON base URL for async handoff and incremental attribute writes; the bearer token the supervisor watches for cancellation (also used on those callbacks). |
+| `dispatch_id` | string | The `rimsky_node_runs.id`; key per-dispatch traces/state on it. |
+| `resume_context` | `ResumeContext` | Populated on resume of a parked node (see [Resume context](#resume-context)); absent on a fresh dispatch. |
+| `prior_dispatch_id`, `prior_dispatch_disposition` | string, enum | Set when this dispatch supersedes a prior failed / stale / recalculated one for the same `(run_scope_id, node_id)`. Disposition (`PRIOR_HEARTBEAT_STALE` / `PRIOR_RETRY_AFTER_ERROR` / `PRIOR_RECALCULATE`; `PRIOR_NONE` when unset) tells a session-keeping executor *why* it is taking over. |
 
-### `Executor.Execute(ExecuteRequest) → stream<ExecuteEvent>`
+### `ExecuteEvent` records
 
-Dispatch a node. The salient `ExecuteRequest` fields (full reference in [`reference/executor.md`](reference/executor.md)):
+| Record | Terminal? | Fields | Notes |
+| --- | --- | --- | --- |
+| `Heartbeat` | no | `timestamp_ms`, `note` | Keep-alive while work continues. |
+| `NamedEvent` | no | `name`, `payload` (bytes) | Non-terminal domain signal. `name` must appear in `Capabilities.declared_events`; `payload` is opaque to rimsky, reachable in substitution as `nodes.<emitter>.event.<name>.<path>`. Zero or more per run. |
+| `StreamClose` | **yes — exactly one** | `oneof outcome` | One of the four outcomes below. |
 
-- **node identity** — `node_id`, `instance_id`, `node_type` name which dispatch this is.
-- **`attributes`** (`Struct`) — already substituted. The executor sees resolved values; the `{{...}}` directives have been resolved by the supervisor. This is the only template-author-supplied input surface; the historical `userdata` field was collapsed into `attributes` and is reserved on the wire. `attributes_schema` carries the declared JSON Schema for reference.
-- **`stores`** (`map<string, StoreHandle>`) — one entry per store the node references, keyed by store-config name. Each `StoreHandle` carries the producer-supplied `handle` (the `Address` bytes returned by `ClaimProducer.Open`, wrapped as a `Struct`), a `kind` string, and `candidate_handle` bytes for `DataProcessing` fan-out leaves. All inert to rimsky.
-- **`callback_url`** / **`cancel_token`** — the HTTP+JSON callback base URL for async handoff and incremental attribute writes, and the bearer token the supervisor watches for cancellation (also used on those callbacks).
-- **`dispatch_id`** — the supervisor-side `rimsky_node_runs.id`; key per-dispatch traces/state on it.
-- **`resume_context`** — populated on resume of a parked node (see §4a); absent on a fresh dispatch.
-- **`prior_dispatch_id`** / **`prior_dispatch_disposition`** — set when this dispatch supersedes a prior failed / stale / recalculated dispatch for the same `(run_scope_id, node_id)`. The disposition enum (`PRIOR_HEARTBEAT_STALE`, `PRIOR_RETRY_AFTER_ERROR`, `PRIOR_RECALCULATE`; `PRIOR_NONE` when unset) tells a session-keeping executor *why* it is taking over, so it can recover or hand off work-in-progress.
+`StreamClose.outcome` is exactly one of:
 
-Stream back any number of `Heartbeat` / `NamedEvent` records, then exactly one `StreamClose`:
+| Outcome | Fields | Meaning |
+| --- | --- | --- |
+| `Success` | `bool changed`, `string change_summary`, `Struct attributes_delta` | Terminal success. `changed = false` halts cascade propagation at this node. `change_summary` is audit-only (rimsky does not parse it). `attributes_delta` is the terminal write-back (validated against the node's attributes schema); may be empty if the incremental-callback path was used during the run. |
+| `Error` | `string error_class`, `Struct payload` | Terminal application-level error. `error_class` is executor-defined; `payload` is opaque. The **supervisor**, not the executor, maps it to a resolution (see [Boundaries](#boundaries)). Use `error_class: "executor_blocked"` for "I produced output but explicitly declined to claim success" — low-confidence outputs routed to human review. |
+| `Park` | `ParkReason reason`, `bytes payload`, `Timestamp resume_at?`, `string session_token?`, `reason_note` / `reason_label?` | Pause this run until resumed. `reason` ∈ `PARK_REASON_AWAIT_CALLBACK` (the zero value; will not auto-resume) / `PARK_REASON_SNOOZE`. `payload` and `session_token` are echoed back in `ResumeContext`. `resume_at` absent ⇒ signal-based resume only. See [parked-state](../concepts/parked-state.md). |
+| `AwaitAsyncCallback` | `string async_ack_id`, `int expected_completion_ms?` | Terminal handoff: the outcome arrives later via HTTP callback (see [Async callback](#async-callback)). Echo `async_ack_id` on the callback. |
 
-- **`Heartbeat`** — keep-alive while work continues. Carries `timestamp_ms` and a free-text `note`.
-- **`NamedEvent`** — non-terminal domain-shaped signal. Two fields: `string name` (must appear in the executor's `ObservabilityCapabilities.declared_events`) plus `bytes payload` (opaque to Rimsky; available to substitution as `nodes.<emitter>.event.<name>.<path>`). Zero or more emissions per run; does not close the stream.
-- **`StreamClose{Success}`** — terminal success. Three fields:
-    - `bool changed` — producer-declared verdict on whether this run produced a different value than the previous run. A `false` value halts cascade propagation at this node.
-    - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
-    - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run.
-- **`StreamClose{Error}`** — terminal application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. Use `error_class: "executor_blocked"` for the "I produced output but explicitly chose not to claim success" path (low-confidence outputs routed to human review). The executor does NOT pick the resolution: the supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `give_up`, or `pass`. If you advertise `declared_error_classes` in your observability capabilities, the supervisor validates operator `error_types:` keys against it. Cascade coupling on failure is declared receiver-side on the impactee node.
-- **`StreamClose{Park}`** — terminal: pause this run until externally resumed. Fields: `ParkReason reason` (a closed enum — `PARK_REASON_AWAIT_CALLBACK` (the zero value; won't auto-resume) or `PARK_REASON_SNOOZE`), `bytes payload` (opaque; passed back as `ResumeContext.payload`), optional `google.protobuf.Timestamp resume_at` (absent means signal-based-only), optional `string session_token` (opaque; passed back as `ResumeContext.session_token`), and free-form `reason_note` / `reason_label` annotations (inert). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See [parked-state](../concepts/parked-state.md).
-- **`StreamClose{AwaitAsyncCallback}`** — terminal handoff: I'll POST the final outcome later via callback (see §4). Carries an `async_ack_id` the executor echoes on the callback, plus an optional `expected_completion_ms` hint.
+`AwaitAsyncCallback` vs `Park{PARK_REASON_AWAIT_CALLBACK}`: with `AwaitAsyncCallback`
+the **executor** finishes the run by POSTing the outcome (see
+[Async callback](#async-callback)); with `Park` the **node** is suspended until an
+external resume — elapsed time, an admin invalidate, or an in-graph `on_event`
+invalidate — after which the supervisor re-dispatches it with `resume_context`.
 
-### `ExecutorObservability.StreamTrace(StreamTraceRequest) → stream<TraceEvent>`
-
-Streaming trace of executor activity for observability dashboards. Keyed by `dispatch_id`.
-
-### `ExecutorObservability.GetTrace(GetTraceRequest) → Trace`
-
-Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past invocations from dashboards.
-
-### `ExecutorObservability.Capabilities(ExecutorCapabilitiesRequest) → ObservabilityCapabilities`
-
-Startup handshake for the observability protocol. Declares:
-
-- `supports_trace_get` / `supports_trace_stream` — which read-side RPCs the executor honors.
-- `retention_after_terminal_seconds` — the per-dispatch trace retention window.
-- `custom_ui` (`CustomUI`) — an optional dashboard-embeddable UI (`ui_url`, `embed_mode`, `dispatch_url_template`).
-- `http_bridge_url` — when non-empty, the base URL the executor serves the HTTP+JSON observability bridge on for browser clients; empty means gRPC-only.
-- `expected_attributes_schema` — JSON Schema bytes for the accepted attribute shape; empty means accept-any. Output properties are marked `readOnly: true`.
-- `declared_events` — event names the executor may emit via `NamedEvent`; empty means none.
-- `declared_error_classes` — error-class paths the executor may emit on `Error.error_class`. Patterns ending in `*` are prefix leaves (e.g. `http/server_error/*`); empty means "skip the validator's range-check for this executor."
-
-Probed once per service at process startup.
-
-`expected_attributes_schema` is merged with the template's L1 defaults and L2 per-node declaration to form the effective attribute schema; Rimsky validates the post-substitution bag at dispatch and the post-write-back bag at commit. Schema-validation failures route through `Error { error_class: "template_validation_failed" }`. `declared_events` is cross-validated against any `subscribes: [{node: <sender>, type: event/<name>}]` entries in registering templates; references to undeclared events reject the registration.
-
-## 3. The attribute surface
+## The attribute surface
 
 <!-- @source: ../../.ok-planner/design/concepts/attribute.md -->
-> The single template-author-supplied input surface for an executor dispatch. Attributes are declared as a JSON Schema on the template node, substituted (`{{...}}` directives resolved) by the supervisor, validated against the schema at dispatch and again at terminal write-back, and delivered to the executor verbatim. There is no peer "opaque" surface — the historical `userdata` field was collapsed into `attributes` (see `_retired/userdata.md` for the migration record).
 
-This means:
+`attributes` is the single template-author-supplied input to a dispatch. There is
+no peer "opaque" surface — the historical `userdata` field was collapsed into it.
 
-- Every key the executor consumes — model name, system prompts, transport config, etc. — appears under `attributes` and is governed by the node's attributes schema.
-- The executor declares the shape it accepts via `expected_attributes_schema` on the `ObservabilityCapabilities` response; Rimsky enforces compatibility at template registration and the substituted bag at dispatch.
-- Static configuration (constants the template author wants to hand the executor) lives in attribute `default:` entries; dynamic configuration (values pulled from other nodes or params) lives in `source:` entries. Both surface to the executor identically.
-- Encrypted attribute values stay encrypted in transit. Decryption is the executor's responsibility at point of use.
+- Every key the executor consumes — model name, system prompts, transport config —
+  appears under `attributes` and is governed by the node's attributes schema.
+- The executor declares the shape it accepts via `expected_attributes_schema` on
+  the `Capabilities` response. Rimsky merges that with the template's **L1
+  defaults** and **L2 per-node declaration** into the effective schema, then
+  validates the post-substitution bag at dispatch and the post-write-back bag at
+  commit. Validation failures route through
+  `Error { error_class: "template_validation_failed" }`.
+- Static configuration (constants the template author hands the executor) lives in
+  attribute `default:` entries; dynamic configuration (values pulled from other
+  nodes or params) lives in `source:` entries. Both reach the executor identically.
 
-## 4. The async-callback path
+## `Capabilities` — startup handshake
 
-For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), close the `Execute` stream with `StreamClose{AwaitAsyncCallback}` carrying an `async_ack_id`. Later, when the work completes, POST the final outcome back to the supervisor.
+Probed once per service at startup. The `ObservabilityCapabilities` response
+declares:
 
-The callback body is the `AsyncCallbackBody` message marshalled as JSON: an optional `events` array (a `NamedEvent` stream replayed before the verdict) plus exactly one `outcome` oneof variant — `success`, `error`, or `park`:
+| Field | Meaning |
+| --- | --- |
+| `supports_trace_get` / `supports_trace_stream` | Which read-side RPCs the executor honors. |
+| `retention_after_terminal_seconds` | Per-dispatch trace retention window. |
+| `custom_ui` (`CustomUI`) | Optional dashboard-embeddable UI (`ui_url`, `embed_mode`, `dispatch_url_template`). |
+| `http_bridge_url` | Non-empty ⇒ base URL of the HTTP+JSON observability bridge for browser clients; empty ⇒ gRPC-only. |
+| `expected_attributes_schema` | JSON Schema for the accepted attribute shape; empty ⇒ accept-any. Output properties are marked `readOnly: true`. |
+| `declared_events` | Event names the executor may emit via `NamedEvent`; empty ⇒ none. Cross-validated against template `subscribes: [{type: event/<name>}]` entries — references to undeclared events reject the registration. |
+| `declared_error_classes` | Error-class paths the executor may emit on `Error.error_class`. Patterns ending in `*` are prefix leaves (e.g. `http/server_error/*`); empty ⇒ skip the validator's range-check. Validated against operator `error_types:` keys. |
+
+## Async callback
+
+For work that outlives a streaming RPC — background jobs, async LLM calls, long
+batches — close `Execute` with `StreamClose{AwaitAsyncCallback}` carrying an
+`async_ack_id`, then POST the outcome back when the work completes:
 
 ```
 POST ${callback_url}/v1/callback/{async_ack_id}
 Content-Type: application/json
 
 {
-  "events": [
-    { "name": "phase_complete", "payload": "..." }
-  ],
+  "events": [ { "name": "phase_complete", "payload": "..." } ],
   "success": { "changed": true, "attributes_delta": { ... } }
 }
 ```
 
-Events from the array are persisted and processed before the terminal, so an `on_event` handler can fire mid-flight.
+The body is the `AsyncCallbackBody` message marshalled as JSON: an optional
+`events` array (a `NamedEvent` stream replayed *before* the verdict, so an
+`on_event` handler can fire mid-flight) plus exactly one `outcome` oneof —
+`success`, `error`, or `park`.
 
-Important wire details:
+Wire details that bite:
 
-- The callback path is `${callback_url}/v1/callback/{async_ack_id}` — `callback_url` from the `ExecuteRequest` plus the `async_ack_id` you echoed.
-- The body MUST parse as `AsyncCallbackBody`. The pre-2026 legacy `{ "type": "complete" | "blocked" | "errored" }` shape is **no longer accepted**; a body that fails to parse as this message receives HTTP 400.
-- `AwaitAsyncCallback` is not a valid `outcome` here — the callback *is* the second half of the async path, so chaining another async handoff is forbidden.
-- The same `cancel_token` from the `ExecuteRequest` is the bearer token on this callback (and on incremental attribute writes).
+- The path is `${callback_url}/v1/callback/{async_ack_id}` — `callback_url` from
+  the `ExecuteRequest` plus the `async_ack_id` you echoed.
+- The body MUST parse as `AsyncCallbackBody`. The pre-2026 legacy
+  `{ "type": "complete" | "blocked" | "errored" }` shape is **rejected** (HTTP 400).
+- `AwaitAsyncCallback` is **not** a valid `outcome` here — the callback is the
+  second half of the async path, so chaining another handoff is forbidden.
+- The bearer token is the same `cancel_token` from the `ExecuteRequest` (also used
+  on incremental attribute writes).
 
-The `protocols` module's `serverkit` package provides Go scaffolding for this bridge; for a non-Go executor, marshal the `AsyncCallbackBody` shape directly.
+A Go executor can use the `serverkit` package for this bridge; a non-Go executor
+marshals the `AsyncCallbackBody` shape directly.
 
-## 4a. Resume context
+**Incremental attribute writes.** An executor may also write attributes *mid-run*,
+before the terminal, against the same `callback_url` base with the `cancel_token`
+as bearer (`serverkit` provides the Go helper; the route and body are in
+[`reference/executor.md`](reference/executor.md)). A run that wrote incrementally
+may then close `Success` with an empty `attributes_delta`.
 
-When the supervisor resumes a parked node, the dispatch's `ExecuteRequest.resume_context` is populated with three fields:
+## Resume context
 
-- `bytes payload` — the original `Park.payload`.
-- `string session_token` — the original `session_token` (executor-side correlation identifier).
-- `string resume_reason` — `"deadline_elapsed"` (time-based via `resume_at`) or `"external_invalidate"` (admin or in-graph invalidate).
+When the supervisor resumes a parked node, `ExecuteRequest.resume_context` carries:
 
-When `resume_context` is empty, this is a fresh dispatch. Executors that do not implement parking can ignore the field.
+| Field | Meaning |
+| --- | --- |
+| `bytes payload` | The original `Park.payload`. |
+| `string session_token` | The original `session_token` (executor-side correlation identifier). |
+| `string resume_reason` | `"deadline_elapsed"` (time-based via `resume_at`) or `"external_invalidate"` (admin or in-graph invalidate). |
 
-## 5. Conformance
+Empty `resume_context` ⇒ this is a fresh dispatch. Executors that do not implement
+parking can ignore the field.
 
-The `rimsky conformance executor` subcommand exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
+## Conformance
+
+`rimsky conformance executor` exercises an executor against the wire-protocol
+contract:
 
 ```
 rimsky conformance executor --endpoint <your-executor-host:port> --transport grpc
 ```
 
-For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance. The same checks are exposed as a Go library under `lib/protocols/conformance/executor` so you can invoke them from your own tests.
+For LLM-calling executors, add `--require-stub-mode`: the harness probes for stub
+mode at startup and rejects non-stubbed services, preventing accidental real-LLM
+calls during conformance. The same checks are exposed as a Go library under
+`lib/protocols/conformance/executor`.
 
-## 6. Reference impls
+## Reference impls
 
-The in-tree test-double executor is the stub at `test/support/executors/stub/` — a test double (Meszaros sense) for scenario tests and conformance. **Not a skeleton template** — see [`../executors/stub/README.md`](../executors/stub/README.md).
-
-The production-shaped reference executors ship in rimsky's tree under `lib/services/executors/`: `http-node` (Go; HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the async-callback path end-to-end), plus the `verifier-http` and `verifier-shape-checks` verifier executors. Each carries its own README and config; read them alongside the wire contract when building an executor of your own.
+- **Test double** — the stub at `test/support/executors/stub/`, for scenario tests
+  and conformance. **Not a skeleton template** — see
+  [`../executors/stub/README.md`](../executors/stub/README.md).
+- **Production-shaped** — under `lib/services/executors/`: `http-node` (Go;
+  HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI,
+  demonstrates the async-callback path end-to-end), plus `verifier-http` and
+  `verifier-shape-checks`. Each carries its own README and config; read them
+  alongside the wire contract.
 
 ## See also
 
-- [executor](../concepts/executor.md)
-- [node](../concepts/node.md)
-- [attribute](../concepts/attribute.md)
+[executor](../concepts/executor.md) · [node](../concepts/node.md) · [attribute](../concepts/attribute.md) · [parked-state](../concepts/parked-state.md)
 
 
 ---
@@ -5116,165 +5279,330 @@ zero value.
 
 # Implementing a lifecycle subscriber
 
-This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `lib/protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
+A **lifecycle subscriber** reacts to template, instance, and run-scope state
+transitions in rimsky. It implements the opt-in `LifecycleSubscriber` protocol:
+seven RPCs, each `On…(…Request) → LifecycleAck`. It is a mix-in — a service
+advertises it alongside its primary protocol (typically `ClaimProducer`), never
+standalone.
+
+There is **no subscriber SDK** — implement against the wire types in any language.
+A Go service may use the `protocols` module's `lifecycle` package (hand-written
+types over the contract; [`go-packages.md`](go-packages.md)), or code straight to
+the wire types. Wire contract: `lib/protocols/proto/v1/lifecycle.proto`; generated
+field/message/RPC reference at [`reference/lifecycle.md`](reference/lifecycle.md).
 
 <!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
-> An opt-in protocol for services that want to react to template, instance, and run-scope state transitions. Seven methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`, `OnRunScopeTerminal`. Template/instance events fire synchronously from the control-api process; the run-scope-terminal event fires from the rimsky-side process that owns the transition (control-api for main scopes, the supervisor for sub-graph and fan-out-partition scopes).
 
-> **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Service-to-service auth is operator-configured at the deployment layer.
+**Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or
+access control. Service-to-service auth is operator-configured at the deployment
+layer.
 
----
+## What you implement
 
-## 1. The wire contract
+All seven RPCs return `LifecycleAck` — no return data, just an acknowledgement
+that the subscriber processed the event. Return success from any method the binary
+doesn't react to; a binary that reacts to no event simply doesn't implement the
+service.
 
-```protobuf
-service LifecycleSubscriber {
-  rpc OnTemplateRegistered(OnTemplateRegisteredRequest)     returns (LifecycleAck);
-  rpc OnTemplateDeployed(OnTemplateDeployedRequest)         returns (LifecycleAck);
-  rpc OnTemplateUndeployed(OnTemplateUndeployedRequest)     returns (LifecycleAck);
-  rpc OnTemplateDeregistered(OnTemplateDeregisteredRequest) returns (LifecycleAck);
-  rpc OnInstanceCreated(OnInstanceCreatedRequest)           returns (LifecycleAck);
-  rpc OnInstanceTerminated(OnInstanceTerminatedRequest)     returns (LifecycleAck);
-  rpc OnRunScopeTerminal(OnRunScopeTerminalRequest)         returns (LifecycleAck);
-}
-```
+| RPC | Required? | Purpose |
+| --- | --- | --- |
+| `OnTemplateRegistered(OnTemplateRegisteredRequest) → LifecycleAck` | No | A template hash is added to the registry. Provision idempotent per-template infrastructure (e.g. allocate an empty queue, prepare a sub-bucket). |
+| `OnTemplateDeployed(OnTemplateDeployedRequest) → LifecycleAck` | No | A registered template moves to `deployed`. Warm caches, mark resources ready for instance traffic. |
+| `OnTemplateUndeployed(OnTemplateUndeployedRequest) → LifecycleAck` | No | A deployed template moves to `undeployed`. Drain caches, mark resources for graceful winding-down. |
+| `OnTemplateDeregistered(OnTemplateDeregisteredRequest) → LifecycleAck` | No | A template is removed from the registry. Delete provisioned per-template infrastructure. |
+| `OnInstanceCreated(OnInstanceCreatedRequest) → LifecycleAck` | No | An operator (or compose up) creates a new instance against a deployed template. |
+| `OnInstanceTerminated(OnInstanceTerminatedRequest) → LifecycleAck` | No | An instance moves to its terminal state — completed all frames or deleted by an operator. |
+| `OnRunScopeTerminal(OnRunScopeTerminalRequest) → LifecycleAck` | No | A run-scope reaches terminal state. Unlike the other six, fires from control-api **or** the supervisor (see [Firing sites](#firing-sites-and-synchronous-fan-out)). |
 
-The mechanically-generated message/field reference is at [`reference/lifecycle.md`](reference/lifecycle.md). For Go services, the `protocols` module's `lifecycle` package provides hand-written types over this contract ([`go-packages.md`](go-packages.md)); using it is optional.
+Every RPC is opt-in; "Required?" is No for all seven because the protocol itself
+is opt-in. A subscribed service should still return success from the hooks it
+ignores.
 
-All seven methods return `LifecycleAck` — there's no return data, just an acknowledgement that the subscriber processed the event. The implementer pattern is to return success from any method the binary doesn't react to; a binary that reacts to no event simply doesn't implement the service.
+## Boundaries
 
-## 2. Opting in
+The subscriber **owns**:
 
-`LifecycleSubscriber` is a mix-in protocol; opting in is a per-service configuration choice. Add `lifecycle_subscriber` to the service's `protocols: [...]` list in `rimsky.yml`:
+- Reacting to each event it cares about — provisioning, cache warming/draining,
+  teardown, notifications.
+- Handling replays correctly (see [Idempotency](#idempotency)) — its own internal
+  effects (allocating a queue, sending a notification) are not idempotent by
+  default.
+- Acknowledging fast (see [Firing sites](#firing-sites-and-synchronous-fan-out)) —
+  pushing slow work into its own internal queue.
+- Gating whether it actually *registers* the handlers, via its own startup-config
+  flag (separate from rimsky.yml; see [Opting in](#opting-in)).
 
-```yaml
-claim_producers:
-  my-store:
-    endpoint: "grpc://my-store:9100"
-    protocols: [claim_producer, lifecycle_subscriber]
-    write_semantics_allowed: [sync]
-```
+The subscriber does **NOT** own (rimsky's job):
 
-Without that entry, the service is silently skipped during fan-out — there's no error, non-subscription is the default.
+- **The state transitions themselves.** Template/instance transitions happen in
+  control-api; run-scope-terminal transitions happen in control-api (main scopes)
+  or the supervisor (sub-graph and fan-out-partition scopes). The subscriber only
+  observes; it never drives the transition.
+- **Idempotency at the rimsky boundary.** Rimsky keys each event by
+  `(service-name, event-type, object-id)` and makes replays no-ops on its own side.
+  The subscriber does not signal rimsky to dedupe; it must dedupe its *own* effects.
+- **Fan-out ordering and fan-out membership.** Rimsky decides which subscribed
+  services receive an event and in what order; the subscriber cannot rely on
+  inter-service or inter-event ordering.
+- **Error propagation.** A subscriber error is logged but does not block fan-out to
+  remaining subscribers and does not roll back the transition.
+- **Delivery retries.** Rimsky's replay behavior (retries, restarts,
+  operator-driven backfill) is rimsky-side; the subscriber does not request
+  redelivery.
 
-The flag is per-service, not per-protocol. A service that implements both `ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server registers handlers for both.
+## Opting in
 
-There are two distinct surfaces here: the rimsky.yml `protocols: [...]` list (above) is what tells rimsky to *fan out* to the service. Separately, a producer binary that ships a no-op `LifecycleSubscriber` may gate whether it actually *registers* the handlers behind its own startup-config flag — the in-tree stub store (`test/support/stores/stub/`) registers its handlers only when its own server config sets `enable_lifecycle: true`, not from rimsky.yml — so operators can turn the handlers on without forking the binary.
+`LifecycleSubscriber` is a per-service configuration choice, gated across two
+distinct surfaces in two different files.
 
-## 3. The seven events
+1. **rimsky.yml — tells rimsky to fan out to the service.** Add
+   `lifecycle_subscriber` to the service's `protocols: [...]` list:
 
-### `OnTemplateRegistered`
+   ```yaml
+   claim_producers:
+     my-store:
+       endpoint: "grpc://my-store:9100"
+       protocols: [claim_producer, lifecycle_subscriber]
+       write_semantics_allowed: [sync]
+   ```
 
-Fired when a template hash is added to the registry. Common subscriber response: provision idempotent infrastructure tied to the template (e.g. allocate an empty queue, prepare a sub-bucket).
+   Without that entry, the service is silently skipped during fan-out — there is
+   no error; non-subscription is the default.
 
-### `OnTemplateDeployed`
+2. **The producer binary's own config — tells the binary to register the handlers.**
+   A producer that ships a no-op `LifecycleSubscriber` may gate registration behind
+   its own startup-config flag. The in-tree stub store
+   (`test/support/stores/stub/`) registers its handlers only when its server config
+   sets `enable_lifecycle: true`, not from rimsky.yml — so operators can turn the
+   handlers on without forking the binary.
 
-Fired when a registered template moves to `deployed`. Templates must be deployed before instances can be created against them. Common subscriber response: warm caches, mark resources ready for instance traffic.
+   ```yaml
+   # the producer binary's own config
+   enable_lifecycle: true
+   ```
 
-### `OnTemplateUndeployed`
+The flag is per-service, not per-protocol. A service implementing both
+`ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server
+registers handlers for both. With both surfaces set, rimsky fans out the seven
+lifecycle methods at the matching state transitions.
 
-Fired when a deployed template moves to `undeployed`. Existing instances continue; new instances cannot be created against this template. Common subscriber response: drain caches, mark resources for graceful winding-down.
+## Per-hook request payloads
 
-### `OnTemplateDeregistered`
+Full field reference (types, field numbers): [`reference/lifecycle.md`](reference/lifecycle.md).
 
-Fired when a template is removed from the registry. Common subscriber response: delete provisioned infrastructure tied to the template.
+`OnTemplateRegisteredRequest` carries the template hash plus `spec` (`bytes`) — the
+template's canonical JCS spec bytes, deterministically re-hashable.
+`OnTemplateDeployedRequest` carries the template hash plus `tags`. The undeploy and
+deregister requests carry only the `template_hash`.
 
-### `OnInstanceCreated`
+`OnInstanceCreatedRequest` salient fields:
 
-Fired when an operator (or compose up) creates a new instance against a deployed template.
+| Field | Meaning |
+| --- | --- |
+| `instance_id`, `template_hash`, `instance_key` | Which instance, against which template. |
+| `params` | The instance params (`bytes`). |
+| `service_bindings` | Per-instance late-bound service catalog (opaque JSONB `bytes`); empty when the instance has no late-bound services. Consumed by the host-agent-proxy to populate its binding cache. |
+| `owner_api_key_id` | The api-key whose authenticated request created the instance (empty string for anonymous-mode-created instances). Consumed by the host-agent-proxy to route dispatches to the right user's agent. |
 
-### `OnInstanceTerminated`
+`OnInstanceTerminatedRequest` carries `instance_id`, `template_hash`, and
+`terminated_at_unix_ms` (`int64`).
 
-Fired when an instance moves to its terminal state — completed all frames or was deleted by an operator.
+`OnRunScopeTerminalRequest` salient fields:
 
-### `OnRunScopeTerminal`
+| Field | Meaning |
+| --- | --- |
+| `run_scope_id` | The terminating run-scope. |
+| `terminal_reason` | Why it terminated. |
+| `instance_id` | The owning instance of the terminating run-scope. Populated at every firing site (control-api for main scopes; the supervisor for sub-graph and fan-out-partition scopes). The host-agent-proxy keys lazily-spawned children by instance id (its v1 dispatch-observable scope), so the reap path matches on `instance_id` rather than `run_scope_id`. Empty only for legacy callers that predate this field. |
 
-Fired when a run-scope reaches terminal state. `OnRunScopeTerminalRequest` carries `run_scope_id`, `terminal_reason`, and the owning `instance_id`. Unlike the other six, this event fires from whichever rimsky-side process owns the transition: control-api for main scopes (polling-driven), and the **supervisor** for sub-graph and fan-out-partition scopes (synchronous, in-transaction). Idempotency is preserved across both firing sites via the same ledger (keyed `scope_kind="run_scope"`, `state="run_scope_terminal"`).
+## Firing sites and synchronous fan-out
 
-## 4. Idempotency
+Lifecycle events fire **synchronously** from the rimsky-side process that owns the
+triggering transition. The six template/instance events fire from control-api, so
+a slow subscriber slows the control-api response on the triggering operation (e.g.
+a slow `OnTemplateDeployed` makes `POST /templates/{id}/deploy` slow).
+`OnRunScopeTerminal` fires from control-api (main scopes, polling-driven) or the
+**supervisor** (sub-graph and fan-out-partition scopes, synchronous, in-transaction);
+a slow subscriber there holds up the firing process's path.
 
-<!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
-> An opt-in protocol for services that want to react to template, instance, and run-scope state transitions. Seven methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`, `OnRunScopeTerminal`. Template/instance events fire synchronously from the control-api process; the run-scope-terminal event fires from the rimsky-side process that owns the transition (control-api for main scopes, the supervisor for sub-graph and fan-out-partition scopes).
+- **Be fast.** Subscribers should acknowledge within hundreds of milliseconds. Push
+  slow work into the subscriber's own internal queue.
+- **Don't depend on inter-event ordering.** The firing process fans out to
+  subscribed services in a fixed but unspecified order; an `OnTemplateDeployed`
+  notification from service A may arrive before or after service B's notification.
+- **Failures don't block other subscribers.** A subscriber returning an error is
+  logged but does not block fan-out to remaining subscribers.
 
-Rimsky tracks idempotency at its own boundary: each event is keyed by `(service-name, event-type, object-id)`. Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side.
+## Idempotency
 
-That's the rimsky-side guarantee; the subscriber must still handle replays correctly because its own internal effects (e.g. allocating a queue, sending a notification) may not be idempotent by default. The recommended pattern is to treat each handler as if it could be invoked multiple times for the same `(event-type, object-id)` and short-circuit early.
+Rimsky tracks idempotency at its own boundary: each event is keyed by
+`(service-name, event-type, object-id)`. Replays — caused by retries, restarts, or
+operator-driven backfill — are no-ops at the rimsky side. For `OnRunScopeTerminal`,
+idempotency is preserved across **both** firing sites (control-api and the
+supervisor) via the same ledger, keyed `scope_kind="run_scope"`,
+`state="run_scope_terminal"`.
 
-## 5. Synchronous fan-out
+That is the rimsky-side guarantee; the subscriber must still handle replays
+correctly because its own internal effects (e.g. allocating a queue, sending a
+notification) may not be idempotent by default. The recommended pattern is to treat
+each handler as if it could be invoked multiple times for the same
+`(event-type, object-id)` and short-circuit early.
 
-Lifecycle events are fired synchronously from the rimsky-side process that owns the triggering transition. The six template/instance events fire from control-api, so a slow subscriber slows the control-api response on the triggering operation (e.g. a slow `OnTemplateDeployed` makes `POST /templates/{id}/deploy` slow). `OnRunScopeTerminal` fires from control-api (main scopes) or the supervisor (sub-graph and fan-out-partition scopes); a slow subscriber there holds up the firing process's path.
+## Reference impl
 
-Implications:
-
-- **Be fast.** Subscribers should acknowledge within hundreds of milliseconds. Push slow work into the subscriber's own internal queue.
-- **Don't depend on inter-event ordering.** The firing process fans out to subscribed services in a fixed but unspecified order; an `OnTemplateDeployed` notification from service A may arrive before or after service B's notification.
-- **Failures don't block other subscribers.** A subscriber returning an error is logged but does not block fan-out to remaining subscribers.
-
-## 6. Reference impl
-
-There's no standalone reference `LifecycleSubscriber` binary in the tree — lifecycle handlers ride inside producer binaries. The in-tree example is the stub store (`test/support/stores/stub/`), whose server registers `LifecycleSubscriber` handlers when its own config sets `enable_lifecycle: true`. (The in-tree OpenLineage subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of the lineage projection, not a `LifecycleSubscriber` implementation — it is a different integration shape.)
-
-Two config surfaces, in two different files:
-
-```yaml
-# rimsky.yml — tells rimsky to fan out lifecycle events to this peer
-claim_producers:
-  my-store:
-    endpoint: "grpc://my-store:9100"
-    protocols: [claim_producer, lifecycle_subscriber]
-    write_semantics_allowed: [sync]
-```
-
-```yaml
-# the producer binary's own config — tells the binary to register the handlers
-enable_lifecycle: true
-```
-
-With both set, the service's gRPC server registers both `ClaimProducer` and `LifecycleSubscriber` handlers, and rimsky fans out the seven lifecycle methods at the matching state transitions.
+There is no standalone reference `LifecycleSubscriber` binary in the tree —
+lifecycle handlers ride inside producer binaries. The in-tree example is the stub
+store (`test/support/stores/stub/`), whose server registers `LifecycleSubscriber`
+handlers when its own config sets `enable_lifecycle: true`. The in-tree OpenLineage
+subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of the
+lineage projection, **not** a `LifecycleSubscriber` implementation — it is a
+different integration shape.
 
 ## See also
 
-- [lifecycle-subscriber](../concepts/lifecycle-subscriber.md)
-- [template](../concepts/template.md)
-- [instance](../concepts/instance.md)
-- [claim-producer](../concepts/claim-producer.md)
+[lifecycle-subscriber](../concepts/lifecycle-subscriber.md) · [template](../concepts/template.md) · [instance](../concepts/instance.md) · [claim-producer](../concepts/claim-producer.md)
 
 
 ---
 
-# Publisher protocol guide
+# Implementing a publisher
 
-The Publisher protocol is the rimsky-facing surface that peer services implement to publish messages into rimsky. Four verbs; one message endpoint. The wire contract lives at `lib/protocols/proto/v1/publisher.proto`; the mechanically-generated reference is at [`reference/publisher.md`](reference/publisher.md). For Go services, the `protocols` module's `publisherkit` package provides optional publisher-side retry/backoff scaffolding ([`go-packages.md`](go-packages.md)); it is a convenience, not a requirement.
+A **publisher** is a peer service that publishes messages into rimsky. It
+implements the `Publisher` protocol (four verbs: `Capabilities`, `Subscribe`,
+`Unsubscribe`, `ListSubscriptions`) and emits each message by POSTing a message
+envelope to the generic `POST /instances/{id}/messages` endpoint — there is no
+special observation-deposit route. **Sensors** (cron / http / object-store /
+webhook) are one kind of publisher.
 
-## Verbs
+There is **no publisher SDK** — implement against the wire types in any language.
+A Go service may use the `protocols` module's `publisherkit` package
+([`go-packages.md`](go-packages.md)) for optional publisher-side message-emit
+retry/backoff scaffolding; it is a convenience, not a requirement. Wire contract:
+`lib/protocols/proto/v1/publisher.proto`; generated field/message/RPC reference at
+[`reference/publisher.md`](reference/publisher.md).
 
-| Verb | Direction | Purpose |
-|---|---|---|
-| `Capabilities` | rimsky → publisher | Advertise supported kinds + protocols. |
-| `Subscribe` | rimsky → publisher | Start a publisher-subscription for one (instance, kind) pair. |
-| `Unsubscribe` | rimsky → publisher | Stop a publisher-subscription. |
-| `ListSubscriptions` | rimsky → publisher | Reconcile-on-startup; rimsky compares its expected set against the publisher's reported set. |
+<!-- @source: ../../.ok-planner/design/concepts/publisher.md -->
 
-The publisher emits messages by POSTing message envelopes to the generic `POST /instances/{id}/messages` endpoint with `sender_kind: "publisher"` + `publisher_subscription_id` capability token. There is no special observation-deposit route.
+## What you implement
 
-## Subscribe payload
+| RPC | Required? | Purpose |
+| --- | --- | --- |
+| `Capabilities(Empty) → PublisherCapabilities` | **Yes** | Startup handshake: advertise supported kinds + mix-in protocols. Rimsky probes once and caches in the discovery cache. |
+| `Subscribe(SubscribeRequest) → SubscribeResponse` | **Yes** | Start a publisher-subscription for one `(instance, kind)` pair; persist its inline routing fields. |
+| `Unsubscribe(UnsubscribeRequest) → UnsubscribeResponse` | **Yes** | Stop a publisher-subscription. |
+| `ListSubscriptions(Empty) → ListSubscriptionsResponse` | **Yes** | Reconcile-on-startup: rimsky compares its expected subscription set against the publisher's reported set. |
 
-```protobuf
-message SubscribeRequest {
-  string publisher_subscription_id = 1;
-  string instance_id               = 2;
-  string kind                      = 3;
-  bytes  resolved_config           = 4;  // per-instance config; substituted from template
-  string target_node               = 5;  // receiver node alias; copied onto messages
-  string message_kind              = 6;  // default "invalidate"; copied onto messages
-}
+All four verbs are rimsky → publisher calls. The publisher's outbound message
+emit goes the other direction over HTTP+JSON (see [The message envelope](#the-message-envelope)),
+not through this gRPC surface.
+
+## Boundaries
+
+The publisher **owns**:
+
+- Its substrate (cron clock, HTTP endpoint, object-store, webhook port, etc.) and
+  the watching/firing loop over it.
+- Its own per-subscription state (next fire time, body hash, watermark cursor,
+  last idempotency key). Each publisher owns its own state DB.
+- Persisting `target_node` and `message_kind` from `Subscribe` and copying them
+  onto every emitted envelope as `target` and `kind`.
+- Constructing and POSTing the message envelope at fire time, including the
+  `Idempotency-Key` header.
+- Its own HA posture — single-replica is the v1 contract (see [Replica contract](#replica-contract)).
+
+The publisher does **NOT** own (rimsky's job):
+
+- **The persisted binding state.** The `(instance, publisher, kind)` row lives in
+  rimsky's `rimsky_publisher_subscriptions` ledger; the publisher holds only its
+  substrate-specific state, not the binding metadata.
+- **The capability check.** Rimsky validates the subscription is live before
+  inserting any message (see [Rimsky-side capability check](#rimsky-side-capability-check)).
+  The publisher does not enforce authorization.
+- **`sender` derivation.** Rimsky derives `sender` from the subscription row's
+  `publisher_name` and ignores the `sender` field on the request.
+- **The message envelope's onward routing.** Once accepted, the payload flows
+  through rimsky's cascade machinery unread; messages are inert in rimsky. The
+  publisher does not interpret or route past the emit.
+- **Replica coordination.** Rimsky does not coordinate multi-replica fan-in; HA at
+  the publisher tier is the publisher's own concern.
+- **Credentials, encryption, access control.** Rimsky is auth-blind;
+  service-to-service auth is operator-configured at the deployment layer.
+
+## `Capabilities` — startup handshake
+
+Probed once per service at startup; cached in rimsky's discovery cache. The
+`PublisherCapabilities` response declares:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `supported_kinds` | `repeated PublisherKindCapability` | The kinds this binary supports. Each `PublisherKindCapability` carries a `kind` string and a `config_schema` (`bytes`) — the JSON Schema for the `resolved_config` accepted at `Subscribe` for that kind. `config_schema` is opaque to rimsky and surfaces to operator tooling. |
+| `protocols` | `repeated string` | Mix-in service protocols advertised (e.g. `"publisher"`, `"validation"`). The list must include `"publisher"`. |
+| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). |
+
+Full field reference: [`reference/publisher.md`](reference/publisher.md).
+
+## `Subscribe` — start a publisher-subscription
+
+Called per `(instance, kind)` pair when the template's `publishers:` block declares
+a publisher entry (resolved at instance creation). `SubscribeRequest` carries the
+routing fields **inline** — there is no `on_change` / on-observation substruct.
+
+### `SubscribeRequest`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `publisher_subscription_id` | `string` | The subscription identity (UUIDv4). |
+| `instance_id` | `string` | The instance this subscription belongs to. |
+| `kind` | `string` | Which supported kind to watch under. |
+| `resolved_config` | `bytes` | Per-instance config the publisher watches against (cron expression, HTTP URL, S3 bucket+prefix, …). Substituted by rimsky from the template `publishers:` block before dispatch. |
+| `target_node` | `string` | Receiver node alias on the instance side. The publisher copies it onto each envelope as `target`. |
+| `message_kind` | `string` | Wire-level message kind; default `"invalidate"` when empty. The publisher copies it onto each envelope as `kind`. |
+
+`SubscribeResponse` is empty. The publisher persists `target_node` and
+`message_kind` alongside its subscription state; at fire time it constructs
+`{kind: message_kind, target: target_node, ...}` envelopes from these inline fields.
+
+Rimsky retries `Subscribe` up to **3 times** with exponential backoff
+(200ms → ~560ms → ~1.6s, ±25% jitter) before flipping the publisher-subscription
+row to `state='failed'`. A `failed` row is operator-recoverable: the startup
+resync pass re-issues `Subscribe`, transitioning `failed → active` on success.
+
+## `Unsubscribe` — stop a publisher-subscription
+
+Called per registered publisher-subscription at instance termination. `UnsubscribeRequest`
+carries a single field `publisher_subscription_id` (`string`); `UnsubscribeResponse`
+is empty. On success, rimsky transitions the row `active → stopped`.
+
+## `ListSubscriptions` — reconcile on startup
+
+Called at supervisor startup so rimsky can compare its expected subscription set
+against what the publisher reports actually running. `ListSubscriptionsResponse`
+carries `subscriptions` (`repeated PublisherSubscriptionDescriptor`); each
+descriptor mirrors the subscription state:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `publisher_subscription_id` | `string` | The subscription identity. |
+| `instance_id` | `string` | The owning instance. |
+| `kind` | `string` | The watched kind. |
+| `resolved_config` | `bytes` | The per-instance config. |
+| `target_node` | `string` | The receiver node alias. |
+| `message_kind` | `string` | The wire-level message kind. |
+| `started_at` | `Timestamp` | When the subscription began. |
+
+Rimsky reconciles publisher-side state against its `rimsky_publisher_subscriptions`
+row set on this pass — re-issuing `Subscribe` for any expected-but-missing binding.
+
+## The message envelope
+
+A publisher emits by POSTing a message envelope to the generic operator
+message-emit endpoint — there is no special observation-deposit route:
+
 ```
+POST /instances/{instance_id}/messages
+Idempotency-Key: <key>          # for at-most-once semantics
+Content-Type: application/json
 
-The publisher persists `target_node` and `message_kind` alongside the subscription state; at fire time the publisher constructs `{kind: message_kind, target: target_node, ...}` message envelopes from these inline routing fields.
-
-## Message-envelope shape at emit time
-
-```json
 {
   "kind": "invalidate",
   "target": "tick",
@@ -5285,15 +5613,52 @@ The publisher persists `target_node` and `message_kind` alongside the subscripti
 }
 ```
 
-POST to `/instances/{instance_id}/messages` with `Idempotency-Key` header for at-most-once semantics.
+- `kind` and `target` are the persisted `message_kind` / `target_node` from
+  `Subscribe`.
+- `sender_kind` MUST be `"publisher"` and `publisher_subscription_id` MUST be the
+  token from `Subscribe` — together they are the capability token rimsky checks.
+- The request's `sender` field is **ignored** — rimsky derives `sender` from the
+  subscription row's `publisher_name`. Setting it has no trust effect.
+- The `payload` bytes are inert in rimsky: they flow from publisher → message
+  envelope → consumer's substitution leaf without inspection.
+- Send the `Idempotency-Key` header for at-most-once delivery.
 
 ## Rimsky-side capability check
 
-Rimsky validates `(publisher_subscription_id, instance_id, state='active')` is a live row in `rimsky_publisher_subscriptions` before inserting the message. Cross-instance subscription IDs return `403 Forbidden`. The request's `sender` field is ignored — rimsky derives `sender` from the subscription row's `publisher_name`.
+Before inserting the message, rimsky validates that
+`(publisher_subscription_id, instance_id, state='active')` is a live row in
+`rimsky_publisher_subscriptions` — a three-way match. A subscription ID presented
+against the wrong instance (cross-instance) returns **`403 Forbidden`**. A revoked
+or unknown capability is likewise rejected at this boundary, not at the publisher.
+
+## Retry & backoff on emit
+
+A publisher POSTing to `POST /instances/{id}/messages` should retry transient
+failures: **5xx responses and transport/connection errors retry up to 3 attempts
+total** with exponential backoff (base 200ms, geometric multiplier 2.828, so
+attempt 3 lands at ~1.6s). A **4xx is terminal** — it means rimsky rejected the
+capability, the route is gone, or the body is invalid; retrying would not help, so
+abandon immediately and log it at WARN under the `publisher.message.rejected` key
+so operators can spot capability-revocation / route-misconfiguration without
+digging through per-publisher log noise. `2xx` is success.
+
+This is the policy the Go `publisherkit.Send` helper implements; a non-Go publisher
+implements the same retry/idempotency-header behavior directly.
+
+## Replica contract
+
+Single-replica is the **v1 contract**. Rimsky does not coordinate multi-replica
+fan-in — at scale=N, rimsky-level behavior is the union of N independent processes.
+Running two replicas of the same publisher binary pointed at the same rimsky
+endpoint will **double-fire per fire window** (e.g. two cron-sensor replicas fire
+twice). Operators wanting HA pick a publisher implementation that handles
+coordination itself; the bundled sensors do not attempt it. See
+[replica](../concepts/replica.md).
 
 ## Conformance
 
-The `rimsky conformance publisher` subcommand is a black-box conformance suite. Point it at any Publisher implementation to verify lifecycle + emit shape:
+`rimsky conformance publisher` is a black-box conformance suite; point it at any
+`Publisher` implementation to verify lifecycle + emit shape:
 
 ```sh
 rimsky conformance publisher --endpoint grpc://my-publisher:9100 \
@@ -5302,18 +5667,27 @@ rimsky conformance publisher --endpoint grpc://my-publisher:9100 \
                              --instance-id <uuid>
 ```
 
-The same checks are exposed as a Go library under `lib/protocols/conformance/publisher`.
+The same checks are exposed as a Go library under
+`lib/protocols/conformance/publisher`.
 
-## Bundled implementations
+## Reference impls
 
-Sensors are one kind of publisher. The four reference sensors ship in rimsky's tree under `lib/services/sensors/`:
+Sensors are one kind of publisher. The four reference sensors ship under
+`lib/services/sensors/`:
 
-- `sensor-cron` — cron firing.
-- `sensor-http` — HTTP-poll with body-hash watermark.
-- `sensor-object-store` — object-store list with `name` or `last_modified` watermark.
-- `sensor-webhook` — inbound webhook receiver.
+| Binary | Substrate |
+| --- | --- |
+| `sensor-cron` | Cron firing. |
+| `sensor-http` | HTTP-poll with body-hash watermark. |
+| `sensor-object-store` | Object-store list with `name` or `last_modified` watermark. |
+| `sensor-webhook` | Inbound webhook receiver. |
 
-See [publisher](../concepts/publisher.md), [publisher-subscription](../concepts/publisher-subscription.md), [sensor](../concepts/sensor.md).
+Each is single-replica per the [replica contract](#replica-contract) and carries
+its own README and config; read them alongside the wire contract.
+
+## See also
+
+[publisher](../concepts/publisher.md) · [publisher-subscription](../concepts/publisher-subscription.md) · [sensor](../concepts/sensor.md) · [message](../concepts/message.md) · [replica](../concepts/replica.md)
 
 
 ---

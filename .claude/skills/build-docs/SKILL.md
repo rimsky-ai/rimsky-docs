@@ -127,9 +127,11 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/reference/config/` | `rimsky.yml` schema + the bundled services | Worked example configs (the unified `rimsky.yml`, the store and supervisor configs). Refine against the schema; keep them valid and copyable, with no removed-stack hostnames. |
 
 "Refine" on a hand-shaped surface means: **bring the facts, vocabulary, and
-links current against source while preserving the human's narrative
-structure** — update what is stale, never flatten editorial work. Generated
-surfaces have no such constraint; they are fully skill-owned.
+links current against source, in the agent-doc style**
+(`.claude/rules/agent-doc-style.md`) — update what is stale, keep the reasoning
+prose intact, and move drifted prose toward the style (tables for enumerables,
+explicit boundaries) without losing information. Generated surfaces have no such
+constraint; they are fully skill-owned.
 
 ## The run journal
 
@@ -333,7 +335,10 @@ asks.
 
 Dispatch each as an `Agent` (general-purpose). Every prompt is self-contained:
 the subagent has not seen this conversation. Always pass the absolute
-`RIMSKY_REPO` path and the repo root.
+`RIMSKY_REPO` path and the repo root, and instruct the subagent to write every
+hand-shaped surface in the **agent-doc style** (`.claude/rules/agent-doc-style.md`):
+assertion-first, tables for enumerables, explicit boundaries (what it is and is
+not), reasoning kept as tight prose, source-anchored.
 
 ### concepts
 

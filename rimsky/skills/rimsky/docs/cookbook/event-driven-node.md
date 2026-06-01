@@ -1,14 +1,14 @@
 # Drive a node from an external event
 
-## The problem
+## Problem
 
-Work should start when something happens outside rimsky: a file lands in a
-bucket, a webhook fires, a clock ticks, an operator hits a button. You want
-a long-lived instance that sits idle until the event arrives, then advances
-the right node — without polling and without the event source needing to
-understand your graph.
+You want a long-lived instance that sits idle until an event arrives, then
+advances the right node — without polling and without the event source
+needing to understand your graph. The event happens outside rimsky: a file
+lands in a bucket, a webhook fires, a clock ticks, an operator hits a
+button.
 
-## The rimsky shape
+## Rimsky shape
 
 External events enter rimsky as [messages](../concepts/message.md): a
 boundary-crossing envelope POSTed to the instance's message-emit endpoint.
@@ -38,7 +38,7 @@ Primitives: **message** (the envelope + the messages endpoint),
 **node-subscription** (matching the message to a node), **frame** (the
 message-delivery frame), **publisher / sensor** (the bundled event sources).
 
-## Walkthrough
+## Template
 
 Needs a rimsky deployment with the `http-node` executor (stub mode,
 `RIMSKY_EXECUTOR_STUB_MODE=1`). Stand rimsky up from the published images
@@ -126,16 +126,18 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 # → {"node_type":"react","state":"fresh"}
 ```
 
-> **Wiring a real sensor.** To have a *sensor* fire this node instead of an
-> operator, declare the publisher on the template's `publishers:` block
-> (e.g. `kind: cron`, `target_node: react`). rimsky bundles four
-> sensors (cron / http / object-store / webhook); at instance
-> creation rimsky calls the matching sensor's subscribe verb, and the
-> sensor then POSTs the same envelope with `sender_kind: "publisher"` on
-> each fire. The node's subscription `type:` changes its third segment to
-> `publisher` accordingly. The envelope shape and the consuming node are
-> otherwise identical to the operator path above — which is the whole point
-> of the unified messages endpoint.
+## Gotchas
+
+**Wiring a real sensor changes the subscription's third segment.** To have
+a *sensor* fire this node instead of an operator, declare the publisher on
+the template's `publishers:` block (e.g. `kind: cron`, `target_node:
+react`). rimsky bundles four sensors (cron / http / object-store /
+webhook); at instance creation rimsky calls the matching sensor's subscribe
+verb, and the sensor then POSTs the same envelope with `sender_kind:
+"publisher"` on each fire. The node's subscription `type:` changes its
+third segment to `publisher` accordingly. The envelope shape and the
+consuming node are otherwise identical to the operator path above — which
+is the whole point of the unified messages endpoint.
 
 ## Without rimsky
 

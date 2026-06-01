@@ -91,6 +91,15 @@ comes first. Run one global loop (collect every surface's issues per round);
 re-review only the surfaces a fixer touched. If the cap is hit with issues still
 open, record the open items as `flag` entries — never truncate silently.
 
+## Cold-read acceptance (prose surfaces)
+
+For each hand-shaped prose surface this run changed, run the **cold read** from
+the style spec (`.claude/rules/agent-doc-style.md`): dispatch a fresh `Agent`
+(general-purpose) with **no prior context**, give it only the changed doc(s) plus
+a representative task, and have it report where it had to guess or look elsewhere.
+Feed that friction back as issues for the next round. A prose surface is not
+converged until a cold reader can use it without guessing.
+
 ## Lint gate
 
 ```bash
@@ -131,8 +140,13 @@ unless the user explicitly asks.
 > (read the files; this is not a diff review). Source of truth for this surface
 > is `<SOURCE>`. Report real issues only — factual drift from source, broken
 > links, citation-grammar violations, internal inconsistency, recipes that won't
-> run. Do not nitpick style. Return a flat list of issues, each with a file:line
-> and a one-line description of what is wrong and what it should be.
+> run, and violations of the agent-doc style spec
+> (`.claude/rules/agent-doc-style.md`): a ramp/motivation opening instead of
+> assertion-first, enumerable facts buried in prose instead of a table, missing
+> boundaries (no "does NOT own"), reasoning compressed away, or a missing
+> `@source:` anchor. Judge against the spec, not prose taste. Return a flat list
+> of issues, each with a file:line and a one-line description of what is wrong and
+> what it should be.
 
 ## Fixer subagent template
 

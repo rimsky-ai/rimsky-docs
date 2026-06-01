@@ -2,24 +2,17 @@
 
 ## The problem
 
-A chain of nodes needs to operate on the *same* resource — the same file,
-the same snapshot, the same staged region — and the resource must stay
-locked across the whole chain, with all-or-nothing effects: if any node in
-the chain fails, none of the changes commit. You want exclusive access to
-span multiple steps, not just one.
+A chain of nodes operates on the *same* resource — the same file, the same
+snapshot, the same staged region — which must stay locked across the whole
+chain with all-or-nothing effects: if any node fails, none of the changes
+commit. Exclusive access spans multiple steps, not just one.
 
 ## The rimsky shape
 
 One node acquires a [claim](../concepts/claim.md) on a
 [claim producer](../concepts/claim-producer.md); downstream nodes co-hold
 the *same* claim handle via the `inherits:` directive
-([claim co-holdership](../concepts/claim-co-holdership.md)). (This recipe
-uses `inherits:` because the v0.4.0 registration validator derives the
-claim aliases available to `{{claim.<alias>}}` reads only from `stores:`
-and `inherits:`, not from `holds:`; `holds:` is the modern equivalent of
-`inherits:` per [claim co-holdership](../concepts/claim-co-holdership.md),
-but a node that co-holds via `holds:` and reads `{{claim.<alias>.address}}`
-is rejected at registration on v0.4.0.) The claim's
+([claim co-holdership](../concepts/claim-co-holdership.md)). The claim's
 holding subgraph extends to every co-holder, and
 [auto-terminal](../concepts/auto-terminal.md) resolution fires the
 producer's commit or abandon verb exactly once, at the *end* of the
@@ -43,11 +36,8 @@ Primitives: **claim producer** (the filesystem `content` store),
 ## Walkthrough
 
 Needs a rimsky deployment whose `content` filesystem producer
-(grpc://store-filesystem:9100) brokers concrete-path claims. Both nodes use
-the `http-node` executor, run in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`)
-with a permissive attribute schema, so each node's dispatch passes the
-schema gate and closes with a success — letting the handoff actually
-commit. Stand rimsky up from the published images (see the
+(grpc://store-filesystem:9100) brokers concrete-path claims. Stand rimsky
+up from the published images (see the
 [operator guide](../operator-guide.md)).
 
 Save the template as `handoff.yml`. `acquire` opens the claim; `process`
@@ -135,16 +125,30 @@ curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
 # → 0
 ```
 
-> **Seeing the abandon path.** The all-success chain above takes the
-> `Commit` branch. To watch any-failure → `Abandon` (the whole chain rolls
-> back, nothing commits), drive one node to a failure outcome — e.g. point
-> it at an executor that returns an error, or give the `acquire` node's
-> http-node a real `url` that returns an unexpected status instead of the
-> `stub_probe` short-circuit. As soon as any holder fails, auto-terminal
-> resolves the held claim with the aggregate-failure outcome and the
-> producer's `Abandon` verb runs (not `Commit`). The
-> [holding-subgraph example](../agents/examples/holding-subgraph.md) walks
-> the resolution mechanics in more depth.
+## Gotchas
+
+- **Use `inherits:`, not `holds:`, on v0.4.0.** The v0.4.0 registration
+  validator derives the claim aliases available to `{{claim.<alias>}}`
+  reads only from `stores:` and `inherits:`, not from `holds:`. `holds:` is
+  the modern equivalent of `inherits:` per
+  [claim co-holdership](../concepts/claim-co-holdership.md), but a node that
+  co-holds via `holds:` and reads `{{claim.<alias>.address}}` is rejected at
+  registration on v0.4.0.
+- **Both nodes must run the `http-node` executor in stub mode**
+  (`RIMSKY_EXECUTOR_STUB_MODE=1`) with a permissive attribute schema, so
+  each dispatch passes the schema gate and closes with a success — letting
+  the handoff actually commit. A schema `default:` flows into the dispatch
+  bag verbatim (it is never substituted).
+- **Seeing the abandon path.** The all-success chain above takes the
+  `Commit` branch. To watch any-failure → `Abandon` (the whole chain rolls
+  back, nothing commits), drive one node to a failure outcome — e.g. point
+  it at an executor that returns an error, or give the `acquire` node's
+  http-node a real `url` that returns an unexpected status instead of the
+  `stub_probe` short-circuit. As soon as any holder fails, auto-terminal
+  resolves the held claim with the aggregate-failure outcome and the
+  producer's `Abandon` verb runs (not `Commit`). The
+  [holding-subgraph example](../agents/examples/holding-subgraph.md) walks
+  the resolution mechanics in more depth.
 
 ## Without rimsky
 

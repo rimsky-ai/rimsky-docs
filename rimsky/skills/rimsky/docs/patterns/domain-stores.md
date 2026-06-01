@@ -22,16 +22,16 @@ deprecated_terms: []
 > graph. The broader "domain store as a pluggable MCP tool catalog"
 > pattern is aspirational and not implemented.
 
-A **domain store**, as a pattern, would be a project-built MCP server
-that holds project-specific state — prompt context, learnings, examples,
-corrections, glossaries, evaluation rubrics, partial pipeline state — and
-exposes it as a tool catalog that an agent executor consumes during a
-dispatch. Rimsky does not ship a domain store, and the reference executor
-does not yet provide the wiring to plug one in.
+Rimsky ships no domain store, and the reference `claude-agent` executor cannot
+dial a consumer-built MCP server. What it *does* expose today is one internal MCP
+surface plus per-node attributes — this page documents that real surface and how
+an agent node's outputs flow into the graph.
 
-This page covers what the `claude-agent` executor actually exposes today,
-and how the outputs an agent node produces become inputs to downstream
-nodes.
+The aspirational pattern (per the status note above): a **domain store** would be
+a project-built MCP server holding project-specific state — prompt context,
+learnings, examples, corrections, glossaries, evaluation rubrics, partial pipeline
+state — exposed as a tool catalog an agent executor consumes during a dispatch.
+Rimsky neither ships one nor wires one in.
 
 ## What the executor actually exposes
 
@@ -41,18 +41,16 @@ surface: an internal HTTP MCP server named `rimsky-callback` that the
 executor hosts itself. The agent reaches it through the
 `RIMSKY_CALLBACK_URL` passed into the spawned `claude` process. Its tools:
 
-- `report_complete` — terminal success, with an optional
-  `attributes_delta` carrying the agent's structured writeback.
-- `report_error` / `report_blocked` — terminal failure signals.
-- `report_park` — pause the node (await-callback or snooze).
-- `emit_named_event` — emit a non-terminal named event (the name must be
-  one the executor declares).
-- `attributes_read` / `attributes_set` — read the dispatch-time
-  attributes snapshot, and persist incremental attribute writes through
-  the supervisor.
+| Tool | What it does |
+| --- | --- |
+| `report_complete` | Terminal success, with an optional `attributes_delta` carrying the agent's structured writeback. |
+| `report_error` / `report_blocked` | Terminal failure signals. |
+| `report_park` | Pause the node (await-callback or snooze). |
+| `emit_named_event` | Emit a non-terminal named event (the name must be one the executor declares). |
+| `attributes_read` / `attributes_set` | Read the dispatch-time attributes snapshot; persist incremental attribute writes through the supervisor. |
 
-That callback surface is how the agent's work re-enters rimsky. There is
-no second, consumer-supplied MCP server in the picture.
+That callback surface is how the agent's work re-enters rimsky. There is no
+second, consumer-supplied MCP server in the picture.
 
 ## How a dispatch is configured
 

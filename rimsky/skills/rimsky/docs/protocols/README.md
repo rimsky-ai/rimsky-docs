@@ -27,3 +27,7 @@ These cover the gap between *understanding the concepts* and *implementing a cus
 Two further protocols are **mix-ins** a service advertises alongside its primary protocol rather than implements standalone: `DataProcessing` (for producers that materialize partitioned content) and `Validation` (template-registration-time validation). They have no separate prose guide; their wire contracts are in the generated reference ([`reference/data-processing.md`](reference/data-processing.md), [`reference/validation.md`](reference/validation.md)). A service advertises them via its `protocols` capability list (e.g. `data_processing`, `validation`).
 
 The proto definitions live in the rimsky repo at `lib/protocols/proto/v1/`; the generated wire reference is published here under [`reference/`](reference/). Generate language bindings with `protoc` (the rimsky build uses `make proto-gen`).
+
+## HTTP+JSON encoding
+
+Non-Go services reach the protocols over the HTTP+JSON bridge, which uses **canonical protobuf-JSON**: `bytes` fields are base64-encoded strings, field names are `lowerCamelCase`, and a `oneof` renders as the set variant's name used as the JSON key (e.g. a `StreamClose` carrying the `success` variant → `{ "success": { ... } }`). A `google.protobuf.Struct` is a plain JSON object. The per-message field reference is under [`reference/`](reference/).

@@ -2,10 +2,10 @@
 
 ## The problem
 
-Something downstream has a hard ceiling: an API that allows 50 in-flight
-calls, a model budget, a database that falls over past N concurrent
-writers. You want many nodes (or many instances) to share that ceiling and
-block when it is reached — without coordinating it by hand in every node.
+Many nodes (or many instances) share a hard downstream ceiling — an API
+that allows 50 in-flight calls, a model budget, a database that falls over
+past N concurrent writers — and must block when it is reached, without
+coordinating it by hand in every node.
 
 ## The rimsky shape
 
@@ -73,24 +73,29 @@ rimsky instance create sha256-...
 
 The node acquires one of the 50 `model-budget` slots, runs, and releases
 it at terminal. With the limit at 50 a single instance never blocks; the
-cap bites when more than 50 holders are live at once — across *every*
-instance and node that references the lock, since the count is
-deployment-wide. You can watch held capacity on the diagnostics surface:
+cap bites when more than 50 holders are live at once. You can watch held
+capacity on the diagnostics surface:
 
 ```sh
 curl -s http://localhost:8080/admin/diagnostics/held-frames | jq
 ```
 
-A node waiting on a saturated lock stays `stale` with its frame
-[held](../concepts/frame.md) — its dispatch waits in the queue until a
-slot frees, then dispatches with no polling and no retry storm.
+## Gotchas
 
-> **Mutex is just `limit: 1`.** A whole-job mutex is a counting semaphore
-> with a single slot. Declare one in `rimsky.yml` alongside the existing
-> locks (the reference config ships `topics-ring:concurrent-claims:
-> { limit: 5 }` and `model-budget: { limit: 50 }`) — e.g.
-> `single-writer: { limit: 1 }` — and reference it the same way:
-> `locks: [{ name: single-writer }]`.
+- **The count is deployment-wide.** The cap bites across *every* instance
+  and node that references the lock, not per-instance — that is the point
+  of a named lock, but it means a saturated lock blocks unrelated
+  instances too.
+- **A waiting node stays `stale`.** A node waiting on a saturated lock
+  stays `stale` with its frame [held](../concepts/frame.md); its dispatch
+  waits in the queue until a slot frees, then dispatches with no polling
+  and no retry storm.
+- **Mutex is just `limit: 1`.** A whole-job mutex is a counting semaphore
+  with a single slot. Declare one in `rimsky.yml` alongside the existing
+  locks (the reference config ships `topics-ring:concurrent-claims:
+  { limit: 5 }` and `model-budget: { limit: 50 }`) — e.g.
+  `single-writer: { limit: 1 }` — and reference it the same way:
+  `locks: [{ name: single-writer }]`.
 
 ## Without rimsky
 

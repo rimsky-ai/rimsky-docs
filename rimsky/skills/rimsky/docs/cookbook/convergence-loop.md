@@ -1,14 +1,14 @@
 # Loop until the work settles
 
-## The problem
+## Problem
 
-Some work is iterative: an agent reasons, acts, observes, and decides
-whether to go again; a refinement pass runs until the output stops
-changing; a poller checks an external system until a condition holds. You
-want a node that re-runs itself until it converges — and a safety net so a
-wedged loop surfaces instead of spinning forever.
+You want a node that re-runs itself until it converges, with a safety net
+so a wedged loop surfaces instead of spinning forever. The work is
+iterative: an agent reasons, acts, observes, and decides whether to go
+again; a refinement pass runs until the output stops changing; a poller
+checks an external system until a condition holds.
 
-## The rimsky shape
+## Rimsky shape
 
 A loop in rimsky is a node that subscribes to *its own* terminal signal —
 self-subscription is first-class (loops are first-class; recursion is
@@ -47,22 +47,10 @@ Primitives: **self-subscription** (the loop edge), **signal**
 (`terminal/success` + the `payload.changed` CEL gate),
 **error-policy** (the no-progress cap on the adjacent retry-loop shape).
 
-## Walkthrough
+## Template
 
-Needs a rimsky deployment with the `http-node` executor. There is an
-important truth to state up front: in stub mode
-(`RIMSKY_EXECUTOR_STUB_MODE=1`) `http-node` **always reports `changed:
-true`**. So the `when: payload.changed` self-edge fires on *every*
-iteration and never finds the `changed: false` that would let the loop
-converge. What you can demonstrate end-to-end with the stub is therefore
-the loop *shape*: the node re-fires itself frame after frame, each
-iteration a clean `terminal/success`. Because each re-fire is a success
-(not an error-policy retry), the loop is **not** bounded by the
-`retry_loop_no_progress` cap — on the stub it runs until you terminate the
-instance. Natural converge-then-settle needs a *real* executor whose
-`changed` flips to `false` once the work stops moving — see the note at the
-end. Stand rimsky up from the published images (see the
-[operator guide](../operator-guide.md)).
+Needs a rimsky deployment with the `http-node` executor. Stand rimsky up
+from the published images (see the [operator guide](../operator-guide.md)).
 
 Save the template as `loop.yml`:
 
@@ -108,11 +96,19 @@ rimsky instance create sha256-...
 The loop's mechanism is the self-edge: each run that commits with
 `changed: true` matches the `when: payload.changed` gate and re-fires the
 node in a new frame; the first run that settles with `changed: false`
-fails the gate, the subscription does not match, and the loop stops.
+fails the gate, the subscription does not match, and the loop stops. A loop
+is one `subscribes:` line, no special node type, and its stop condition is
+the `when: payload.changed` gate the executor drives.
 
-With the stub always reporting `changed: true`, the gate matches
-every iteration and the loop keeps re-firing. Watch a few iterations go by
-— the `refine` node alternates between `running` (a frame in flight) and
+## Gotchas
+
+**The stub always reports `changed: true`.** In stub mode
+(`RIMSKY_EXECUTOR_STUB_MODE=1`) `http-node` never emits the `changed:
+false` that would let the loop converge, so the `when: payload.changed`
+self-edge fires on *every* iteration. What you can demonstrate end-to-end
+with the stub is the loop *shape*: the node re-fires itself frame after
+frame, each iteration a clean `terminal/success`. Watch a few iterations go
+by — the `refine` node alternates between `running` (a frame in flight) and
 `fresh` (settled, waiting for the next self-fire), and a fresh frame opens
 each cycle:
 
@@ -132,43 +128,39 @@ loop therefore runs indefinitely; stop it by terminating the instance:
 rimsky instance delete <instance_id>
 ```
 
-The recipe's lesson here is the loop *shape*: a loop is one
-`subscribes:` line, no special node type, and its stop condition is the
-`when: payload.changed` gate the executor drives. The `retry_loop_no_progress`
-cap is the adjacent guard for a *different* shape — the error-driven retry
-loop — described next.
+**The runaway guard fires on retry loops, not success loops.** The
+`retry_loop_no_progress` cap is the adjacent guard for a *different* shape —
+the error-driven retry loop. Point a node at an executor that *errors* and
+routes that error class to a `retry` action, and the
+consecutive-retries-without-progress counter climbs each retry. After
+`max_retries_without_progress` (20 here) retries with no
+`settling_signal_type` change, the runtime forces a `retry_loop_no_progress`
+[error](../concepts/error-policy.md): the node settles `failed` carrying
+that error class, and the
+`rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
+metric increments — a wedged retry loop surfaces instead of silently
+burning budget.
 
-> **The runaway guard fires on retry loops, not success loops.** Point a
-> node at an executor that *errors* and routes that error class to a
-> `retry` action, and the consecutive-retries-without-progress counter
-> climbs each retry. After `max_retries_without_progress` (20 here) retries
-> with no `settling_signal_type` change, the runtime forces a
-> `retry_loop_no_progress` [error](../concepts/error-policy.md): the node
-> settles `failed` carrying that error class, and the
-> `rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
-> metric increments — a wedged retry loop surfaces instead of silently
-> burning budget.
->
-> ```sh
-> curl -s http://localhost:8080/instances/<instance_id>/nodes \
->   | jq '.nodes[] | {node_type, state, current_error_class}'
-> # → {"node_type":"refine","state":"failed",
-> #    "current_error_class":"retry_loop_no_progress"}
-> ```
+```sh
+curl -s http://localhost:8080/instances/<instance_id>/nodes \
+  | jq '.nodes[] | {node_type, state, current_error_class}'
+# → {"node_type":"refine","state":"failed",
+#    "current_error_class":"retry_loop_no_progress"}
+```
 
-> **Watching natural convergence of the success loop.** Convergence is the
-> executor's call: the loop stops when a run reports `changed: false`. To
-> see that branch, point `refine` at a real executor that reports
-> `changed: true` while it has more work to do and flips to `changed:
-> false` once its work settles. With such an executor the node runs each
-> iteration, then on the no-change run the `when: payload.changed` self-edge
-> stops matching and the node settles `fresh`:
->
-> ```sh
-> curl -s http://localhost:8080/instances/<instance_id>/nodes \
->   | jq '.nodes[] | {node_type, state}'
-> # → {"node_type":"refine","state":"fresh"}
-> ```
+**Natural convergence needs a real executor.** Convergence is the
+executor's call: the loop stops when a run reports `changed: false`. To
+see that branch, point `refine` at a real executor that reports
+`changed: true` while it has more work to do and flips to `changed:
+false` once its work settles. With such an executor the node runs each
+iteration, then on the no-change run the `when: payload.changed` self-edge
+stops matching and the node settles `fresh`:
+
+```sh
+curl -s http://localhost:8080/instances/<instance_id>/nodes \
+  | jq '.nodes[] | {node_type, state}'
+# → {"node_type":"refine","state":"fresh"}
+```
 
 ## Without rimsky
 
