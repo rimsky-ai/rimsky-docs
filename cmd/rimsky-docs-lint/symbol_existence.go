@@ -28,6 +28,26 @@ var camelRE = regexp.MustCompile(`\b[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*\b`)
 // inlineCodeRE captures the contents of an inline-code span, `like this`.
 var inlineCodeRE = regexp.MustCompile("`([^`]+)`")
 
+// verifiedInternalSymbols are multi-word CamelCase identifiers the docs cite that
+// are real — verified in rimsky source (lib/ internal types, or stub APIs under
+// test/support/) or a well-known stdlib/external API — but absent from the
+// *public* generated references. They are exempt so the non-protocol surfaces
+// can name them. Adding here is a deliberate "verified-real" decision: confirm
+// the symbol exists in source first. The protocol guides need none of these —
+// their symbols ARE the public references; this list is the cost of checking the
+// broader corpus against a public-only oracle. A source-backed oracle would
+// remove the need for it.
+var verifiedInternalSymbols = []string{
+	// rimsky internal (lib/)
+	"FrameDeliveryMode", "FrameResolutionMode", "SweepOrphanedBlobs",
+	"NodeID", "AttributeName", "CheckGrant", "ValidateBlobConfig", "LargeObjects",
+	// stub test-support APIs (test/support/)
+	"WhenType", "EmitNamedEvent", "EnableStubMode", "StubAttributesFor",
+	"EnableDataProcessing", "EnableLifecycle",
+	// stdlib / external
+	"ExpandEnv", "FromDockerfile",
+}
+
 // runSymbolExistence verifies that every multi-word CamelCase symbol a
 // hand-written guide names in a code span — an inline `Backtick` span, or any
 // line inside a fenced block — appears in the generated references (the in-repo
@@ -35,13 +55,14 @@ var inlineCodeRE = regexp.MustCompile("`([^`]+)`")
 // class: a guide naming a type / message / RPC that does not exist.
 //
 // It is corpus-internal — no RIMSKY_REPO — because the generated references are
-// already reconciled against source (their parity is the generators' -check
-// job); a guide's named symbols must be a subset of theirs. A guide symbol
-// legitimately absent from every generated reference (e.g. a well-known
-// external type) goes in -allow.
+// already reconciled against source (their parity is reference-parity's job); a
+// guide's named symbols must be a subset of theirs. The default scope is the
+// whole corpus: the protocol guides match the references exactly, while other
+// surfaces also cite internal/stdlib symbols the public references don't surface
+// — those are exempted via verifiedInternalSymbols (above) or -allow.
 func runSymbolExistence(args []string) error {
 	fs := flag.NewFlagSet("symbol-existence", flag.ContinueOnError)
-	guides := fs.String("guides", "../rimsky/skills/rimsky/docs/protocols", "comma-separated guide roots to check (relative to cmd/ cwd)")
+	guides := fs.String("guides", "../rimsky/skills/rimsky/docs", "comma-separated guide roots to check (relative to cmd/ cwd; the reference/ dirs and go-packages.md are auto-skipped — they are the oracle)")
 	oracle := fs.String("oracle", "../rimsky/skills/rimsky/docs/protocols/reference,../rimsky/skills/rimsky/docs/protocols/go-packages.md,../rimsky/skills/rimsky/docs/reference", "comma-separated generated-reference roots/files defining the known-symbol set (relative to cmd/ cwd)")
 	allow := fs.String("allow", "", "comma-separated CamelCase symbols to exempt (legit symbols absent from every generated reference)")
 	if err := fs.Parse(args); err != nil {
@@ -51,6 +72,9 @@ func runSymbolExistence(args []string) error {
 	known, err := buildSymbolOracle(*oracle)
 	if err != nil {
 		return err
+	}
+	for _, s := range verifiedInternalSymbols {
+		known[s] = struct{}{}
 	}
 	for _, a := range strings.Split(*allow, ",") {
 		if a = strings.TrimSpace(a); a != "" {

@@ -303,8 +303,14 @@ step 4) is what a run requires.
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-lint all
 ```
 
-If any lint fails, hand the failures to a fixer subagent (step 5) and re-run
-until clean.
+`all` runs the seven structural lints — including the two accuracy gates of the
+agent-doc style's accuracy model (`.claude/rules/agent-doc-style.md`, full form
+in `cold-read/cold-read-docs-style-guide.md`): **reference-parity** (ring 1 — each
+generated reference still byte-matches regenerating from source; needs `protoc`
+and a buildable rimsky tree, which this run already has) and **symbol-existence**
+(ring 2 — every symbol the prose names exists in the references; new verified-real
+internal symbols go in that lint's `verifiedInternalSymbols` allowlist). If any
+lint fails, hand the failures to a fixer subagent (step 5) and re-run until clean.
 
 ### 5. Review/refine — invoke `/refine-docs`
 
