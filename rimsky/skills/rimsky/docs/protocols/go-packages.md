@@ -477,7 +477,7 @@ Handle is the opaque identifier the backend returns from Write.
 Package `claimproducer`
 
 Package claimproducer is the importable form of the ClaimProducer
-conformance suite. The cmd/rimsky-claim-producer-conformance binary
+conformance suite. The `rimsky conformance claim-producer` subcommand
 is a thin wrapper that dials the endpoint and invokes Run; tests can
 invoke Run directly against an in-process or testcontainers-hosted
 producer to assert the standard suite passes against the target.
@@ -505,8 +505,8 @@ Run drives the ClaimProducer conformance checks against the supplied
 producer. Each check is independent; failures do not short-circuit
 so the caller sees the full surface.
 
-Mirrors `cmd/rimsky-claim-producer-conformance/main.go::RunClaimProducerConformance`.
-The binary delegates here so tests can invoke the same code path.
+The `rimsky conformance claim-producer` subcommand delegates here so
+tests can invoke the same code path.
 
 ### type ObservabilityCheckOpts
 
@@ -559,7 +559,7 @@ Package `conformance`
 
 Package conformance provides the rimsky node-executor protocol conformance
 suite. Any executor speaking the protocol (gRPC canonical + HTTP+JSON bridge)
-can be validated against this suite via the `rimsky-executor-conformance`
+can be validated against this suite via the `rimsky conformance executor`
 CLI or invoked directly from a Go test as a library.
 
 The package lives at `protocols/conformance/executor/` and is imported

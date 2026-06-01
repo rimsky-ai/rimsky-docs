@@ -38,7 +38,7 @@ inputs and executor-written outputs. See spec §12.1.
 | `node_id` | `string` | 1 |  |
 | `instance_id` | `string` | 2 |  |
 | `node_type` | `string` | 3 |  |
-| `attributes` | `Struct` | 5 | Per-run typed attributes. Source-directive fields are pre-populated by rimsky at dispatch; static-default fields carry their declared default value; sourceless/executor-written fields are populated by the executor (terminal-final via attributes_delta on Success, or incremental via POST {callback_url}/v1/attributes/{node_id}). |
+| `attributes` | `Struct` | 5 | Per-run typed attributes. Source-directive fields are pre-populated by rimsky at dispatch; static-default fields carry their declared default value; sourceless/executor-written fields are populated by the executor (terminal-final via attributes_delta on Success, or incremental via POST {callback_url}/v1/runs/{run_id}/attributes). |
 | `attributes_schema` | `Struct` | 6 | The declared JSON Schema for the node's attributes. For executor reference; rimsky validates at dispatch (substitution) and at commit (writeback) regardless. |
 | `stores` | `repeated StoresEntry` | 7 | Handles for each store the node references. Keyed by store-config name. |
 | `callback_url` | `string` | 8 | HTTP+JSON callback URL the executor may POST to for async handoff and incremental attribute writes. Populated by the supervisor; empty string if the supervisor did not configure a callback endpoint. |
