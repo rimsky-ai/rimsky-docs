@@ -2,15 +2,17 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// main.go — rimsky-docs-lint. Five structural lints enforce the integrity of
+// main.go — rimsky-docs-lint. Six structural lints enforce the integrity of
 // the public-documentation surface (docs/concepts/, docs/protocols/,
 // docs/agents/, docs/glossary.md): frontmatter (concept +
 // error-file frontmatter shape), glossary-parity (docs/glossary.md matches the
 // rimsky concept catalog), citation-drift (every `concept:<slug>` reference
 // resolves to a published concept page), llms-txt-validity (llms.txt
-// well-formed), and link-validity (every relative markdown link resolves on
-// disk). These check mechanical correctness only — word choice and
-// user-facing clarity are the doc-writing agents' judgment, not linted.
+// well-formed), link-validity (every relative markdown link resolves on
+// disk), and symbol-existence (every multi-word CamelCase symbol a guide names
+// appears in the generated references). These check mechanical correctness
+// only — word choice and user-facing clarity are the doc-writing agents'
+// judgment, not linted.
 package main
 
 import (
@@ -30,7 +32,8 @@ var subcommands = []subcommand{
 	{"citation-drift", runCitationDrift, "verify every `concept:<slug>` reference resolves to a published concept page"},
 	{"llms-txt-validity", runLLMSTxtValidity, "verify llms.txt is well-formed and links resolve"},
 	{"link-validity", runLinkValidity, "verify every relative markdown link in docs/ resolves on disk"},
-	{"all", runAll, "run all five lints; exits non-zero if any fail"},
+	{"symbol-existence", runSymbolExistence, "verify every CamelCase symbol a guide names exists in the generated references"},
+	{"all", runAll, "run all six lints; exits non-zero if any fail"},
 }
 
 func main() {
@@ -80,6 +83,7 @@ var allLints = []struct {
 	{"citation-drift", runCitationDrift},
 	{"llms-txt-validity", runLLMSTxtValidity},
 	{"link-validity", runLinkValidity},
+	{"symbol-existence", runSymbolExistence},
 }
 
 func runAll(args []string) error {

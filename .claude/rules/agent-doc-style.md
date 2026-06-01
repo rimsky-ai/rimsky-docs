@@ -6,6 +6,12 @@ read and maintained by coding agents; optimize for an agent to **consume** and t
 is not. This is the cold-read principle (see `cold-read/`) applied to prose: a doc
 must be usable by an agent with **no prior context**.
 
+This is rimsky-docs' cheatsheet instance of the portable
+[Cold Read for Documentation](../../cold-read/cold-read-docs-style-guide.md)
+methodology — the always-loaded local summary, the way `cold-read-cheatsheet.md`
+summarizes the code style guide. The full rationale, the accuracy model, and the
+cold-read acceptance protocol live in that guide.
+
 Scope: the published corpus only. Not the Go code, not the skills, not commit
 messages, and not agent↔human chat (that is `citation-grammar.md`).
 

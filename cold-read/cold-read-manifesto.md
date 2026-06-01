@@ -68,6 +68,23 @@ Agent-optimized code should:
 
 ---
 
+## Two surfaces: code and documentation
+
+Cold Read governs any artifact an agent reads cold — and an agent reads two kinds.
+**Source code**, which it modifies in place: the principles below and the
+[code style guide](cold-read-style-guide.md). **Documentation**, which it consumes
+to act *elsewhere* — build, implement, operate: the
+[documentation style guide](cold-read-docs-style-guide.md).
+
+The three goals reread cleanly for docs — minimize the context needed to use a
+doc, isolate each doc so one can change without breaking others, enable use
+without archaeology — with two additions docs need that code does not. A doc
+*describes a source of truth*, so it carries an **accuracy** dimension: it can be
+wrong, and it drifts as the source moves. And a doc is *validated by a cold read* —
+a no-context agent performing a representative task — not by a code review. The
+documentation style guide carries both. The principles in this section are the
+**source** surface; their prose counterparts live in that guide.
+
 ## The Principles
 
 ### 1. Locality of Behavior
