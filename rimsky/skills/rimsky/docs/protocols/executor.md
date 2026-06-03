@@ -212,6 +212,11 @@ calls during conformance. The same checks are exposed as a Go library under
   `verifier-shape-checks`. Each carries its own README and config; read them
   alongside the wire contract.
 
+The `claude-agent` reference executor loads the wire contract via the published
+`@rimsky-ai/protocols` npm package (`@grpc/proto-loader` + the package's
+`protoDir`/`protoPath` helpers — see [`README.md`](README.md)) — the same package
+any TypeScript executor author would use. <!-- @source: lib/services/executors/claude-agent/src/proto-loader.ts -->
+
 ## See also
 
 [executor](../concepts/executor.md) · [node](../concepts/node.md) · [attribute](../concepts/attribute.md) · [parked-state](../concepts/parked-state.md)

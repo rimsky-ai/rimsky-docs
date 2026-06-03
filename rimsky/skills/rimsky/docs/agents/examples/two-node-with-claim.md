@@ -4,7 +4,7 @@ Two nodes; the first declares a claim on the bundled stub claim producer; the se
 
 **Precondition:** a running rimsky deployment (stand one up from the published images — see the [operator guide](../../operator-guide.md)).
 
-The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub keys behavior on `node_type` only — it always closes the stream with a terminal `StreamClose{Success}` and an empty `attributes_delta` (or a small fixture for known node types). This example demonstrates the all-success path: both nodes commit, the claim is auto-`Commit`ted at the acquirer's terminal.
+The `stub` executor here is the dockerized test stub executor (a test fixture, not a published image — see [`../../executors/stub/README.md`](../../executors/stub/README.md)). It returns a canned terminal `StreamClose{Success}` (`changed=false`, no attribute writeback) for every dispatch unconditionally, ignoring the request's `attributes` bag and `node_type`. This example demonstrates the all-success path: both nodes commit, the claim is auto-`Commit`ted at the acquirer's terminal.
 
 ## 1. The template
 
@@ -74,22 +74,25 @@ Expected output: both nodes in `fresh` state.
 
 ```sh
 curl -s http://localhost:8080/instances/<instance_id>/nodes \
-  | jq '[.nodes[] | {node_name, state}]'
+  | jq '[.nodes[] | {node_type, state}]'
 ```
 
 Expected output:
 
 ```json
 [
-  { "node_name": "acquirer", "state": "fresh" },
-  { "node_name": "consumer", "state": "fresh" }
+  { "node_type": "acquirer", "state": "fresh" },
+  { "node_type": "consumer", "state": "fresh" }
 ]
 ```
 
-The acquirer's claim was committed at its terminal (success → `Commit`); the held-claim listing for that handle is empty:
+The acquirer's claim was committed at its terminal (success → `Commit`); the claim-holders listing for that handle is empty:
 
 ```sh
-# After settling, the claim handle is gone — listing returns an empty holders array.
+# This claim is NON-held: neither node declares `holds:` or `inherits:`,
+# so no `rimsky_claim_holders` rows are ever inserted — that is why the
+# listing is empty, not because anything was deleted. (The handle row
+# itself is promoted to state='committed' at the terminal, not deleted.)
 curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders | jq '.holders | length'
 # Expected: 0
 ```

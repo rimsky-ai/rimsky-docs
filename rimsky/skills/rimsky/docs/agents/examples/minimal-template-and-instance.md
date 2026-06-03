@@ -4,7 +4,7 @@ Register a one-node template, deploy it, create an instance, observe the node se
 
 **Precondition:** a running rimsky deployment (stand one up from the published images — see the [operator guide](../../operator-guide.md)).
 
-The bundled stub executor is always in stub mode: it closes the stream with a canned terminal `StreamClose{Success}` keyed only on `node_type`, ignoring the request's `attributes` bag for behavior selection. (The `RIMSKY_EXECUTOR_STUB_MODE=1` env var is a separate mechanism on the bundled `http-node` and `claude-agent` executors that short-circuits their network paths for testing.)
+The `stub` executor here is the dockerized test stub executor (a test fixture, not a published image — see [`../../executors/stub/README.md`](../../executors/stub/README.md)). It returns a canned terminal `StreamClose{Success}` (`changed=false`, no attribute writeback) for every dispatch unconditionally, ignoring the request's `attributes` bag and `node_type`. (The `RIMSKY_EXECUTOR_STUB_MODE=1` env var is a separate mechanism on the `http-node` and verifier executors that short-circuits their network paths for testing; the test stub executor does not read it.)
 
 ## 1. The template
 
@@ -51,7 +51,7 @@ Expected output (after the stub executor returns):
 {
   "nodes": [
     {
-      "node_name": "hello",
+      "node_type": "hello",
       "state": "fresh"
     }
   ]
@@ -60,8 +60,11 @@ Expected output (after the stub executor returns):
 
 ## Verification
 
+The `GET /instances/{id}` response carries no frame-state field — frame state (`queued | running | completed | failed`) lives on `rimsky_frames` rows, not the instance projection. The settlement signal is the node state: the stub's terminal drives `hello` back to `fresh` (it ran, settled, and is idle awaiting the next invalidate).
+
 ```sh
-curl -s http://localhost:8080/instances/01HZ... | jq '.frame_state'
+curl -s http://localhost:8080/instances/01HZ.../nodes \
+  | jq '.nodes[] | select(.node_type == "hello") | .state'
 ```
 
-Expected output: `"resolved"` (frame ended; instance settled).
+Expected output: `"fresh"` (the node ran to terminal and settled).

@@ -64,6 +64,7 @@ cookbook recipe** — these map the primitives onto real shapes:
 - `docs/cookbook/convergence-loop.md` — retry/recompute until a payload settles
 - `docs/cookbook/capacity-limit.md` — bounding concurrency with claims/locks
 - `docs/cookbook/claim-handoff.md` — passing a held claim down a node chain
+- `docs/cookbook/sub-graph.md` — calling a reusable sub-graph via `delegate:`
 
 For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
 `operational-health.md`). Working templates to copy live in `docs/agents/examples/`

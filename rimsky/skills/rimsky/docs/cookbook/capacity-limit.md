@@ -73,12 +73,17 @@ rimsky instance create sha256-...
 
 The node acquires one of the 50 `model-budget` slots, runs, and releases
 it at terminal. With the limit at 50 a single instance never blocks; the
-cap bites when more than 50 holders are live at once. You can watch held
-capacity on the diagnostics surface:
+cap bites when more than 50 holders are live at once.
 
-```sh
-curl -s http://localhost:8080/admin/diagnostics/held-frames | jq
-```
+To observe capacity, watch the `rimsky_claim_acquisitions_total{producer,
+intent}` Prometheus counter on `GET /metrics`, or query the live holders
+directly — a held slot is a `named`-kind row in the
+[claim-handle ledger](../concepts/claim-handle.md). The admin
+diagnostics surfaces do **not** help here: `held-frames` reports only
+frames with a [parked](../concepts/parked-state.md) node, and a node
+blocked on a saturated named lock does not park — its per-candidate
+acquisition tx rolls back and it stays `stale` in the queue (see the
+gotcha below), so it never appears as a held frame.
 
 ## Gotchas
 
@@ -87,9 +92,10 @@ curl -s http://localhost:8080/admin/diagnostics/held-frames | jq
   of a named lock, but it means a saturated lock blocks unrelated
   instances too.
 - **A waiting node stays `stale`.** A node waiting on a saturated lock
-  stays `stale` with its frame [held](../concepts/frame.md); its dispatch
-  waits in the queue until a slot frees, then dispatches with no polling
-  and no retry storm.
+  does not park — it stays `stale` and its dispatch row waits `pending`
+  in the queue until a slot frees, then dispatches with no polling and no
+  retry storm. (It never appears as a held frame; see the diagnostics note
+  above.)
 - **Mutex is just `limit: 1`.** A whole-job mutex is a counting semaphore
   with a single slot. Declare one in `rimsky.yml` alongside the existing
   locks (the reference config ships `topics-ring:concurrent-claims:

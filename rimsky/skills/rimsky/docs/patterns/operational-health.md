@@ -76,8 +76,8 @@ escape hatch. It dispatches by node state:
 | Node state | Effect |
 | --- | --- |
 | `parked` | Resume with `resume_reason: "external_invalidate"`. |
-| `fresh` | Standard invalidate (state → stale; cascade picks up next scheduler tick). |
-| `running` / `failed` | 409 Conflict. |
+| `fresh` / `stale` / `failed` | Standard invalidate (state → stale; cascade picks up next scheduler tick). |
+| `running` | 409 Conflict. |
 
 Use it when something has wedged on a signal that didn't arrive (a
 review never came back, a webhook never fired). For all other states,

@@ -10,6 +10,30 @@ For Go projects, rimsky publishes its **`protocols` module** as a convenience. I
 
 None of these are required. They exist so a Go service doesn't have to re-derive the boilerplate.
 
+For JS/TS / non-Go consumers, rimsky publishes **`@rimsky-ai/protocols`** (npm, Apache-2.0) — the parallel convenience. <!-- @source: lib/protocols/package.json --> It ships the raw `.proto` files (under `proto/v1/`) plus two path helpers — `protoDir` (the include directory) and `protoPath(file)` (one named proto) — exported from `index.js` / `index.d.ts`. <!-- @source: lib/protocols/index.js --> Feed those to `@grpc/proto-loader`; you do **not** need a repo checkout or `protoc`. Install the package alongside the gRPC toolchain it needs:
+
+```sh
+npm install @rimsky-ai/protocols @grpc/proto-loader @grpc/grpc-js
+```
+
+The load pattern. The proto package namespace is `rimsky.v1`, so every service constructor hangs off `pkg.rimsky.v1`:
+
+```ts
+import * as protoLoader from "@grpc/proto-loader";
+import * as grpc from "@grpc/grpc-js";
+import { protoDir, protoPath } from "@rimsky-ai/protocols";
+
+const definition = protoLoader.loadSync(
+  [protoPath("executor.proto"), protoPath("executor_observability.proto")],
+  { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true,
+    includeDirs: [protoDir] }, // resolves cross-proto imports
+);
+const pkg = grpc.loadPackageDefinition(definition) as any;
+const { Executor } = pkg.rimsky.v1; // the Executor service constructor
+```
+
+`protoDir` / `protoPath` are ESM (the package is `"type": "module"`). CommonJS consumers that skip the ESM helper resolve a proto directly via the `"./proto/*"` subpath export, e.g. `require.resolve("@rimsky-ai/protocols/proto/v1/executor.proto")`.
+
 ## References
 
 - [`go-packages.md`](go-packages.md) — generated reference for the module's hand-written Go packages (the helpers above).
@@ -26,7 +50,7 @@ These cover the gap between *understanding the concepts* and *implementing a cus
 
 Two further protocols are **mix-ins** a service advertises alongside its primary protocol rather than implements standalone: `DataProcessing` (for producers that materialize partitioned content) and `Validation` (template-registration-time validation). They have no separate prose guide; their wire contracts are in the generated reference ([`reference/data-processing.md`](reference/data-processing.md), [`reference/validation.md`](reference/validation.md)). A service advertises them via its `protocols` capability list (e.g. `data_processing`, `validation`).
 
-The proto definitions live in the rimsky repo at `lib/protocols/proto/v1/`; the generated wire reference is published here under [`reference/`](reference/). Generate language bindings with `protoc` (the rimsky build uses `make proto-gen`).
+The proto definitions live in the rimsky repo at `lib/protocols/proto/v1/`; the generated wire reference is published here under [`reference/`](reference/). For static codegen, generate language bindings with `protoc` (the rimsky build uses `make proto-gen`). **JS/TS and any `@grpc/proto-loader` consumer should prefer the `@rimsky-ai/protocols` npm package** ([above](#references)) — it ships the same `.proto` files with no repo checkout and no `protoc`.
 
 ## HTTP+JSON encoding
 

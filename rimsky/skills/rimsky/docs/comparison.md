@@ -42,19 +42,20 @@ aren't drop-in alternatives.
 
 Where rimsky lands today, across the dimensions that distinguish
 mature orchestrators. ✅ = first-class, 🟡 = workable pattern but not
-first-class, ❌ = not in scope or not present, ⏳ = planned.
+first-class, ❌ = not in scope or not present, ⏳ = planned, n/a =
+dimension does not apply to that platform.
 
 |                                      | Airflow | Dagster | Prefect | Temporal | dbt | rimsky |
 | ------------------------------------ | :-----: | :-----: | :-----: | :------: | :-: | :----: |
 | Graph / workflow primitive           |   ✅    |   ✅    |   ✅    |    ✅    | ✅  |   ✅   |
 | Scheduled runs (cron)                |   ✅    |   ✅    |   ✅    |    🟡    | 🟡  |   ✅   |
 | Ad-hoc / triggered runs              |   ✅    |   ✅    |   ✅    |    ✅    | ✅  |   ✅   |
-| Sensors / external triggers          |   ✅    |   ✅    |   ✅    |    ✅    | ❌  |   🟡 / ⏳  |
+| Sensors / external triggers          |   ✅    |   ✅    |   ✅    |    ✅    | ❌  |   ✅   |
 | Partitions as first-class            |   🟡    |   ✅    |   🟡    |    ❌    | 🟡  |   ⏳   |
 | Asset / lineage as the model         |   ❌    |   ✅    |   ❌    |    ❌    | ✅  |   🟡   |
 | Materialization strategies           |   ❌    |   🟡    |   ❌    |    ❌    | ✅  |   ⏳   |
-| Data quality tests                   |   🟡    |   ✅    |   ❌    |    ❌    | ✅  |   ⏳   |
-| Backfills as a parametrized op       |   ✅    |   ✅    |   ✅    |    ❌    | 🟡  |   ⏳   |
+| Data quality tests                   |   🟡    |   ✅    |   ❌    |    ❌    | ✅  |   ✅   |
+| Backfills as a parametrized op       |   ✅    |   ✅    |   ✅    |    ❌    | 🟡  |   ✅   |
 | Durable workflow state               |   🟡    |   🟡    |   🟡    |    ✅    | ❌  |   ✅   |
 | Concurrency gating / claims          |   🟡    |   ❌    |   🟡    |    🟡    | ❌  |   ✅   |
 | Held-subgraph stage-then-promote     |   ❌    |   ❌    |   ❌    |    ❌    | ❌  |   ✅   |
@@ -65,11 +66,13 @@ first-class, ❌ = not in scope or not present, ⏳ = planned.
 
 The two rows where rimsky is distinctively ahead are
 **held-subgraph aggregate-outcome resolution** and
-**content-addressed graph definitions**. The rows where it's
-distinctively behind are **partitions**, **asset thinking**,
-**materialization strategies**, **data quality**, and **backfills**.
-The data-platform and partitions work on the roadmap closes most of
-those gaps.
+**content-addressed graph definitions**. The data-platform cycle
+already shipped — sensors, backfills, verifier-executor data-quality
+checks, blessed typed attributes, assets, and content lineage are all
+present — so the rows where rimsky is still distinctively behind narrow
+to **partitions as first-class**, **asset thinking** as the primary
+model, and **materialization strategies**. The partitions work on the
+roadmap closes most of what remains.
 
 ## Per-framework treatment
 
@@ -89,13 +92,14 @@ covers the same ground for most cases. Cascade gives rimsky a stronger
 story for "node X changed; recompute its dependents" than Airflow's
 manual re-runs.
 
-Where rimsky diverges: rimsky has nothing equivalent to **sensors**
-yet (a planned roadmap item). Operators-as-Python-classes are
-in-process; rimsky's executors are out-of-process gRPC services.
-Airflow's XCom is essentially the same shape as rimsky's small typed
-attributes; rimsky's blob backend (and the planned blessed typed
-attributes) handle the larger cases that Airflow punts to external
-storage.
+Where rimsky overlaps further: rimsky's **sensors** match Airflow's,
+shipped via the publisher/sensor protocol plus four bundled sensors
+(`sensor-{cron,http,object-store,webhook}`). Where rimsky diverges:
+operators-as-Python-classes are in-process; rimsky's executors are
+out-of-process gRPC services. Airflow's XCom is essentially the same
+shape as rimsky's small typed attributes; rimsky's blob backend and
+blessed typed attributes handle the larger cases that Airflow punts to
+external storage.
 
 ### Dagster
 
@@ -169,8 +173,9 @@ ephemeral, snapshot), **exposures** (downstream consumers),
 **semantic layer** (metric definitions).
 
 Where rimsky overlaps: nodes-as-models is the obvious mapping.
-Verifier-executors-as-tests covers the data-quality surface (planned).
-The blessed typed-attribute work makes nodes-that-produce-tables a
+Verifier-executors-as-tests cover the data-quality surface, shipped as
+the `verifier-http` and `verifier-shape-checks` bundled executors. The
+blessed typed-attribute work makes nodes-that-produce-tables a
 first-class shape comparable to dbt models.
 
 Where rimsky diverges: dbt is SQL-warehouse-native; rimsky is
@@ -261,11 +266,14 @@ primitive. None of the comparators have a direct equivalent.
   generates a queryable view.
 - **rimsky**: Cascade graph plus events log. Structural lineage is
   the cascade graph. Content lineage (what specific values produced
-  this value) is on the roadmap, not yet present.
+  this value) is present via the lineage projection — `claim_terminal`
+  records, queryable at `GET /lineage/claims/{claim_handle_id}` and
+  `GET /lineage/runs/{run_id}`. The missing piece is a polished
+  lineage-query UI, not the data.
 
-Rimsky has the structural lineage for free (cascade walks it), but
-lacks Dagster's polished observability UI and dbt's auto-generated
-lineage docs.
+Rimsky has the structural lineage for free (cascade walks it) and the
+content lineage in the projection, but lacks Dagster's polished
+observability UI and dbt's auto-generated lineage docs.
 
 ### Tests and data quality
 
@@ -275,15 +283,15 @@ lineage docs.
 - **Temporal**: Not in scope.
 - **dbt**: Declarative tests (unique, not_null, accepted_values,
   relationships) plus generic tests.
-- **rimsky**: Today's `quality-rule` primitive (planned for collapse
-  into verifier executors). Held-subgraph resolution gives the
-  "bad data never reaches canonical state" guarantee that dbt and
-  Dagster achieve via runtime checks.
+- **rimsky**: Verifier executors (`verifier-http`,
+  `verifier-shape-checks`) run data-quality checks as out-of-process
+  work units. Held-subgraph resolution gives the "bad data never
+  reaches canonical state" guarantee that dbt and Dagster achieve via
+  runtime checks.
 
-Once the verifier-executor convention lands, rimsky's testing surface
-will be more flexible than dbt's (language-agnostic, executable
-out-of-process) but at the start it will have fewer batteries-
-included checks than mature dbt installations.
+Rimsky's verifier-executor testing surface is more flexible than dbt's
+(language-agnostic, executable out-of-process) but ships fewer
+batteries-included checks than mature dbt installations.
 
 ### Partitions
 
@@ -308,10 +316,11 @@ rimsky's eventual shape will most resemble Dagster's.
 - **Prefect**: Sensors plus webhook deployments.
 - **Temporal**: External signals into workflows.
 - **dbt**: Out of scope; relies on external orchestration.
-- **rimsky**: Achievable today via a polling executor that parks and
-  resumes; not first-class. Planned as a roadmap item, lower-
-  commitment first move as a bundled executor with a conventional
-  expected-attributes schema.
+- **rimsky**: First-class, shipped via the publisher/sensor protocol
+  plus four bundled sensors (`sensor-cron`, `sensor-http`,
+  `sensor-object-store`, `sensor-webhook`). A sensor publishes into the
+  unified `POST /instances/{id}/messages` endpoint with
+  `sender_kind: "publisher"`.
 
 ## Scope test heuristics
 
@@ -411,9 +420,12 @@ and Temporal. Its distinctive primitives are:
   Postgres.
 
 Its current limitations relative to the more mature comparators are
-in the data-engineering surface (partitions, materializations, asset
-thinking, polished data-quality batteries) and the observability
-surface (dashboards, lineage queries). Most of those gaps are on the
+in the data-engineering surface (partitions as first-class,
+materialization strategies, asset thinking as the primary model, and a
+thinner set of batteries-included data-quality checks than dbt) and in
+the observability *frontend* (no dashboard SPA and no polished
+lineage-query UI yet — though the observability backplane and the
+lineage projection have shipped). Most of those gaps are on the
 roadmap.
 
 Rimsky is the right fit if you want:

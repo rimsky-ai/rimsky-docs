@@ -7,7 +7,7 @@ For a production producer, the in-tree reference producers are the concrete-path
 ## When the stub is used
 
 - ClaimProducer conformance (`rimsky conformance claim-producer`) and scenario tests, as a known-good in-memory target for claim semantics.
-- DataProcessing self-tests — the stub also advertises and implements `DataProcessing`, `SplitScope`, and `ScopesConflict`, so it doubles as the fan-out / partition test target.
+- DataProcessing self-tests — the stub also implements `SplitScope` and `ScopesConflict` (always advertised on the `ClaimProducer` surface via `SupportsSplitScope` / `SupportsScopesConflict`) and `DataProcessing` (registered and advertised only when `EnableDataProcessing` is true), so it doubles as the fan-out / partition test target.
 
 ## Configuration
 

@@ -41,8 +41,11 @@ var verifiedInternalSymbols = []string{
 	// rimsky internal (lib/)
 	"FrameDeliveryMode", "FrameResolutionMode", "SweepOrphanedBlobs",
 	"NodeID", "AttributeName", "CheckGrant", "ValidateBlobConfig", "LargeObjects",
-	"IsPermissiveExecutorSchema", // lib/graph/node/template_validator.go::IsPermissiveExecutorSchema
-	"ListByClaimHandleID",        // lib/foundation/persistence/claim_holders.go::ClaimHolderTable.ListByClaimHandleID
+	"IsPermissiveExecutorSchema",  // lib/graph/node/template_validator.go::IsPermissiveExecutorSchema
+	"ListByClaimHandleID",         // lib/foundation/persistence/claim_holders.go::ClaimHolderTable.ListByClaimHandleID
+	"HoldingSubgraphsForTemplate", // lib/graph/node/inheritance.go::HoldingSubgraphsForTemplate
+	"IsHeld",                      // lib/graph/node/inheritance.go::HoldingSubgraph.IsHeld
+	"OrphanBlobSweepInterval",     // lib/graph/scheduler/scheduler.go::Config.OrphanBlobSweepInterval
 	// stub test-support APIs (test/support/)
 	"WhenType", "EmitNamedEvent", "EnableStubMode", "StubAttributesFor",
 	"EnableDataProcessing", "EnableLifecycle",

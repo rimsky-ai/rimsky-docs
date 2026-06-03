@@ -59,22 +59,31 @@ load-bearing primitives:
 - **Three runtime processes plus migration and conformance tools.**
   Scheduler, supervisor, control-api communicate only through
   Postgres.
+- **Host-agent late-bound services.** A dev-machine workflow that binds
+  local service binaries to an instance at run time: `rimsky run
+  --service <name>=<path>` auto-starts a local host-agent daemon
+  (`cmd/rimsky-host-agent`), which spawns the binary and proxies it
+  through `cmd/rimsky-host-agent-proxy`. The daemon is managed with
+  `rimsky agent start | status | stop`. See concepts `host-agent` and
+  `host-agent-proxy`.
 
 Reference implementations of bundled claim producers (filesystem,
 postgres, stub), executors (`http-node`, `claude-agent`,
-`verifier-http`, `verifier-shape-checks`, stubs), and sensors
-(`sensor-{cron,http,object-store,webhook}`) ship in the same
-repository.
+`verifier-http`, `verifier-shape-checks`, stubs), sensors
+(`sensor-{cron,http,object-store,webhook}`), and lifecycle subscribers
+(the `openlineage` subscriber, emitting OpenLineage events) ship in the
+same repository.
 
 ## Recently shipped
 
 Major work landed since the previous roadmap pass:
 
 - **Layer crystallization, public docs, tri-licensing.**
-  Three-Go-module workspace (`protocols/`, `foundation/`, root) with
-  depguard-enforced import boundaries; the `docs/{concepts,protocols,agents,humans}/`
-  surface and lint suite; Apache/AGPL per-file headers with the
-  `rimsky-license-check` tool.
+  Four-Go-module workspace (`lib/protocols`, `lib/foundation`,
+  `lib/services`, root) with depguard-enforced import boundaries; the
+  `docs/{concepts,protocols,agents,humans}/` surface and lint suite;
+  Apache/AGPL per-file headers verified by the `tools/license-check`
+  tool, invoked via `make license-lint`.
 - **Data-platform cycle.** Blessed `blob` and `table` typed-attributes,
   fan-out with run-tree partitioning, `verifier-{http,shape-checks}`
   executors (collapsing the old quality-rule primitive), assets,
@@ -82,6 +91,16 @@ Major work landed since the previous roadmap pass:
 - **Sensor and publisher protocol.** Four bundled sensors (cron, http,
   object-store, webhook); unified publisher messaging endpoint with
   idempotency.
+- **OpenLineage subscriber.** A bundled lifecycle subscriber
+  (`lib/services/subscribers/openlineage/`, image
+  `rimsky-subscriber-openlineage`) that projects run lifecycle into
+  OpenLineage events.
+- **Host-agent late-bound services.** The dev-machine workflow for
+  binding local service binaries to an instance at run time:
+  `cmd/rimsky-host-agent` + `cmd/rimsky-host-agent-proxy` (image
+  `rimsky-host-agent-proxy`), `rimsky run --service`, and the
+  `rimsky agent start | status | stop` daemon controls. Concepts
+  `host-agent` and `host-agent-proxy`.
 - **Subscription cascade refactor.** Cascade resolution model rewritten
   around `node-subscription` topics; Park typed with a 4-reason
   taxonomy plus freeform label; atomic-staging pattern documented with
@@ -110,10 +129,12 @@ path.
 
 A first-class web operator interface plus the observability
 service-protocol surfaces (`ExecutorObservability`,
-`ClaimProducerObservability`) that feed it. The dashboard SPA exists
-at `dashboards/rimsky-dashboard/` and the observability protos have
-shipped; the remaining work covers the wire-up between them and the
-control-api's `/v1/observability/*` surface. Spec at
+`ClaimProducerObservability`) that feed it. The observability backplane
+has shipped: the protos and the control-api's read-only
+`/v1/observability/*` surface are implemented and mounted
+(`lib/control/observability/handler.go::Routes`, wired by
+`lib/control/controlapi/app.go`). The remaining work is the web
+frontend itself — no dashboard SPA exists yet. Spec at
 `.ok-planner/specs/2026-05-02-dashboard-and-observability-design.md`.
 
 ### `barrier` bundled executor
@@ -140,6 +161,52 @@ predicate pushdown to PostGIS when the operator selects that backing,
 and SDK adapters that resolve to language-native spatial types
 (GeoPandas, GeoArrow). Sketched at
 `.ok-planner/sketches/2026-05-13-geo-cycle.md`.
+
+### Partitions as first-class
+
+The single largest pending data-platform extension. Today rimsky has
+no partition primitive: fan-out slices a claim into sub-claims at
+runtime (the `partition_key` / `partition_request` machinery), and the
+`DataProcessing` mix-in's `ListPartitions` enumerates partitions a
+backing store already holds — but neither is a declared partition
+*spec* attached to a node, and neither drives partition-range
+backfills or per-partition state. First-class partitions add that: a
+partition dimension declared on the template, materialized per
+partition, with backfills targeting partition ranges and per-partition
+state surfaced for observability. The eventual shape will most
+resemble Dagster's (the only comparator whose partition model
+generalizes cleanly into orchestrator-shape), not Spark's data-plane
+partitioning. This is a control-plane concern — slicing the unit of
+work, not operating on data values — so it stays in scope by the
+scope-test rubric. Sequenced first; materialization strategies and the
+asset-thinking presentation layer below build on it.
+
+### Materialization strategies
+
+Richer write shapes for nodes that produce blessed `table` (and later
+`blob` / `geo`) attributes — the incremental, full-refresh, and
+append modes that dbt's materializations cover, expressed as a
+control-plane choice about the shape of writes rather than data-plane
+transformation. Today rimsky has the candidate-commit lifecycle
+(`BeginCandidate` / `CommitCandidate` / `AbandonCandidate` on the
+`DataProcessing` mix-in) but no declared materialization-strategy
+surface above it; `rimsky asset materialize` synthesizes an invalidate
+message to re-compute an asset and is a different operation. Planned
+for **after** partitions, since the interesting strategies
+(incremental) are partition-shaped.
+
+### Asset-thinking as a presentation layer
+
+A reframing of rimsky's existing task-shaped surface (nodes and their
+attributes) into Dagster-style asset-shaped views (named outputs and
+their materializations), layered over the cascade graph and the
+content-lineage projection that already exist. This is a
+**presentation-layer** change, **not** a primitive change: cascade,
+claims, content lineage, and blessed typed attributes already give
+rimsky most of what asset-thinking provides, with different
+vocabulary. The work is a projection and a UI/query surface over those
+primitives, not new orchestration machinery. Pairs with the dashboard
+frontend and the partitions work above.
 
 ## On the horizon
 

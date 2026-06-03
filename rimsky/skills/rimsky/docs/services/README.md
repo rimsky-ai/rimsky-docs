@@ -160,6 +160,13 @@ implementation guide](../protocols/executor.md).
 - **Ports:** gRPC `9090`, HTTP `9190` (Dockerfile `EXPOSE 9090 9190`).
 - **Dockerfile:** `lib/services/executors/claude-agent/Dockerfile` (Node 24 on a
   Chainguard/Wolfi base; the runtime image installs the `claude` CLI globally).
+- **Note:** depends on the `@rimsky-ai/protocols` wire bindings, resolved in-tree
+  via an npm `file:` link to `lib/protocols` (the Go workspace build, not the
+  published npm tarball). The same `lib/protocols` is what gets published to npm
+  as `@rimsky-ai/protocols` for external consumers. This is the lone
+  Apache-2.0-licensed bundled service; its own package
+  `@rimsky/executor-claude-agent` is `"private": true` and ships only as the
+  Docker image — never to npm.
 
 ### verifier-http
 
@@ -286,7 +293,7 @@ binary. All sensors share two env vars:
   | --- | --- | --- |
   | `RIMSKY_OPENLINEAGE_RIMSKY_DSN` | — | **required** — Postgres DSN of the rimsky lineage projection. |
   | `RIMSKY_OPENLINEAGE_STATE_DSN` | rimsky DSN | DSN for the subscriber's own cursor state. |
-  | `RIMSKY_OPENLINEAGE_BACKEND_URL` | — | OpenLineage HTTP receiver; events are POSTed to `{url}/api/v1/lineage`. Empty → the subscriber logs and exits. |
+  | `RIMSKY_OPENLINEAGE_BACKEND_URL` | — | OpenLineage HTTP receiver; events are POSTed to `{url}/api/v1/lineage`. Empty → events are not POSTed (no-op); the subscriber still polls `rimsky_lineage` and advances its cursor. |
   | `RIMSKY_OPENLINEAGE_NAMESPACE` | `rimsky` | OpenLineage namespace stamped on every event. |
   | `RIMSKY_OPENLINEAGE_POLL_INTERVAL` | `5s` | projection poll cadence. |
   | `RIMSKY_OPENLINEAGE_BATCH_SIZE` | `200` | max rows processed per poll. |

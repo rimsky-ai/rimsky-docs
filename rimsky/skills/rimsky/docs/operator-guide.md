@@ -48,8 +48,9 @@ persistence:
 `rimsky-supervisor`, `rimsky-control-api`) cannot share state through an
 in-process map, so the gate prevents accidental misconfiguration.
 
-`SweepOrphanedBlobs` runs in the foundation tick loop and reaps blob handles whose
-retention window has elapsed. The blob backend itself sees only `Delete(handle)`.
+`SweepOrphanedBlobs` runs in the scheduler tick loop (throttled to
+`OrphanBlobSweepInterval`, default 1h) and reaps blob handles whose retention
+window has elapsed. The blob backend itself sees only `Delete(handle)`.
 
 ## claude-agent: configuration
 
@@ -128,7 +129,8 @@ The control API exposes:
 | --- | --- |
 | `GET /admin/diagnostics/held-frames` | Frames currently held. |
 | `GET /admin/diagnostics/parked-nodes` | Parked nodes; optional `?reason=<name>` filter. |
-| `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` | Admin invalidate. Dispatches by node state: `parked` resumes, `fresh` invalidates, `running`/`failed` returns 409. |
+| `GET /admin/diagnostics/wait-sets` | Wait-sets currently registered. |
+| `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` | Admin invalidate. Dispatches by node state: `parked` resumes; `fresh`/`stale`/`failed` invalidate; `running` returns 409. |
 | `POST /admin/lineage/prune` | Prune lineage records. |
 
 `/admin/instances/{instance}/nodes/{node_id}/invalidate` is the general-purpose
