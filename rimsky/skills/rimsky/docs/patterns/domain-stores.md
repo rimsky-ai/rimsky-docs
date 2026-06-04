@@ -1,7 +1,7 @@
 ---
 concept: domain-stores
 definition: |
-  A would-be pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. Not wired in v0.4.1: the reference claude-agent executor consumes no external MCP servers. The real, narrower surface is the executor's own internal rimsky-callback MCP tools plus per-node attributes.
+  A would-be pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. Not wired in v0.5.0: the reference claude-agent executor consumes no external MCP servers. The real, narrower surface is the executor's own internal rimsky-callback MCP tools plus per-node attributes.
 proto_symbol: (none — MCP, not a rimsky service protocol)
 config_field: claude-agent per-node attributes (attributes.cli.*); internal rimsky-callback MCP tools
 api_surface: (none)
@@ -11,7 +11,7 @@ deprecated_terms: []
 
 # Domain stores
 
-> **Status (v0.4.1).** The reference `claude-agent` executor does **not**
+> **Status (v0.5.0).** The reference `claude-agent` executor does **not**
 > consume consumer-built MCP servers. It wires exactly one MCP server
 > into each dispatch — its own internal `rimsky-callback` — and reads its
 > per-dispatch configuration from the node's attributes. There is no
@@ -118,7 +118,7 @@ substitution grammar; see [`concepts/attribute.md`](../concepts/attribute.md).
 ## If you need external state today
 
 Because the reference executor cannot dial a consumer MCP server, the
-practical ways to give an agent project-specific state in v0.4.1 are:
+practical ways to give an agent project-specific state in v0.5.0 are:
 
 - **Through the prompt and attributes.** Inject context as
   `system_prompt` / `user_prompt` text, or as substituted attribute
@@ -129,4 +129,4 @@ practical ways to give an agent project-specific state in v0.4.1 are:
   paths — so project state staged on a shared volume is reachable.
 
 Bringing a true external MCP tool catalog into a dispatch would require
-new wiring in the reference executor that does not exist as of v0.4.1.
+new wiring in the reference executor that does not exist as of v0.5.0.

@@ -3,10 +3,11 @@
 #
 #   docker run -v ./my.yml:/etc/rimsky/rimsky.yml:ro rimskyai/rimsky-all-in-one
 #
-# The unified image targets local development. Per spec §7.4, stores: {}
-# and executors: {} are intentionally empty — end-to-end work is exercised
-# via the scenario suite or by overriding this config with a richer
-# stores/executors block.
+# The unified image targets local development. claim_producers: {} and
+# executors: {} are intentionally empty — end-to-end work is exercised via
+# the scenario suite or by overriding this config with a richer
+# claim-producers/executors block. (The top-level `stores:` key was retired;
+# the loader now rejects it and points at `claim_producers:`.)
 
 persistence:
   driver: sqlite

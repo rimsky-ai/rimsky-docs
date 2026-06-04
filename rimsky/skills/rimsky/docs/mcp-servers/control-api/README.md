@@ -22,14 +22,24 @@ Same model as the HTTP API. A request carries `Authorization: Bearer <plaintext 
 
 ## Wire protocol
 
-JSON-RPC 2.0 over `POST /mcp`, advertising `protocolVersion` `2025-06-18` and `serverInfo` `{name: "rimsky-control-api", version: "v1"}`. Five methods:
+MCP **Streamable HTTP** transport over `GET`+`POST /mcp`, advertising `protocolVersion` `2025-06-18` and `serverInfo` `{name: "rimsky-control-api", version: "v1"}`. This is the transport the default MCP `type: http` client speaks; the server implements just enough of it to **connect and control** (server-initiated push is V2 — see [Streaming](#streaming)).
 
-- `initialize` — returns `protocolVersion`, `capabilities` (`tools`, `resources`), and `serverInfo`.
+`POST /mcp` carries one JSON-RPC 2.0 message per request. Five methods:
+
+- `initialize` — returns `protocolVersion`, `capabilities` (`tools: {}`, `resources: {subscribe: false, listChanged: false}`), and `serverInfo`. The response also sets a fresh `Mcp-Session-Id` header; the client echoes it on subsequent requests and binds its `GET` stream to it. v1 holds no per-session state — the id is opaque and unvalidated beyond connect.
 - `tools/list` — the per-key-filtered tool catalog.
 - `tools/call` — dispatches by tool name; arguments are JSON-Schema validated; the result is returned as an MCP `content` text block wrapping the control-API JSON response.
 - `resources/list` / `resources/read` — the read-only resource catalog (empty on tools-only deployments).
 
+A JSON-RPC **notification** (an id-less message, e.g. `notifications/initialized`, the post-`initialize` handshake step) is consumed with `202 Accepted` and an empty body — never a JSON-RPC reply. Replying to a notification is a JSON-RPC 2.0 violation, and the `type: http` client treats a spurious reply as a handshake failure. Any unknown method on an `id`-bearing request returns `-32601`.
+
 Error codes follow JSON-RPC: `-32700` parse error, `-32600` invalid request, `-32601` method/tool not found, `-32602` invalid params, `-32603` internal error.
+
+## Streaming
+
+`GET /mcp` opens the MCP Streamable HTTP **server-to-client stream** — a `text/event-stream` (SSE) the default `type: http` client probes on connect. In v1 the stream is **idle**: it flushes `200` + the SSE headers immediately so the probe succeeds, then emits only periodic keep-alive comments (`: keep-alive`, ~25s) to hold the connection open. It pushes **no** MCP messages. (An earlier build answered this probe with `405`, failing the client's connect; the idle stream replaces that.)
+
+Server-initiated push — `resources/subscribe` + `notifications/resources/updated`, live event streaming — is **out of v1 scope**: connect-and-control only, live push is V2. The `GET` stream exists to satisfy the transport probe, not to deliver data. If a request carries an `Mcp-Session-Id` header the stream echoes it back; otherwise the stream is unbound. Any HTTP method other than `GET`/`POST` returns `405` with `Allow: GET, POST`.
 
 ## Tool catalog
 
@@ -49,7 +59,7 @@ Tools are declared in the canonical action registry (`lib/control/controlapi/act
 - **Diagnostics:** `parked_node_list`, `waitset_list`, `claim_holders_list`, `held_frames_list`.
 - **Auth (self-administration):** `auth_list`, `auth_get`, `auth_status`, `auth_create_key`, `auth_revoke_key`, `auth_rotate_key`.
 
-`instance_create` accepts `{template, instance_key?, params?, attribute_overrides?}`. `attribute_overrides` mirrors the control-API's per-instance overrides surface (`{by_executor, by_node, by_match}`); `by_match` is an ordered list of `{matcher, overlay}` entries keyed on a content predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`) — see the [attribute concept](../../concepts/attribute.md).
+`instance_create` accepts `{template, instance_key?, params?, attribute_overrides?, frame_delivery_mode?}` (`frame_delivery_mode` ∈ `serial_queue` / `coalesce`). `attribute_overrides` mirrors the control-API's per-instance overrides surface (`{by_executor, by_node, by_match}`); `by_match` is an ordered list of `{matcher, overlay}` entries keyed on a content predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`) — see the [attribute concept](../../concepts/attribute.md).
 
 ## Dry-run
 

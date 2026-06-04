@@ -22,7 +22,7 @@
 persistence:
   driver: postgres
   postgres:
-    dsn: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    dsn: "postgres://rimsky:rimsky@db.internal:5432/rimsky?sslmode=disable"
   # Optional blob backend for spilling large attribute / event /
   # parked-payload bytes (plan §D). Default backend "inline" writes
   # everything inline; "pg-largeobject" / "filesystem" / "memory"
@@ -38,6 +38,30 @@ persistence:
   #   retention:
   #     orphan_sweep_interval: 1h          # SweepOrphanedBlobs cadence (default 1h)
   #     retention_after_unreferenced: 24h  # window before deletion (default 24h)
+
+# Trailing-window retention for the scheduler tick. Each key is a
+# trailing time window (Go duration); rows older than the window are
+# reaped by the scheduler tick's retention sweeps.
+# Retention is ON by default: the whole block — and any individual key —
+# may be omitted and the documented default applies. An explicit `0s`
+# DISABLES that one sweep (it is NOT re-defaulted). A negative value is a
+# startup error.
+retention:
+  recent_frames_kept: 100                  # run-tree trace: most-recent frames kept per run-tree regardless of age (default 100)
+  trace_trailing: 720h                     # run-tree trace trailing window (default 30d = 720h)
+  lineage_trailing: 720h                   # lineage-record trailing window (default 30d)
+  claim_handles_trailing: 720h             # released claim-handle trailing window (default 30d; 0s keeps handles forever)
+  message_idempotencies_trailing: 24h      # rimsky_message_idempotencies trailing window (default 24h)
+
+# Deployment-level fallback cap on parked duration, keyed by the stored
+# park reason. The two-value enum is closed: only `await_callback` and
+# `snooze` are accepted (any other key is a startup error). The per-row
+# rimsky_node_runs.max_park_duration_seconds always wins when set; these
+# are the deployment-wide defaults when it is NULL. Omit the block for no
+# deployment-level cap.
+max_park_duration:
+  await_callback: 168h                     # 7d
+  snooze: 1h
 
 claim_producers:
   content:

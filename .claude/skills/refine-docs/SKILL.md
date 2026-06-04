@@ -57,10 +57,11 @@ this skill opens it fresh.
   who (`orchestrator` / surface / `fixer:<surface>`), file/surface, what was
   chosen, the alternative, one-line why. Log only calls that genuinely could
   have gone the other way — not routine edits — so the table stays signal-dense.
-- **`flag`** — something that cannot be resolved by editing this repo. Subtype:
-  `source-conflict` (a published doc faithfully mirrors stale rimsky source),
-  `unimplemented` (a documented feature absent from the code), or
-  `declined-addition` (a curated-surface addition left for human curation).
+- **`flag`** — something that cannot be resolved by editing this repo (the fix
+  belongs in rimsky-core). Subtype: `source-conflict` (a published doc faithfully
+  mirrors stale rimsky source) or `unimplemented` (a documented feature absent
+  from the code). A flag is never a fix this repo *could* make and chose not to —
+  nothing here is human-owned or "left for curation"; fixable drift gets fixed.
 - **`round`** — emitted by the loop below: round number, issues found / fixed /
   still-open.
 
@@ -117,7 +118,7 @@ Render the journal into `.build-docs/report.md` and print it:
 1. **Convergence summary** — from the `round` entries: rounds run, found / fixed
    / open per round, and the stop reason ("2 empty rounds → converged" or "hit
    9-round cap, N open").
-2. **Attention table** — from the `decision` and `flag` entries, three sections
+2. **Attention table** — from the `decision` and `flag` entries, two sections
    (the docs analog of ok-planner's divergence table):
    - **Judgment calls** — the materially-different-option `decision` entries
      (who · surface · chosen vs. alternative · why). The "creative" choices the
@@ -126,10 +127,8 @@ Render the journal into `.build-docs/report.md` and print it:
      places the published doc and the source-of-truth can't both be made right
      from this repo (a verbatim concept mirroring stale design source, a
      documented-but-unimplemented feature, a stale proto comment showing through
-     a generated reference). These need a rimsky-side change.
-   - **Declined additions** — `flag: declined-addition`: curated-surface
-     additions the skill did not auto-write (e.g. newly-present error classes),
-     left for human curation.
+     a generated reference). These need a rimsky-side change — they are the only
+     thing the loop leaves unfixed, and only because the fix isn't in this repo.
 
 When `build-docs` invoked this skill, it prepends the run header (the resolved
 ref, the build / test results, and the per-surface created/refined/
@@ -171,7 +170,7 @@ unless the user explicitly asks.
 > Return what you changed, plus — separately, for the run journal — any
 > `decision` entries (a fix that could have gone more than one way: what you
 > chose, the alternative, why) and any `flag` entries (`source-conflict` /
-> `unimplemented` / `declined-addition`).
+> `unimplemented` — only for what genuinely can't be fixed in this repo).
 >
 > Issues:
 > <ISSUE LIST>

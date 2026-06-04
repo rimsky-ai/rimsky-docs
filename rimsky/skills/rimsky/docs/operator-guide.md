@@ -14,6 +14,48 @@ Per-process tuning (concurrency, callback host, heartbeat) lives in each process
 own YAML or env vars and is read separately (e.g. `RIMSKY_SUPERVISOR_CONFIG` for
 `rimsky-supervisor`).
 
+## Deployment: the entrypoint
+
+The distributed `rimsky` image runs `rimsky-entrypoint` as PID 1. It selects which
+role processes to spawn from its single command argument and validates it:
+
+| Container `command:` | Spawns | Migrate? |
+| --- | --- | --- |
+| (none) | All three roles (scheduler + supervisor + control-api) — the all-in-one stack. | Yes. |
+| `[rimsky-scheduler]` | Only the scheduler. | No. |
+| `[rimsky-supervisor]` | Only the supervisor. | No. |
+| `[rimsky-control-api]` | Only the control-api. | **Yes** — the designated migrate owner in a split. |
+| anything else (unknown role, `rimsky-migrate`, or >1 arg) | Nothing — exits non-zero with an error naming the valid roles. | — |
+
+DB migration runs synchronously **exactly once** across a deployment, before any
+role spawns: the no-arg all-in-one path always migrates; in a three-container
+split only the `rimsky-control-api` role owns it, so three role containers do not
+race three concurrent migrations (and none is skipped). Override with
+`RIMSKY_ENTRYPOINT_MIGRATE`: `=1` forces migrate (e.g. a dedicated one-shot init
+container), `=0` skips it.
+
+The control-API liveness route is `GET /health` (a shallow snapshot). There is no
+shipped dashboard health route in the published images.
+
+## Instance lifecycle: durable by default
+
+Instances are **durable by default**. There is no auto-terminate-on-drain: an
+instance that runs out of work stays alive (paused-idle) and resumes when new
+input arrives. The only built-in self-termination path is the create-time opt-in
+`terminate_after_run` flag on `POST /instances`:
+
+```json
+{ "template": "<id>", "instance_key": "...", "terminate_after_run": true }
+```
+
+When `terminate_after_run` is true the instance self-terminates after its **next
+frame ends** — strict "run at most once more" semantics. It is an opt-in on the
+create request only; an idempotent re-create (same `template` + `instance_key`)
+returns the existing instance and **ignores** the flag, exactly as `paused` does.
+Operators who relied on instances cleaning themselves up on drain must now either
+set `terminate_after_run` at create, or force-terminate explicitly via
+`POST /instances/{id}/terminate`.
+
 ## Persistence: blob backend
 
 The `persistence.blob` block selects how attribute values, parked-state payloads,
@@ -51,6 +93,55 @@ in-process map, so the gate prevents accidental misconfiguration.
 `SweepOrphanedBlobs` runs in the scheduler tick loop (throttled to
 `OrphanBlobSweepInterval`, default 1h) and reaps blob handles whose retention
 window has elapsed. The blob backend itself sees only `Delete(handle)`.
+
+## Scheduler retention
+
+The top-level `retention:` block tunes the scheduler tick's trailing-window
+retention sweeps — the reaping of stale run-tree trace frames, lineage records,
+released claim handles, and message idempotencies. It is distinct from
+`persistence.blob.retention` (above), which governs only orphaned blob handles.
+
+```yaml
+retention:
+  recent_frames_kept: 100
+  trace_trailing: 720h
+  lineage_trailing: 720h
+  claim_handles_trailing: 720h
+  message_idempotencies_trailing: 24h
+```
+
+| Key | Type | Default | Reaps |
+| --- | --- | --- | --- |
+| `recent_frames_kept` | int | 100 | Most-recent run-tree trace frames kept per run-tree regardless of age. |
+| `trace_trailing` | duration | `720h` (30d) | Run-tree trace frames older than the window (beyond `recent_frames_kept`). |
+| `lineage_trailing` | duration | `720h` (30d) | Lineage records older than the window. |
+| `claim_handles_trailing` | duration | `720h` (30d) | Released claim handles older than the window. |
+| `message_idempotencies_trailing` | duration | `24h` | `rimsky_message_idempotencies` rows older than the window. |
+
+Retention is ON by default. The whole block — and any individual key — may be
+omitted and the documented default applies; the scheduler tick reaps stale rows
+out of the box. An explicit `0s` on one key **disables that one sweep** (it is
+NOT re-defaulted — e.g. `claim_handles_trailing: 0s` keeps released handles
+forever). A negative value is a startup error. Durations use Go syntax (`720h`,
+`24h`, `90m`).
+
+## Parked-duration caps
+
+The top-level `max_park_duration:` block sets a deployment-wide fallback cap on
+how long a node may stay parked, keyed by the stored park reason. The park-reason
+enum is closed: only `await_callback` and `snooze` are accepted; any other key is
+a startup error naming the valid set.
+
+```yaml
+max_park_duration:
+  await_callback: 168h   # 7d
+  snooze: 1h
+```
+
+The per-row `rimsky_node_runs.max_park_duration_seconds` always wins when set;
+these keys are the deployment-level defaults that fire only when the per-row
+value is NULL. Omit the block for no deployment-level cap. The supervisor's
+parked-node sweep enforces the cap.
 
 ## claude-agent: configuration
 

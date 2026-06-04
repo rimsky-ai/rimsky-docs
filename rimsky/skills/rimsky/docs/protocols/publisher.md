@@ -218,6 +218,16 @@ Sensors are one kind of publisher. The four reference sensors ship under
 Each is single-replica per the [replica contract](#replica-contract) and carries
 its own README and config; read them alongside the wire contract.
 
+`sensor-object-store` validates backends at startup and advertises (via
+`Capabilities`) **only** the registered set; the default bundled image registers
+only the `memory` backend. A `Subscribe` naming an unregistered backend
+(`s3` / `gcs` / `azure`) is rejected at `Subscribe` time rather than silently
+no-op'ing at poll time. A deployment needing a cloud backend builds its own binary
+that registers the desired lister before serving, after which the sensor advertises
+and accepts it automatically. This is the general pattern for any kind-gated
+publisher: advertise exactly what you can service, and reject unservable
+subscriptions at `Subscribe`.
+
 ## See also
 
 [publisher](../concepts/publisher.md) · [publisher-subscription](../concepts/publisher-subscription.md) · [sensor](../concepts/sensor.md) · [message](../concepts/message.md) · [replica](../concepts/replica.md)

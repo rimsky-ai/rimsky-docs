@@ -180,8 +180,7 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_VERIFIER_HTTP_HOST` | `0.0.0.0` | bind host. |
   | `RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT` | `9096` | gRPC port. |
   | `RIMSKY_EXECUTOR_STUB_MODE` | `0` | `1` enables stub mode. |
-- **Ports:** gRPC `9096` (default; not `EXPOSE`d in the Dockerfile — see flag
-  below).
+- **Ports:** gRPC `9096` (default; the Dockerfile declares no `EXPOSE`).
 - **Dockerfile:** `lib/services/executors/verifier-http/Dockerfile.verifier-http`.
 - **Note:** not wired into a default deployment; exercised by the
   conformance and scenario suites.
@@ -199,8 +198,7 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST` | `0.0.0.0` | bind host. |
   | `RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT` | `9095` | gRPC port. |
   | `RIMSKY_EXECUTOR_STUB_MODE` | `0` | `1` enables stub mode. |
-- **Ports:** gRPC `9095` (default; not `EXPOSE`d in the Dockerfile — see flag
-  below).
+- **Ports:** gRPC `9095` (default; the Dockerfile declares no `EXPOSE`).
 - **Dockerfile:** `lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks`.
 - **Note:** not wired into a default deployment; exercised by the
   conformance and scenario suites.
@@ -248,9 +246,18 @@ binary. All sensors share two env vars:
 ### sensor-object-store
 
 - **What it is:** an object-store sensor — polls a bucket+prefix on an interval
-  and emits one observation per new object. V1 ships an in-memory backend by
-  default; S3/GCS/Azure backends are an optional build path.
+  and emits one observation per new object.
 - **Protocol:** Publisher.
+- **Backends:** the sensor advertises (via `Publisher.Capabilities`) and accepts
+  (via `Publisher.Subscribe`) **exactly** the backends it has registered at
+  startup — it does not advertise a backend it cannot serve. The default bundled
+  binary registers only the in-memory `memory` backend, so a subscription naming
+  `s3` / `gcs` / `azure` is **rejected at `Subscribe`**, not silently no-op'd at
+  poll time. S3/GCS/Azure are deliberately not built into this binary (keeps the
+  cloud SDKs out of the default `go.mod`); a deployment that needs one builds its
+  own binary that constructs the desired object lister and registers it under a
+  backend name (e.g. `s3`) before the service starts, after which the sensor
+  advertises and accepts that backend automatically.
 - **Config** (env): `RIMSKY_ENDPOINT`, `RIMSKY_SENSOR_OBJECT_STORE_HOST`
   (`0.0.0.0`), `RIMSKY_SENSOR_OBJECT_STORE_PORT` (`9083`), and optional
   `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN` (Postgres) for persistent state.

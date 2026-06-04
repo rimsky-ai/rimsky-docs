@@ -70,14 +70,13 @@ claim/lock orchestration.
 | `stores`<br/>_(optional)_ | [`[]NodeStoreRef`](#nodestoreref) |  |
 | `locks`<br/>_(optional)_ | [`[]NodeLockRef`](#nodelockref) |  |
 | `attributes`<br/>_(optional)_ | [`*NodeAttributesDef`](#nodeattributesdef) |  |
-| `inherits`<br/>_(optional)_ | [`[]InheritEntry`](#inheritentry) |  |
 | `error_types`<br/>_(optional)_ | [`map[string]ErrorTypePolicy`](#errortypepolicy) |  |
 | `subscribes`<br/>_(optional)_ | [`[]SubscriptionEntry`](#subscriptionentry) | Subscribes declares the node's reactive surface. Each entry names an upstream node (or instance: true for cross-cutting) plus a signal type-path (`type:`) and optional CEL `when:` predicate over the signal payload. Plus implicit subscriptions inferred by the template validator from substitution refs in Attributes (see graph/node/subscription_edges.go). Per spec .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md Piece 1 and the 2026-05-23 signal-taxonomy reshape. @concept: node-subscription |
 | `max_park_duration`<br/>_(optional)_ | `string` | MaxParkDuration caps how long a parked node may stay parked before the SweepParkedNodes watchdog forces it to fail with error_class=park_timeout. Empty string means "use deployment default" (rimsky has no global hard cap; absence = unbounded). Format: any time.ParseDuration string ("24h", "30m", etc.). Per the 2026-05-08 platform-extensions plan F2. |
 | `max_retries_without_progress`<br/>_(optional)_ | `*int` | MaxRetriesWithoutProgress caps the number of consecutive retry dispatches that produce no settling_signal_type change before the runner forces an Errored verdict with error_class=retry_loop_no_progress. Pointer for tri-state semantics: nil = use deployment default (default 100); 0 = disable cap entirely (infinite retries permitted); N>0 = use N. Per plan F3. |
 | `delegate`<br/>_(optional)_ | `string` | Delegate names a sub-graph (a GraphSpec.Name other than "main") the node delegates to. Mutually exclusive with Executor: the canonicalizer rejects nodes that set both, and absorbs the referenced sub-graph's entry node's executor into this node at canonicalization (per spec §Sub-graphs / Identity and absorption). |
 | `holds`<br/>_(optional)_ | [`map[string]HoldsBinding`](#holdsbinding) | Holds declares the node co-holds upstream claims. The outer key is the local alias; the value names the upstream node whose claim is being co-held. The supervisor INSERTs rows into table:rimsky_claim_holders at dispatch time and binds the upstream's address into the leaf's ExecuteRequest per-claim slot using the local alias. Per spec §Claim co-holdership. |
-| `fan_out`<br/>_(optional)_ | [`*FanOutSpec`](#fanoutspec) | FanOut, when set, declares the node fans out across sub-scopes of one of its `claims:` aliases. The supervisor calls ClaimProducer.SplitScope inside the acquisition tx and dispatches one leaf run per sub-scope. Per spec §Fan-out template DSL. |
+| `fan_out`<br/>_(optional)_ | [`*FanOutSpec`](#fanoutspec) | FanOut, when set, declares the node fans out across sub-scopes of one of its `stores:` aliases. The supervisor calls ClaimProducer.SplitScope inside the acquisition tx and dispatches one leaf run per sub-scope. Per spec §Fan-out template DSL. |
 | `is_subgraph_entry_absorbed`<br/>_(optional)_ | `bool` | IsSubgraphEntryAbsorbed is set by the canonicalizer when this node is a sub-graph caller (has a non-empty Delegate). Its `rimsky_nodes` row carries the absorbed entry node's executor + any sub-graph-internal claims/holds/attributes declared on the entry, merged with what the calling node declared externally. At runtime the supervisor consults this marker on the success branch of `applyTerminalComplete` to route through the sub-graph internal-cascade fire instead of the standard single-run resolution. Persisted as JSON so the canonicalizer's emission survives spec hashing. Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md §Sub-graphs / Identity and absorption. |
 | `is_subgraph_exit`<br/>_(optional)_ | `bool` | IsSubgraphExit is set by the canonicalizer when this node is the declared `exit:` of a non-main graph. Mirrors `IsSubgraphEntryAbsorbed`'s role on the calling-node side. At runtime the supervisor's terminal handler consults this marker on the success branch of `applyTerminalComplete` to drive the exit-writeback carry-rule (the exit's writeback bytes are persisted onto the parent run's attribute row, and the exit's own attribute row stays empty). Persisted as JSON so the canonicalizer's emission survives spec hashing; this lets the runtime route on a static marker rather than a per-terminal template lookup that could transiently fail. Per spec .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md §"Subgraph carry-rule". |
 
@@ -88,7 +87,7 @@ Selector is opaque text post-substitution; the store parses and
 decides what it means (scope access vs. configured pick policy).
 Intent is "r" (read) or "rw" (read-write). Alias is the per-claim
 name within the node, used in {{claim.<alias>.<...>}} substitution
-paths and in inheritance references; defaults to Name (the
+paths and in downstream `holds:` references; defaults to Name (the
 producer name) when not set.
 
 Lifetime is "subgraph" (default) or "durable" (the claim survives
@@ -128,7 +127,7 @@ HoldsBinding declares that a node co-holds an upstream claim. The
 outer key in the `holds:` block (in YAML) is the local alias; the
 value is `{from: <upstream-node-alias>}`. The canonicalizer
 validates that `From` points to an upstream dependency and that the
-upstream declares the referenced claim alias in its `claims:` block.
+upstream declares the referenced claim alias in its `stores:` block.
 
 | YAML key | Go type | Description |
 |----------|---------|-------------|
@@ -145,23 +144,6 @@ for the node. Schema is a JSON Schema fragment whose
 | YAML key | Go type | Description |
 |----------|---------|-------------|
 | `schema`<br/>_(optional)_ | `map[string]any` |  |
-
-### InheritEntry
-
-InheritEntry declares that this node inherits a held claim from an
-upstream acquirer. Per spec §14: inheritance is direct only (does
-not propagate transitively through dep chains); each downstream
-node that needs the live claim declares it explicitly. Each
-inheritance edge extends the claim's lifetime over the inheriting
-node's run.
-
-Claim is the per-claim alias declared on the upstream acquirer's
-stores: entry. Validation at template deploy resolves the alias to
-a specific acquirer reachable via deps.
-
-| YAML key | Go type | Description |
-|----------|---------|-------------|
-| `claim` | `string` |  |
 
 ### SubscriptionEntry
 
@@ -188,11 +170,11 @@ the taxonomy and concept:node-subscription for the matching rules.
 ### FanOutSpec
 
 FanOutSpec declares that a node fans out across sub-scopes of one of
-its `claims:` aliases. Per spec §Fan-out template DSL.
+its `stores:` aliases. Per spec §Fan-out template DSL.
 
 | YAML key | Go type | Description |
 |----------|---------|-------------|
-| `claim` | `string` | Claim references a claim alias declared on the node (in `claims:` or `holds:`). The producer of this claim must advertise supports_split_scope. |
+| `claim` | `string` | Claim references a claim alias declared on the node (in `stores:` or `holds:`). The producer of this claim must advertise supports_split_scope. |
 | `partition_request` | `string` | PartitionRequest is the producer-interpreted bytes that drive SplitScope. May be a substitution template (e.g. "{{trigger.message.payload.partition_request_override \| default: ...}}"). At canonicalization the literal/template string is recorded; substitution happens at runtime. |
 | `parallelism`<br/>_(optional)_ | `int` | Parallelism caps the number of in-flight leaf runs. Zero means unlimited. |
 | `error_policy` | [`AggregationPolicy`](#aggregationpolicy) | ErrorPolicy is the per-fan-out aggregation policy. |

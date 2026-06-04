@@ -8,7 +8,7 @@ Complete route table for rimsky's HTTP+JSON control API, generated from the cano
 - **Every route is auth-gated per-action.** The registry is the canonical route → action mapping. The auth + permission middleware resolves an incoming `METHOD` + routed pattern to its **auth gate** (the action string in the table) and checks it against the requesting key's grant; an unmapped route is a wiring bug. The only ungated routes are the health and readiness probes, which are not in the registry and so do not appear below.
 - **R/W** marks whether the gate is a read action (`false`) or a write action (`true`); bundled `*:read` roles cover every read gate.
 
-65 routes across 45 actions.
+66 routes across 45 actions.
 
 ## /admin
 
@@ -107,7 +107,8 @@ Complete route table for rimsky's HTTP+JSON control API, generated from the cano
 
 | Method | Path | Auth gate | R/W | Action |
 | --- | --- | --- | --- | --- |
-| `POST` | `/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface; per-tool actions still gate tools/call. |
+| `GET` | `/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
+| `POST` | `/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
 
 ## /messages
 

@@ -21,11 +21,9 @@ commits, any-failure abandons. This is rimsky's atomic-by-default posture
 (see [claim co-holdership](../concepts/claim-co-holdership.md)): the chain
 is a transaction whose boundary is the holding subgraph.
 
-`holds:` is the modern co-holdership directive;
-[`inherits:`](../reference/template-schema.md#inheritentry) is its legacy
-singular form. Prefer `holds:` — as of v0.4.1 a node co-holding via
-`holds:` and reading `{{claim.<alias>.address}}` validates at
-`template register` (see Gotchas).
+`holds:` is the **sole** co-holdership directive. A node co-holding via
+`holds:` may read the co-held address through `{{claim.<alias>.address}}`,
+and the registration validator accepts that read (see Gotchas).
 
 The downstream nodes are coupled two ways, deliberately separated:
 [subscription](../concepts/node-subscription.md) decides *when* they fire
@@ -153,18 +151,27 @@ curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
 
 ## Gotchas
 
-- **`holds:` + a co-held alias read validates as of v0.4.1.** The
-  registration validator derives the claim aliases available to
-  `{{claim.<alias>}}` reads from `stores:` (acquired here), `inherits:`
-  (legacy inherited), and `holds:` (modern co-held). A node that co-holds
-  via `holds:` and reads `{{claim.<alias>.address}}` — exactly the
-  `process` node above — is accepted at `template register`. (On v0.4.0
-  this combination was rejected: the validator omitted `holds:` aliases
-  from the recognized set, so only the legacy `inherits:` form validated.
-  The v0.4.1 validator fix closes that gap; undeclared aliases — neither
-  acquired, inherited, nor co-held — are still rejected.) Prefer `holds:`;
-  it is the documented-modern directive per
+- **`holds:` + a co-held alias read validates.** The registration
+  validator derives the claim aliases available to `{{claim.<alias>}}`
+  reads from two sources: `stores:` (claims this node acquires, like
+  `acquire`'s `region`) and `holds:` (claims this node co-holds, like
+  `process`'s `region`). A node that co-holds via `holds:` and reads
+  `{{claim.<alias>.address}}` — exactly the `process` node above — is
+  accepted at `template register`. Undeclared aliases — neither acquired
+  nor co-held — are rejected. `holds:` is the sole co-holdership directive
+  (the legacy singular `inherits:` form is gone), per
   [claim co-holdership](../concepts/claim-co-holdership.md).
+- **The handoff instance is durable — it does not clean itself up.** Once
+  the chain commits, both nodes settle `fresh` and the instance keeps
+  running (instances are durable by default; there is no auto-terminate on
+  drain). To tear it down, force-terminate then delete: `rimsky instance
+  kill <instance_id> --force` (marks it terminal, abandoning any in-flight
+  run) followed by `rimsky instance delete <instance_id>` (frees the row).
+  For a one-shot "acquire, process, commit, exit" instance that terminates
+  itself after the chain settles, set `terminate_after_run: true` on the
+  create request (see the [README](README.md#instances-are-durable-by-default)
+  note — the flag is body-only, so create via `POST /instances`, not the
+  CLI).
 - **Both nodes must run the `http-node` executor in stub mode**
   (`RIMSKY_EXECUTOR_STUB_MODE=1`) with a permissive attribute schema, so
   each dispatch passes the schema gate and closes with a success — letting

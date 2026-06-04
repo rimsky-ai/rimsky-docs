@@ -13,7 +13,7 @@ After resolving `{{...}}` substitution directives, the resulting input attribute
 
 Most commonly when an upstream node's committed attributes don't match the consuming node's expected types — a substitution returns a value whose JSON shape doesn't fit the schema. Also: a `{{params.<key>}}` reference resolved to an unexpected type, a template default that conflicts with the schema, or a value the executor's advertised `expected_attributes_schema` rejects.
 
-(A *missing* required source — a strict directive that resolved to nothing — is a different class, `template_resolution_failed`, the canonical retry-after-cascade case. An executor whose `expected_attributes_schema` is not yet visible at dispatch surfaces as `executor_schema_unavailable`.)
+(A *missing* required source — a strict directive that resolved to nothing — is a different class, `template_resolution_failed`, the canonical retry-after-cascade case. An executor whose `expected_attributes_schema` is not yet visible at dispatch surfaces as its own class, [`executor_schema_unavailable`](executor_schema_unavailable.md).)
 
 ## What to do
 
@@ -23,3 +23,4 @@ Check the executor trace and the named-source values (`{{nodes.<source>.attribut
 
 - [`../../concepts/attribute.md`](../../concepts/attribute.md)
 - [`../../concepts/node.md`](../../concepts/node.md)
+- [`executor_schema_unavailable.md`](executor_schema_unavailable.md) — the sibling dispatch-time class for when the executor's schema is not yet visible.

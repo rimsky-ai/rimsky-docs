@@ -78,6 +78,31 @@ same repository.
 
 Major work landed since the previous roadmap pass:
 
+- **Durable-by-default instances + trace retention.** Instances are now
+  durable by default; the old unconditional auto-terminate-on-drain is
+  removed. Self-termination is the opt-in `terminate_after_run` flag,
+  which terminates an instance after its next frame ends ("run at most
+  once more"). A real trace-retention sweep ships alongside it — a
+  `retention:` config block reaps each per-instance execution trace
+  (frames, their node-runs, and the time-keyed event logs) under a
+  trailing time window (`trace_trailing`, default 30 days) and a
+  most-recent-N-frames count cap (`recent_frames_kept`, default 100),
+  reaping by the lesser of the two. Retention is on by default; an
+  explicit `0` disables a given sweep. This makes durable instances
+  bounded on disk without an instance-delete cascade.
+- **Conformance as CLI subcommands.** The standalone per-protocol
+  conformance binaries are gone; conformance now ships as
+  `rimsky conformance <protocol>` subcommands inside the single `rimsky`
+  binary (`executor`, `claim-producer`, `publisher`, `validation`,
+  `data-processing`, `blob-backend`, `probe`). The importable runner
+  library lives in `lib/protocols/conformance/` (Apache 2.0), so Go
+  authors can still invoke it from a Go test.
+- **Dual-licensing the orchestrator layer.** The AGPL surface is now
+  dual-licensed: AGPL-3.0-or-later by default, OR a Fall Guy Consulting
+  commercial license as an alternative over the same code. The Apache
+  island (the `lib/protocols/` wire contract plus the TypeScript executor
+  reference impl and the docs) stays permissive with no commercial track.
+  See `licensing.md`.
 - **Layer crystallization, public docs, tri-licensing.**
   Four-Go-module workspace (`lib/protocols`, `lib/foundation`,
   `lib/services`, root) with depguard-enforced import boundaries; the

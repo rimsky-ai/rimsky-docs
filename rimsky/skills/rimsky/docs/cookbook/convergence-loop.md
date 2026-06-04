@@ -122,11 +122,19 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 Because every iteration is a clean `terminal/success` rather than an
 error-policy retry, the `retry_loop_no_progress` cap never increments — a
 success self-edge is not a retry loop. On the always-`changed` stub this
-loop therefore runs indefinitely; stop it by terminating the instance:
+loop therefore runs indefinitely. The instance is durable — it never
+terminates on its own (instances are durable by default; there is no
+auto-terminate on drain), and a self-firing loop never drains anyway. Stop
+it by force-terminating, then deleting:
 
 ```sh
-rimsky instance delete <instance_id>
+rimsky instance kill <instance_id> --force   # marks it terminal, abandons the in-flight run
+rimsky instance delete <instance_id>          # frees the row (refused until terminal)
 ```
+
+A plain `rimsky instance delete` on a still-looping instance is **refused**
+("instance is not in terminal state") — `kill --force` makes it terminal
+first.
 
 **The runaway guard fires on retry loops, not success loops.** The
 `retry_loop_no_progress` cap is the adjacent guard for a *different* shape —

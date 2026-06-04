@@ -1,13 +1,16 @@
 # Rimsky Licensing — Operator FAQ
 
-Rimsky ships under three licenses, applied per-file along one bright line.
-**Apache 2.0 covers exactly the implement/link surface** — the wire-protocol
-contract, the TypeScript executor reference impl, and the docs. **Everything
-else rimsky ships is AGPL-3.0-or-later, dual-licensed** with a Fall Guy
-Consulting commercial license: the `rimsky` CLI, the Go reference executors and
-stores, the sensors and subscribers, conformance, and the deploy artifacts
-(`dockerfiles/`). These are real, runnable artifacts — using them is using
-rimsky, and that use carries the AGPL's copyleft.
+Rimsky is multi-licensed along **one bright line**, applied per-file: two
+surfaces, three license options. **Apache 2.0 covers exactly the implement/link
+surface** — the wire-protocol contract, the TypeScript executor reference impl,
+and the docs; it carries no copyleft and no commercial track. **Everything else
+rimsky ships is the dual-licensed orchestrator layer:** AGPL-3.0-or-later by
+default (no action required), OR a Fall Guy Consulting commercial license as an
+alternative over the same code. That layer is the `rimsky` CLI, the Go reference
+executors and stores, the sensors and subscribers, conformance, and the deploy
+artifacts (`dockerfiles/`). These are real, runnable artifacts — using them is
+using rimsky, and that use carries the AGPL's copyleft unless you hold the
+commercial license.
 
 The boundary is mechanical, not prose: `licensing.yml` is the source of truth,
 and `make license-lint` verifies it on every CI run. `COPYRIGHT` carries the

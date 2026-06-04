@@ -106,7 +106,11 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 The wiring is the lesson: `{{nodes.fetch.attribute.summary}}`
 auto-subscribes `classify` to `fetch`'s `attribute/summary/changed`
 signal, and the explicit `terminal/success` entry makes the coupling
-visible. Now invalidate just the upstream and watch the recompute
+visible. After the first frame settles, both nodes are `fresh` but the
+instance stays alive — instances are durable by default, so it keeps
+running and remains invalidatable indefinitely (there is no auto-terminate
+on drain). That durability is what makes the next step land on a live
+instance. Now invalidate just the upstream and watch the recompute
 propagate. Take the `fetch` node's `id` from the `/nodes` listing (each
 entry carries an `id` field alongside `node_type`/`state`):
 

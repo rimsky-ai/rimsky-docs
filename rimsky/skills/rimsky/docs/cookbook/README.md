@@ -43,6 +43,37 @@ All recipes run against a rimsky deployment — stand one up from the published 
   sub-graph invoked via `delegate:`; the entry node absorbs into the calling
   node and the exit node's writeback carries back as the result.
 
+## Instances are durable by default
+
+Every recipe here creates an [instance](../concepts/instance.md), and the
+same lifecycle rule applies to all of them: **an instance is durable by
+default and never terminates on its own.** There is no auto-terminate on
+drain — a queue worker that runs out of items, a loop that converges, an
+event-driven node that has handled its last event all settle `fresh` and
+keep living. Nothing the *graph* does ends the instance.
+
+The single self-termination path is the create-time opt-in
+`terminate_after_run: true` flag. It terminates the instance after its
+**next** frame ends — strict "run at most once more", never while a
+node-run is parked — so it expresses the ephemeral run-once shape, not
+"finish all queued work then stop". The flag is **request-body-only**: the
+CLI `rimsky instance create` does not expose it, so set it by POSTing the
+create request directly:
+
+```sh
+curl -s -X POST http://localhost:8080/instances \
+  -H 'Content-Type: application/json' \
+  -d '{"template":"sha256-...","terminate_after_run":true}'
+```
+
+To tear down a durable instance manually, force-terminate then delete —
+two steps, because `delete` refuses a non-terminal instance:
+
+```sh
+rimsky instance kill <instance_id> --force   # marks it terminal (abandons any in-flight run)
+rimsky instance delete <instance_id>          # frees the row + instance key
+```
+
 ## Related surfaces
 
 Two write-ups live in [`docs/patterns/`](../patterns/) rather than here —
@@ -56,16 +87,23 @@ they are operator/architecture patterns, not single-problem recipes:
 
 ## Patterns that need a capability the bundled services lack
 
-Two patterns the primitives support are **not** runnable on the bundled
+Three patterns the primitives support are **not** runnable on the bundled
 producers/services as they stand, so they are not written up as recipes:
 
 - **Fan out over a partitioned claim** (and the **backfill** that targets a
   fan-out node) requires a claim producer that advertises
   `supports_split_scope`. Neither bundled store does — the filesystem
   (`content`) and postgres (`topics-ring`) producers advertise only their
-  write semantics — so a `fan_out:` node is rejected at template
-  registration. This recipe needs a split-scope-capable producer.
+  write semantics (their `Capabilities` set `SupportsSplitScope` false) —
+  so a `fan_out:` node is rejected at template registration. This recipe
+  needs a split-scope-capable producer.
 - **Modify local files through an executor proxy** (run an executor against
   files on a developer machine) requires a
   [host-agent proxy](../concepts/host-agent-proxy.md) service, which is not
   among the bundled services.
+- **A durable claim that outlives its holding subgraph** (the
+  [asset](../concepts/asset.md) shape — `lifetime: durable` on a `stores:`
+  entry) requires the producer to advertise the `data_processing` mix-in
+  protocol. Neither bundled store advertises it, so the canonicalizer
+  rejects a `durable` claim against them. This recipe needs a
+  DataProcessing-capable producer.

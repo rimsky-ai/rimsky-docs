@@ -32,7 +32,7 @@ service.
 | `OnTemplateUndeployed(OnTemplateUndeployedRequest) → LifecycleAck` | No | A deployed template moves to `undeployed`. Drain caches, mark resources for graceful winding-down. |
 | `OnTemplateDeregistered(OnTemplateDeregisteredRequest) → LifecycleAck` | No | A template is removed from the registry. Delete provisioned per-template infrastructure. |
 | `OnInstanceCreated(OnInstanceCreatedRequest) → LifecycleAck` | No | An operator (or compose up) creates a new instance against a deployed template. |
-| `OnInstanceTerminated(OnInstanceTerminatedRequest) → LifecycleAck` | No | An instance moves to its terminal state — completed all frames or deleted by an operator. |
+| `OnInstanceTerminated(OnInstanceTerminatedRequest) → LifecycleAck` | No | An instance moves to its terminal state. Instances are **durable by default**; termination is either operator-driven (graceful `DELETE` / force `terminate`) or the create-time opt-in `terminate_after_run` self-terminating after its next frame ends. (There is no auto-terminate-on-drain.) |
 | `OnRunScopeTerminal(OnRunScopeTerminalRequest) → LifecycleAck` | No | A run-scope reaches terminal state. Unlike the other six, fires from control-api **or** the supervisor (see [Firing sites](#firing-sites-and-synchronous-fan-out)). |
 
 Every RPC is opt-in; "Required?" is No for all seven because the protocol itself

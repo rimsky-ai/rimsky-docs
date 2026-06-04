@@ -525,7 +525,7 @@ Owns: the read-route definitions, the per-route handlers, the JSON marshalling, 
 
 - All cascade-graph HTTP handlers run inside a short fresh transaction.
 - Read-only: no handler in this surface mutates state.
-- Routes are mounted at bare, unversioned paths, matching the parent `control-api` versioning discipline.
+- Routes are mounted under the control API's versioned prefix, matching the parent `control-api` versioning discipline.
 
 ## Aliases and historical names
 
@@ -538,6 +538,7 @@ The HTTP surface was previously documented inside `observability`; promoted to i
 ## Notes
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-02 — Corrected the routing-discipline invariant: the surface is mounted under the control API's versioned prefix (not bare/unversioned paths), consistent with the `control-api` versioning discipline. Per spec:2026-06-02-rimsky-core-remediation-design.
 
 
 ---
@@ -622,7 +623,7 @@ Owns: the `holds:` template directive, the per-co-holder row insertion at the co
 ## Invariants
 
 - A co-holdership `from:` pointer MUST reference an upstream dependency. The co-holdership graph is a subset of the cell graph and naturally acyclic.
-- At dispatch, the co-holder's execution request carries the inherited claim's address (the same acquired result the original acquirer received) — same wire shape as a fresh acquire. Per `@blessed-invariant 20` the bytes are inert in rimsky.
+- At dispatch, the co-holder's execution request carries the co-held claim's address (the same acquired result the original acquirer received) — same wire shape as a fresh acquire. Per `@blessed-invariant 20` the bytes are inert in rimsky.
 - Persistence: the co-holder row is inserted in the co-holder's own acquire transaction, keyed by the holder run (post-2026-05-15 the holder key is the run; legacy keyed on the node).
 - Auto-terminal fires when every co-holder row for the claim handle is non-active. The holding-subgraph extension includes the acquirer plus every co-holder.
 - Multiple co-holders are supported — the `holds:` block can list many; multiple nodes can co-hold the same claim independently. The default cancel-siblings error policy walks the co-holder set when one fails; the walk is supervisor-scoped — see `concept:cancel-siblings` for the multi-supervisor consequence.
@@ -633,6 +634,7 @@ Introduced by `spec:2026-05-15-data-platform-extensions-design`. The verifier pa
 
 - [2026-05-18] Folded content from a former, now-retired co-holdership doc. The retired doc framed co-holdership under the legacy `inherits:` directive name; examples rewritten to use the modern `holds:` directive. Added value-pass-vs-claim-pass distinction + lifetime-extension authoring story to Definition. `inherits:` recorded in Aliases as a legacy singular synonym.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-02 — Legacy `inherits:` directive deleted entirely; `holds:` is the sole co-holdership directive. The `inherits` alias removed from frontmatter and the legacy-synonym framing dropped from the body. Per spec:2026-06-02-rimsky-core-remediation.
 
 
 ---
@@ -691,7 +693,7 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag
 
 ### Held variant
 
-A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared inheritor. Marked by the held flag on the handle row. Per-member state tracked in co-holder rows keyed by claim handle plus holder run, each carrying an active/completed/failed state.
+A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared co-holder. Marked by the held flag on the handle row. Per-member state tracked in co-holder rows keyed by claim handle plus holder run, each carrying an active/completed/failed state.
 
 Post-2026-05-15 the holder key is the holder run (referencing the node-run ledger), not the legacy holder-node key. This reflects the run-tree extension: holders are runs, not nodes. The acquirer's own holder row is inserted at acquire-time; co-holder rows (declared via `holds:`) are inserted at the co-holder's own acquire-time.
 
@@ -705,7 +707,7 @@ Held-variant invariants:
 
 ### Authoring: held vs unheld
 
-A template declares co-holders on each node's `holds:` clause (legacy synonym: `inherits:`); the claim opened by a node becomes "held" implicitly when one or more downstream runs declare it as a co-held claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every run in the holding subgraph (acquirer plus co-holders) has reached a non-active state.
+A template declares co-holders on each node's `holds:` clause; the claim opened by a node becomes "held" implicitly when one or more downstream runs declare it as a co-held claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every run in the holding subgraph (acquirer plus co-holders) has reached a non-active state.
 
 ### Held-variant antipatterns
 
@@ -731,6 +733,7 @@ The legacy ledger name was the lock-holder table; Phase-5 consolidation renamed 
 - [2026-05-18] Folded residue from a former, now-retired holding-subgraph doc — the no-rollback / not-a-transactional-unit / no-partial-commits antipatterns added as a "Held-variant antipatterns" subsection under the Held variant. The bulk of that doc's content was already absorbed into the Held variant subsection; only the antipattern framing was unique.
 - 2026-05-22 — Updated for the ClaimScope rename per `spec:2026-05-22-fan-out-safety-scope-first-design`: the claim-scope lock-kind enum value, the claim-scope-data column, and the corresponding index were renamed.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-02 — Legacy `inherits:` directive deleted; `holds:` is the sole co-holdership directive. Scrubbed the `inherits:`-synonym note and the "inheritor" framing from the Held variant — co-holders are declared only via `holds:`. Per spec:2026-06-02-rimsky-core-remediation.
 
 
 ---
@@ -971,38 +974,38 @@ Owns: the claim declaration, the address/payload/claim-scope returned at open, t
 
 ## What it is
 
-Six thin CLI wrappers (one per protocol) over a shared conformance library in the protocols module (one sub-package per protocol). Third-party service implementers download a conformance binary and point it at their service endpoint; Go service authors can also invoke the underlying library from a Go test without forking the binary.
+A `rimsky conformance <protocol>` subcommand family — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol). Third-party service implementers run a conformance subcommand against their service endpoint; Go service authors can also invoke the underlying library from a Go test without going through the CLI.
 
-- Executor conformance — exercises an executor against its execute RPC. Configurable transport (gRPC or HTTP+JSON), a require-stub-mode flag, scenario include/skip filters, and observability/lifecycle check flags. The registered scenarios (one each) cover the happy path, async handoff, cancel, heartbeats, terminal-is-last, stream-close-without-terminal, malformed userdata, attributes serialization, and unknown-ack-id. The six conformance binaries follow the generic naming pattern `rimsky-<protocol>-conformance` — the probe sidecar is intentionally generic in name because it is protocol-agnostic (it's the in-process stub-mode probe, shared across all conformance binaries).
-- Stub-mode probe sidecar — issues one execute RPC carrying a stub-probe userdata flag and asserts the completion event carries the stub attributes-delta map shape. Spins up a callback receiver so async-handoff executors can complete the probe via the callback path.
+- Executor conformance — exercises an executor against its execute RPC. Configurable transport (gRPC or HTTP+JSON), a require-stub-mode flag, scenario include/skip filters, and observability/lifecycle check flags. The registered scenarios (one each) cover the happy path, async handoff, cancel, heartbeats, terminal-is-last, stream-close-without-terminal, malformed userdata, attributes serialization, and unknown-ack-id.
+- Stub-mode probe — its own subcommand; protocol-agnostic. Issues one execute RPC carrying a stub-probe userdata flag and asserts the completion event carries the stub attributes-delta map shape. Spins up a callback receiver so async-handoff executors can complete the probe via the callback path.
 - Claim-producer conformance over gRPC — runs the standard battery: capabilities, non-empty envelope, first-open (a single open returns available plus a known realized-write-semantics in the advertised envelope), second-open (a second identical open), uniformity (byte-equal scope ⇒ identical realized write semantics — spec §2.5), plus the split-scope and scopes-conflict checks (or their skipped variants).
-- Blob-backend conformance via in-process construction — six checks (round-trip 1KB, round-trip 10MB, range read, delete-then-read-returns-not-found, idempotent delete, concurrent writes). The binary adapts each concrete backend (memory / filesystem / pg-largeobject) to the conformance library's reduced backend interface so the in-process suite stays protocols-purity-clean.
+- Blob-backend conformance via in-process construction — six checks (round-trip 1KB, round-trip 10MB, range read, delete-then-read-returns-not-found, idempotent delete, concurrent writes). The subcommand adapts each concrete backend (memory / filesystem / pg-largeobject) to the conformance library's reduced backend interface so the in-process suite stays protocols-purity-clean.
 - DataProcessing-mix-in conformance — capabilities plus per-materialization begin→commit plus list-versions / list-partitions / get-version-schema smoke tests plus concurrent-writes idempotency.
 - Publisher-protocol conformance — capabilities plus subscribe, list-subscriptions, idempotent-subscribe, message-push (in-process receiver), unsubscribe, and idempotent-unsubscribe.
 - Validation-mix-in conformance — per-role happy-path plus malformed-input plus unknown-role checks.
 
-The conformance library lives in the protocols module; the binaries are thin wrappers (parse flags, dial endpoint, invoke library, format output, exit). The legacy repo-root conformance directory was retired during the 2026-05-24 SDK extraction.
+The conformance library lives in the protocols module; each subcommand is a thin wrapper (parse flags, dial endpoint, invoke library, format output, exit). The conformance surface ships inside the single rimsky binary — there are no standalone per-protocol conformance binaries.
 
 ## Purpose
 
-A third-party implementer downloads a conformance binary and points it at their service endpoint. Pass/fail validates wire compatibility without forcing the implementer to import internal Go test code. Pre-2026-05-24, runner logic lived inline in each conformance binary; post-2026-05-24 it's an importable Go library, so Go service authors can also invoke the same suite from their own Go tests against an in-process or testcontainers-hosted target.
+A third-party implementer runs `rimsky conformance <protocol>` against their service endpoint. Pass/fail validates wire compatibility without forcing the implementer to import internal Go test code. The runner logic lives in an importable Go library, so Go service authors can also invoke the same suite from their own Go tests against an in-process or testcontainers-hosted target.
 
 ## Boundaries
 
-Owns: the conformance library, the thin CLI wrappers, the two shared fixture packages, and the stub-mode probe. Does NOT own: in-repo unit tests (those live with the source), the in-repo scenario harness, the lifecycle-subscriber protocol's own conformance (no dedicated binary; the lifecycle check flag on the executor conformance binary is the documented escape hatch, backed by a lifecycle-check entry point in the conformance library). Adjacent: `executor`, `claim-producer`, `blob-backend`.
+Owns: the conformance library, the `rimsky conformance <protocol>` subcommand handlers, the two shared fixture packages, and the stub-mode probe. Does NOT own: in-repo unit tests (those live with the source), the in-repo scenario harness, the lifecycle-subscriber protocol's own conformance (no dedicated subcommand; the lifecycle check flag on the executor conformance subcommand is the documented escape hatch, backed by a lifecycle-check entry point in the conformance library). Adjacent: `executor`, `claim-producer`, `blob-backend`.
 
 ## Invariants
 
-- The executor conformance binary's require-stub-mode flag issues an in-process probe equivalent to the stub-mode probe at startup; non-stubbed LLM-calling executors fail before any real scenario runs.
-- The stub-mode signature is the stub attributes-delta map shape, centralized only in the probe binary's source. Any "stub-conformant" executor must hard-code this exact key/value pair.
-- Conformance binaries are part of the all-targets build (compile-time dependency on the protocols module).
-- LifecycleSubscriber has no dedicated conformance binary; its idempotency is enforced server-side via a persisted idempotency ledger, exercised by integration tests.
+- The executor conformance subcommand's require-stub-mode flag issues an in-process probe equivalent to the stub-mode probe at startup; non-stubbed LLM-calling executors fail before any real scenario runs.
+- The stub-mode signature is the stub attributes-delta map shape, centralized only in the probe subcommand's source. Any "stub-conformant" executor must hard-code this exact key/value pair.
+- The conformance surface is part of the all-targets build (compile-time dependency on the protocols module, carried by the rimsky binary).
+- LifecycleSubscriber has no dedicated conformance subcommand; its idempotency is enforced server-side via a persisted idempotency ledger, exercised by integration tests.
 - The uniformity check is silently skipped (rather than failed) for pick-policy producers whose consecutive opens return non-byte-equal scopes.
-- The memory blob backend's startup-time unified-only gate is bypassed in the blob-backend conformance binary by running it under the unified process role.
+- The memory blob backend's startup-time unified-only gate is bypassed in the blob-backend conformance subcommand by running it under the unified process role.
 
 ## Aliases and historical names
 
-None live.
+The conformance surface was historically a set of standalone per-protocol binaries (named for the protocol they exercised), then thin CLI wrappers over the extracted runner library; both forms are retired. The conformance runners now ship as `rimsky conformance <protocol>` subcommands inside the single rimsky binary.
 
 ## Open within this concept
 
@@ -1012,11 +1015,12 @@ None live.
 
 ## Notes
 
-- Renamed the executor-conformance binary per `spec:2026-05-12-nomenclature-resolution` (audit ride-along I.1). Binary naming standardized to the pattern `rimsky-<protocol>-conformance`; the probe sidecar retains its generic protocol-agnostic name.
-- 2026-05-24: conformance runner logic extracted from the per-protocol binaries into the SDK conformance library. CLI binaries kept as thin wrappers calling the library. External Go authors can now invoke conformance from a Go test. Also corrected a pre-existing stale binary count (four → six) in the "What it is" section. See `spec:2026-05-24-repo-reorganization-design` phase P2.
+- Renamed the executor-conformance runner per `spec:2026-05-12-nomenclature-resolution` (audit ride-along I.1). The probe runner retains its generic protocol-agnostic name.
+- 2026-05-24: conformance runner logic extracted from the per-protocol binaries into the SDK conformance library. The CLI form was kept as thin wrappers calling the library. External Go authors can now invoke conformance from a Go test. Also corrected a pre-existing stale runner count (four → six) in the "What it is" section. See `spec:2026-05-24-repo-reorganization-design` phase P2.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- [2026-05-24] The host-agent-proxy is conformance-testable as a normal service via the existing executor-conformance and claim-producer-conformance runners, run against the proxy with a stub spawned process behind an in-process agent fake. A dedicated host-agent-conformance runner covering the agent ↔ proxy protocol from the agent side is a follow-up. Per spec 2026-05-24-host-agent-and-proxy-design.
+- [2026-05-24] The host-agent-proxy is conformance-testable as a normal service via the existing executor and claim-producer conformance runners, run against the proxy with a stub spawned process behind an in-process agent fake. A dedicated host-agent conformance runner covering the agent ↔ proxy protocol from the agent side is a follow-up. Per spec 2026-05-24-host-agent-and-proxy-design.
 - 2026-05-26 — conformance library moved from the SDK module into the protocols module as a sub-package; no API change. Per spec:2026-05-26-collapse-sdk-into-protocols.
+- 2026-06-02 — the standalone per-protocol conformance binaries were folded into `rimsky conformance <protocol>` subcommands shipped in the single rimsky binary; the importable runner library is unchanged. Per `spec:2026-06-02-rimsky-core-remediation-design`.
 
 
 ---
@@ -1309,13 +1313,13 @@ Rimsky needs an append-only record of "what happened" for incident review, opera
 
 ## Boundaries
 
-Owns: the audit-log schema, the CRUD path, the read pattern feeding `cascade-graph`. Does NOT own: the named-event ledger (see `named-event` "Ledger storage" subsection), retention policy (operator-managed), interpretation of individual `kind` strings (lives in consumers). Adjacent: `cascade-graph` (reads from the event feed), `observability`, `named-event` (sibling append-only ledger with a different opacity discipline).
+Owns: the audit-log schema, the CRUD path, the read pattern feeding `cascade-graph`. Does NOT own: the named-event ledger (see `named-event` "Ledger storage" subsection), the trace-retention window value (a shared per-instance bound that also governs frames and node_runs, applied here as a reaping cutoff), interpretation of individual `kind` strings (lives in consumers). Adjacent: `cascade-graph` (reads from the event feed), `observability`, `named-event` (sibling append-only ledger with a different opacity discipline).
 
 ## Invariants
 
 - The `kind` column is free-form; no enum constraint. Zero-migration to add a new kind; typos produce events no consumer finds.
 - The `payload` is rimsky's own JSON — readable by rimsky for the dashboard and audit consumers. NOT bound by `@blessed-invariant 21` (which governs the named-event ledger).
-- No built-in retention; operator-managed retention is required.
+- Audit rows are reaped under the shared trailing trace-retention window (the same per-instance window that bounds frames and node_runs), in addition to cascade-removal on instance delete; within the window the log is append-only.
 - **Writes are never *silently* dropped; under a healthy backing store they are durable.** The log is the canonical forensic record. The per-request auth-audit write (`auth.access_attempted`) is **synchronous in the request path** — written inline after the handler returns (so `response_status` and `duration_ms` are known) and before the gate returns, not through a best-effort queue that drops under load. Under a healthy store every intended row is persisted before the request completes. The honest limit of the current implementation: the synchronous write is bounded by a short deadline, and a write that fails or exceeds it is **surfaced (logged at error), not retried or buffered** — so a backing-store outage or stall can lose that row (with an operator-visible error, never a silent discard), and a degraded store spends request-path latency rather than dropping. So the guarantee is *never silently dropped* and *durable under normal operation* — not *always persisted under all conditions*. Operational event rows (node transitions, lock/work events) are written synchronously inside the supervisor's transactions, so they are durable as part of the mutation that produced them.
 
 ## Aliases and historical names
@@ -1341,6 +1345,7 @@ The control-plane MCP and auth spec (`spec:2026-05-15-control-plane-mcp-and-auth
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: the per-request auth-audit write (`auth.access_attempted`) is now **durable and synchronous** in the request path, replacing the prior best-effort, droppable-under-load async dispatcher (added the durability invariant above). Adds an `audit:read`-gated read surface over the `auth.*` rows, filterable by actor / action / target / result / mode / time — recorded as a reader of those rows in "What it is" and the auth-event-kinds section.
 - 2026-05-30 — Tightened the durability invariant to match the implementation. The 2026-05-29 wording (per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`) claimed the auth-audit row is "always persisted, never discarded under load." In fact the synchronous write is bounded by a short deadline and, on failure or timeout, logs at error and drops the row rather than retrying or buffering — so the honest guarantee is *never silently dropped; durable under a healthy store; a store outage or stall costs request latency and can lose the row with an operator-visible error*. A durable local-spool write path (local append + background batched ship to the backing store) is sketched as the intended way to close the gap to *always persisted*; it is pre-spec and not yet adopted. Also recorded that `auth.key_rotated` now carries uniform `key_id` / `key_name` (the new key) so the `audit:read` actor filter surfaces rotations like every other auth row.
+- 2026-06-03 — Audit log brought under the shared trace-retention window; previously had no built-in retention (reaped only by instance-delete cascade). Replaced the "No built-in retention" invariant and the "retention policy (operator-managed)" boundary. Part of the durable-by-default trace-retention model. Per spec:2026-06-03-instance-lifecycle-durable-by-default.
 
 ## Open within this concept
 
@@ -1431,7 +1436,7 @@ Introduced by `spec:2026-05-15-data-platform-extensions`. The "partition_request
 
 ## What it is
 
-A frame is one cascade resolution. It is a persisted frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state (`queued`, `running`, `completed`, or `failed`). Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins when a node receives an invalidate (in-frame cascade walk) OR when pending boundary-crossing messages get delivered (see "Message delivery" below). It ends when no run row for the instance remains `stale` or `running` (post-2026-05-15 the predicate re-roots onto run rows since state lives on runs now).
+A frame is one cascade resolution. It is a persisted frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state (`queued`, `running`, `completed`, or `failed`). Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame *begins* only when a node is invalidated — a direct operator/user invalidation, or message delivery (see Message delivery below). Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to. 'Begins a frame' is distinct from 'causes a frame to execute.' It ends only when every node_run in the frame is resolved — no node_run remains `stale`, `running`, or `parked`. A `parked` node_run holds its frame open; the frame does not end while any node is parked.
 
 **Message delivery as a frame-creation site** (post-2026-05-15). Boundary-crossing messages (operator-API enqueues, publisher-origin messages with `sender_kind: "publisher"`) persist in the message ledger on receipt. At each frame boundary, undelivered messages for the instance are bundled per the per-instance `frame_delivery_mode` (`serial_queue` default, `coalesce` opt-in — owned by `concept:message`; distinct from this concept's own `frame_resolution_mode`): rimsky walks subscriptions matching the envelope fields and stale-marks matching receivers within the new frame. The message's delivered-at and frame reference are populated. See `concept:message`.
 
@@ -1454,7 +1459,7 @@ The two modes never mix within an instance — the policy is template-level. `se
 
 ## Held frames
 
-A frame is **held** when one or more of its node-runs is in a non-terminal pause state — typically `parked` (the node entered the park terminal waiting for a time-based or callback-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via a held-frames diagnostics endpoint on the control API. They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Held-claim auto-terminal fires once every node in the holding subgraph completes, so held-claim release happens at the end of the holding subgraph, not at the park boundary.
+A frame is **held** when one or more of its node-runs is in a non-terminal pause state — typically `parked` (the node entered the park terminal waiting for a time-based or callback-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via a held-frames diagnostics endpoint on the control API. They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Held-claim auto-terminal fires once every node in the holding subgraph completes, so held-claim release happens at the end of the holding subgraph, not at the park boundary. A held frame is precisely a running frame with a `parked` (or acquisition-pending) node_run; because a parked node_run holds its frame open, the held-frames diagnostic and the frame-end rule agree.
 
 ## Boundaries
 
@@ -1496,6 +1501,7 @@ Owns: the per-instance concurrency rule (≤1 running frame), the coalesce/seria
 - 2026-05-22 — Clarified orthogonality with `concept:run-scope` per `spec:2026-05-22-fan-out-safety-scope-first`. Frames and RunScopes are orthogonal: a single cascade frame can span multiple RunScopes (cascade propagation across sub-graph entry-success or fan-out parent settlement); a single RunScope can host multiple frames (the same graph firing across multiple cascade resolutions).
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: corrected the cross-reference parenthetical that named `coalesce` as the `frame_delivery_mode` default — the delivery default flips to `serial_queue` (owned by `concept:message`). This concept's own `frame_resolution_mode` knob is unchanged.
+- 2026-06-03 — Frame-end definition corrected to include parked node_runs as unresolved (a parked node holds its frame open), resolving the prior What-it-is vs Held-frames contradiction; clarified that park-wake resumes rather than begins a frame, and that a RunScope is *contained* within its frame (read the 2026-05-22 note's "span multiple RunScopes" as "contain"). Per spec:2026-06-03-instance-lifecycle-durable-by-default.
 
 
 ---
@@ -1685,6 +1691,8 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 - `service_bindings` is opaque JSON, set at instance creation and consumed by the `concept:host-agent-proxy` at dispatch time to resolve a late-bound service name to a dev-machine binary.
 - `created_by_api_key_id` is the api-key whose authenticated request created the instance (nullable for instances created under `concept:anonymous-mode`); it is the routing key the host-agent-proxy uses to find the owner's connected `concept:host-agent`.
 - An instance is terminal exactly when its terminal timestamp is set. The force-terminate control action is the production mechanism that sets it, abandoning any in-flight node-runs (transitioning them to failed) and closing the instance's main `concept:run-scope` in the same teardown, so a terminated instance never retains an open main run-scope. Terminal is not removal: the instance key is freed for reuse only by the subsequent row delete, which is permitted only once the instance is terminal.
+- An instance is durable by default: it self-terminates only when created with `terminate_after_run = true`, and then only after its next frame ends (strict 'run at most once more' semantics). The default (`terminate_after_run = false`) never self-terminates.
+- Termination is independent of `concept:sensor` / `concept:publisher-subscription` and of node presence — the termination decision reads nothing about subscriptions or nodes.
 
 ## Aliases and historical names
 
@@ -1706,6 +1714,7 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 - [2026-05-24] Adds `service_bindings` (opaque late-bound service catalog) and `created_by_api_key_id` (the creating api-key, nullable under `concept:anonymous-mode`) to the instance row, consumed by the `concept:host-agent-proxy` for late-bound dispatch resolution and agent routing. Per spec 2026-05-24-host-agent-and-proxy-design.
 - 2026-05-28 — termination invariant added per spec:2026-05-28-quality-of-life-features; force-terminate is the first production path to mark an instance terminal, distinct from the row-delete reaper that frees the instance key.
 - 2026-05-28 — force-terminate teardown refined per spec:2026-05-28-quality-of-life-features: the action closes the instance's main concept:run-scope in the same teardown that marks it terminal and abandons in-flight node-runs, so a terminated instance never retains an open main run-scope. This does not depend on the background terminator sweep, which only reaches terminated instances that still carry concept:lifecycle-subscriber bookkeeping.
+- 2026-06-03 — Durable-by-default lifecycle + opt-in terminate_after_run (strict: terminate after the next frame ends, regardless of queued frames). Replaces the longstanding unconditional auto-terminate-on-drain and removes the publisher-subscription coupling. Richer termination modes (drain-to-quiet, count-based) are deliberately deferred behind the same flag or a renamed successor. Per spec:2026-06-03-instance-lifecycle-durable-by-default.
 
 
 ---
@@ -2038,7 +2047,7 @@ Pre-layer-crystallization (`spec:2026-05-04-layer-crystallization-design`), the 
 
 ## Licensing boundary
 
-A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license check with longest-prefix-match-wins. The Apache surface is the protocols module — the wire contract a consumer implements or links against — plus a documentation carve-out; the protocols module imports nothing internal, so the Apache code forms a single closed island with no path to AGPL source. Everything else Rimsky ships (the foundation, graph, runtime, and control layers, the binaries, the dev tooling, and the test-support scaffolding) is AGPL-3.0-or-later. The Postgres testcontainer helper, formerly an Apache-licensed standalone module, was reclassified AGPL when it was demoted to test-support in the 2026-05-27 reorg — it is no longer a public module. The bundled services in the services module are AGPL like the rest of what rimsky ships, with one carve-out — the TypeScript executor reference implementation is independently Apache-licensed and sits outside the Go import graph, so the single Go Apache island remains the protocols module. Repo-organization concern; not a runtime noun. The check is build-step enforcement, not runtime.
+A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license check with longest-prefix-match-wins. The Apache surface is the protocols module — the wire contract a consumer implements or links against — plus a documentation carve-out; the protocols module imports nothing internal, so the Apache code forms a single closed island with no path to AGPL source. Everything else Rimsky ships (the foundation, graph, runtime, and control layers, the binaries, the dev tooling, and the test-support scaffolding) is AGPL-3.0-or-later. The AGPL surface is dual-licensed: AGPL-3.0-or-later is the default (no action required to use Rimsky under those terms), and a Fall Guy Consulting commercial license is available as an alternative for organizations that prefer to use, modify, or distribute the orchestrator layer without the AGPL's §5 copyleft and §13 network-service-source-disclosure obligations. The dual track applies only to the AGPL surface; the Apache island stays permissive Apache-2.0 with no commercial track. The Postgres testcontainer helper, formerly an Apache-licensed standalone module, was reclassified AGPL when it was demoted to test-support in the 2026-05-27 reorg — it is no longer a public module. The bundled services in the services module are AGPL like the rest of what rimsky ships, with one carve-out — the TypeScript executor reference implementation is independently Apache-licensed and sits outside the Go import graph, so the single Go Apache island remains the protocols module. Repo-organization concern; not a runtime noun. The check is build-step enforcement, not runtime.
 
 (Adjacent: previously documented as a standalone concept; folded here under `2026-05-11-design-log-convergence`.)
 
@@ -2058,6 +2067,7 @@ A per-directory Apache-2.0-vs-AGPL-3.0 mapping, enforced by a build-step license
 - 2026-05-27 (spec: none — root-folder reorg): collapsed the repo into the four top-level groups (the cmd group, the lib group, the test group, the tools group); the protocols and foundation modules moved under the lib group (their module paths gained a lib-group segment); the Postgres testcontainer helper was demoted from a standalone module to a plain test-support package; the dead ops package was deleted; the migration-runner helper, the stub claim-producer and stub executor test doubles, and the scenario harness were consolidated under the test-support package; the CLI library was relocated alongside the rimsky binary's package in the cmd group; the conformance binaries were folded into "rimsky conformance <protocol>" subcommands; the license-check moved into the tools group.
 - 2026-05-27 (spec: none — services reintegration): the bundled consumption-side services (stores, sensors, subscribers, executors), carved out on 2026-05-24, rejoined the workspace as the services module under the lib group. They build against the in-tree protocols module via the workspace; the published-module pin and external image references previously used to consume them were removed. Consumption-side isolation is now enforced both by the module graph and the lint rule. The production Go services were relicensed from Apache to AGPL on reintegration (an internal engineering effort, not a permissive deliverable; downstream consumers seeking permissive code implement against the protocols module themselves); the TypeScript executor reference implementation stays Apache as a separate deliverable outside the Go import graph; the single Go Apache island remains the protocols module.
 - 2026-05-27 (spec: 2026-05-27-release-skill-design): made the four-way grouping explicit as a code-only invariant. Non-code top-level entries — image build inputs (pre-existing) and per-tag release notes (introduced by this spec) — coexist alongside the four code groups but are out of the concept's scope.
+- 2026-06-02 (spec: 2026-06-02-rimsky-core-remediation-design): documented the commercial-license track in the licensing boundary. The AGPL surface was already dual-licensed AGPL-or-commercial in the source-of-truth license map, but the concept body described only the Apache/AGPL split; added that AGPL is the default and a Fall Guy Consulting commercial license lifts the AGPL §5/§13 obligations for the orchestrator layer. The per-directory Apache/AGPL map is unchanged.
 
 
 ---
@@ -3735,8 +3745,16 @@ over gRPC at dispatch time, with an HTTP+JSON bridge available for non-Go
 services.
 
 There is **no executor SDK** — implement against the wire types in any language. A
-Go service may use the `protocols` module's `serverkit` helpers
-([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON scaffolding. Wire
+Go service may use the `protocols` module's `serverkit` package
+([`go-packages.md`](go-packages.md)) for **generic gRPC server-lifecycle helpers**
+(`serverkit.Listen` / `serverkit.RunGRPC` / `serverkit.GracefulStop`) to stand up
+the `Executor` gRPC server. `serverkit` does **not** carry an executor-specific
+helper: there is no dispatch handler, no async-callback POST client, and no
+incremental-attribute-write helper in it (its HTTP+JSON bridges cover the
+claim-producer / lifecycle-subscriber surfaces, not the executor). The dispatch
+handler, the async-callback POST, and incremental attribute writes are yours to
+write straight against the wire contract — the in-tree `http-node` executor does
+exactly that with `genv1.RegisterExecutorServer` plus a plain `http.Client`. Wire
 contracts: `lib/protocols/proto/v1/executor.proto` (dispatch, required) and
 `lib/protocols/proto/v1/executor_observability.proto` (observability, optional);
 generated field/message/RPC references at
@@ -3893,14 +3911,15 @@ Wire details that bite:
 - The bearer token is the same `cancel_token` from the `ExecuteRequest` (also used
   on incremental attribute writes).
 
-A Go executor can use the `serverkit` package for this bridge; a non-Go executor
-marshals the `AsyncCallbackBody` shape directly.
+There is no Go helper for this POST — a Go executor marshals `AsyncCallbackBody`
+and POSTs it with a plain `http.Client` (the in-tree `http-node` executor does
+exactly that), the same as a non-Go executor marshalling the shape directly.
 
 **Incremental attribute writes.** An executor may also write attributes *mid-run*,
 before the terminal, against the same `callback_url` base with the `cancel_token`
-as bearer (`serverkit` provides the Go helper; the route and body are in
-[`reference/executor.md`](reference/executor.md)). A run that wrote incrementally
-may then close `Success` with an empty `attributes_delta`.
+as bearer (the route and body are in [`reference/executor.md`](reference/executor.md)).
+This too is a plain POST you write yourself — no `serverkit` helper. A run that wrote
+incrementally may then close `Success` with an empty `attributes_delta`.
 
 ## Resume context
 
@@ -5316,7 +5335,7 @@ service.
 | `OnTemplateUndeployed(OnTemplateUndeployedRequest) → LifecycleAck` | No | A deployed template moves to `undeployed`. Drain caches, mark resources for graceful winding-down. |
 | `OnTemplateDeregistered(OnTemplateDeregisteredRequest) → LifecycleAck` | No | A template is removed from the registry. Delete provisioned per-template infrastructure. |
 | `OnInstanceCreated(OnInstanceCreatedRequest) → LifecycleAck` | No | An operator (or compose up) creates a new instance against a deployed template. |
-| `OnInstanceTerminated(OnInstanceTerminatedRequest) → LifecycleAck` | No | An instance moves to its terminal state — completed all frames or deleted by an operator. |
+| `OnInstanceTerminated(OnInstanceTerminatedRequest) → LifecycleAck` | No | An instance moves to its terminal state. Instances are **durable by default**; termination is either operator-driven (graceful `DELETE` / force `terminate`) or the create-time opt-in `terminate_after_run` self-terminating after its next frame ends. (There is no auto-terminate-on-drain.) |
 | `OnRunScopeTerminal(OnRunScopeTerminalRequest) → LifecycleAck` | No | A run-scope reaches terminal state. Unlike the other six, fires from control-api **or** the supervisor (see [Firing sites](#firing-sites-and-synchronous-fan-out)). |
 
 Every RPC is opt-in; "Required?" is No for all seven because the protocol itself
@@ -5689,6 +5708,16 @@ Sensors are one kind of publisher. The four reference sensors ship under
 
 Each is single-replica per the [replica contract](#replica-contract) and carries
 its own README and config; read them alongside the wire contract.
+
+`sensor-object-store` validates backends at startup and advertises (via
+`Capabilities`) **only** the registered set; the default bundled image registers
+only the `memory` backend. A `Subscribe` naming an unregistered backend
+(`s3` / `gcs` / `azure`) is rejected at `Subscribe` time rather than silently
+no-op'ing at poll time. A deployment needing a cloud backend builds its own binary
+that registers the desired lister before serving, after which the sensor advertises
+and accepts it automatically. This is the general pattern for any kind-gated
+publisher: advertise exactly what you can service, and reject unservable
+subscriptions at `Subscribe`.
 
 ## See also
 

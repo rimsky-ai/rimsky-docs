@@ -46,6 +46,9 @@ var verifiedInternalSymbols = []string{
 	"HoldingSubgraphsForTemplate", // lib/graph/node/inheritance.go::HoldingSubgraphsForTemplate
 	"IsHeld",                      // lib/graph/node/inheritance.go::HoldingSubgraph.IsHeld
 	"OrphanBlobSweepInterval",     // lib/graph/scheduler/scheduler.go::Config.OrphanBlobSweepInterval
+	// generated gRPC bindings (lib/protocols/proto/v1/gen) — real, but excluded
+	// from go-packages.md, which covers only the hand-written helper packages.
+	"RegisterExecutorServer", // lib/protocols/proto/v1/gen/executor_grpc.pb.go::RegisterExecutorServer
 	// stub test-support APIs (test/support/)
 	"WhenType", "EmitNamedEvent", "EnableStubMode", "StubAttributesFor",
 	"EnableDataProcessing", "EnableLifecycle",

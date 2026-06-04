@@ -133,8 +133,8 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
 | `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. |
-| `rimsky/skills/rimsky/docs/agents/llms.txt` | the files it links to | Curated index. Flag drift; do not overwrite. |
-| `rimsky/skills/rimsky/docs/agents/errors/`, `rimsky/skills/rimsky/docs/agents/examples/` | code error classes + template/instance examples | Mostly human. Flag drift/additions; do not overwrite. |
+| `rimsky/skills/rimsky/docs/agents/llms.txt` | the files it links to | The agent entry index. Reconcile against the linked files — fix dead links and stale descriptions; keep it accurate. |
+| `rimsky/skills/rimsky/docs/agents/errors/`, `rimsky/skills/rimsky/docs/agents/examples/` | code error classes + template/instance examples | Reconcile against source: every error class the catalog should carry is present and accurately described; every example validates and runs against the current release. Fix drift and fill gaps; remove what no longer exists. |
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
 | `rimsky/skills/rimsky/docs/images/` | rimsky `dockerfiles/` + per-service Dockerfiles | Derive-and-verify catalog of the published images. Refine against source. |
 | `rimsky/skills/rimsky/SKILL.md` | the corpus it routes to | Skill-owned router. Keep the mental model, the fit→design→implement→deploy→diagnose routing, and the concept-triage current as concepts / protocols / recipes are added or removed; every path it links must resolve. Refine, don't flatten. |
@@ -235,7 +235,7 @@ Dispatch one subagent per surface using the templates below. Independent
 surfaces run in parallel — send them in a single message with multiple `Agent`
 calls. Each subagent reconciles its whole surface (create-if-missing /
 refine-if-present) and returns a per-surface change list plus any items it
-flagged for human attention.
+flagged as unresolvable from this repo.
 
 A subagent edits **only files in its own surface**. Drift it notices in another
 surface is a `flag` for the orchestrator, **not** an edit — the surfaces run in
@@ -248,11 +248,13 @@ Every surface prompt must also instruct the subagent to return, separately from
 its change list, two structured lists for the run journal (see "The run
 journal"): **`decision`** entries — judgment calls it made among materially
 different options (what it chose, the alternative, one-line why) — and
-**`flag`** entries — things it could not resolve from this repo (`source-conflict`
-/ `unimplemented` / `declined-addition`). The orchestrator appends every
-returned entry to `.build-docs/journal.md`, plus its own entries for
-orchestrator-level calls (e.g. a bundle-topology decision, or choosing to flag
-rather than edit a verbatim concept page).
+**`flag`** entries — things it could not resolve by editing this repo
+(`source-conflict` / `unimplemented` — i.e. the fix belongs in rimsky-core, not
+here). A surface never defers a fix it *can* make: there is no human-owned
+surface in this project and nothing is "left for curation." If a doc is wrong,
+incomplete, or won't run, the owning subagent fixes it. The orchestrator appends
+every returned entry to `.build-docs/journal.md`, plus its own entries for
+orchestrator-level calls (e.g. a bundle-topology decision).
 
 Surfaces:
 - concepts
@@ -264,7 +266,7 @@ Surfaces:
 - catalogs (the `rimsky/skills/rimsky/docs/services/` and `rimsky/skills/rimsky/docs/images/` derive-and-verify
   catalogs — the *generated* references under `rimsky/skills/rimsky/docs/reference/` are mechanical,
   step 2)
-- agents-index (llms.txt + errors/ + examples/ drift flagging)
+- agents-index (the `agents/` entry surface: llms.txt + errors/ + examples/ — reconcile and fix)
 - config-examples (the worked configs under `docs/reference/config/` — verify
   against the schema and the services they configure)
 - skill-packaging (the `SKILL.md` router, the two-entry-point parity between
@@ -364,9 +366,9 @@ fixer subagent templates, which now live there.
 ### 6. Report
 
 `/refine-docs` (step 5) has already rendered the **convergence summary** and the
-**attention table** (judgment calls · source-side conflicts · declined
-additions) into `.build-docs/report.md` from the run journal. Prepend the run
-header and print the whole thing:
+**attention table** (judgment calls · source-side conflicts) into
+`.build-docs/report.md` from the run journal. Prepend the run header and print
+the whole thing:
 
 - the ref reconciled against (release tag, or `local: <branch>@<sha>` override);
 - the final build / test / lint results (plus any step-3b behavior findings);
@@ -506,19 +508,32 @@ not), reasoning kept as tight prose, source-anchored.
 
 ### agents-index
 
-> Audit the curated agent surface for drift; do not overwrite it.
+> Reconcile the `agents/` entry surface against rimsky source and FIX what
+> drifts. Nothing here is human-owned — these docs are agent-facing and must be
+> accurate and runnable. Do not merely flag fixable drift; fix it.
 >
-> Read `rimsky/skills/rimsky/docs/agents/llms.txt` and every file it links to; verify the links
-> resolve and the index still describes what those files contain. Read
-> `rimsky/skills/rimsky/docs/agents/errors/` against rimsky's actual error classes and
-> `rimsky/skills/rimsky/docs/agents/examples/` (template/instance walkthroughs) against rimsky's
-> current behavior. These surfaces are human-curated — your job is to flag drift
-> (dead links, missing error classes newly present in rimsky, walkthroughs that
-> no longer match rimsky), not to rewrite.
+> Read `rimsky/skills/rimsky/docs/agents/llms.txt` and every file it links to;
+> verify the links resolve and the index still describes what those files
+> contain — fix any dead link or stale description. Reconcile
+> `rimsky/skills/rimsky/docs/agents/errors/` against rimsky's actual error
+> classes: every error class the catalog should carry must be present and
+> accurately described — add any class an agent can observe that is missing,
+> correct any description that drifted, remove any class no longer emitted.
+> Reconcile `rimsky/skills/rimsky/docs/agents/examples/` (template/instance
+> walkthroughs) against rimsky's current behavior: every example must validate
+> against the current template schema and produce the documented result — rewrite
+> any walkthrough that no longer matches (a removed directive, a renamed field, a
+> changed outcome), verifying the corrected template against the spec structs.
+> Match the source's vocabulary (rimsky's citation grammar at
+> `${RIMSKY_REPO}/.claude/rules/citation-grammar.md`).
 >
-> Do not touch `rimsky/skills/rimsky/docs/agents/llms-full.txt` — it is mechanically regenerated.
+> Do not touch `rimsky/skills/rimsky/docs/agents/llms-full.txt` — it is
+> mechanically regenerated.
 >
-> Return: a list of drift findings for human attention. Make no edits.
+> Return: the change list (errors/examples/index entries created / fixed /
+> removed), `decision` entries for judgment calls, and `flag` entries ONLY for
+> what genuinely can't be fixed here (`source-conflict` / `unimplemented` — a
+> rimsky-side change).
 
 ### config-examples
 

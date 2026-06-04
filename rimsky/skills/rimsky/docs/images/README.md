@@ -44,10 +44,29 @@ Built from `dockerfiles/` with the repo root as context.
 
 | Published name | Contains | Base image | Dockerfile |
 | --- | --- | --- | --- |
-| `rimsky` | All four role binaries (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`, `rimsky-migrate`) plus the `rimsky` CLI and `rimsky-entrypoint` PID-1, under one image; role chosen by container command, persistence backend (postgres\|sqlite) by config. | `gcr.io/distroless/static-debian12:nonroot` | `dockerfiles/Dockerfile.rimsky` |
-| `rimsky-all-in-one` | The `rimsky` image with zero-config SQLite defaults baked in; `rimsky-entrypoint` runs migrate then spawns scheduler + supervisor + control-api. **Development only.** | `rimsky:latest` (the image above, via the `RIMSKY_BASE` arg) | `dockerfiles/Dockerfile.all-in-one` |
+| `rimsky` | All four role binaries (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`, `rimsky-migrate`) plus the `rimsky` CLI and `rimsky-entrypoint` PID-1, under one image; role selected by the container `command:` (see the entrypoint note below), persistence backend (postgres\|sqlite) by config. | `gcr.io/distroless/static-debian12:nonroot` | `dockerfiles/Dockerfile.rimsky` |
+| `rimsky-all-in-one` | The `rimsky` image with zero-config SQLite defaults baked in and run with no command, so `rimsky-entrypoint` migrates then spawns all three roles (scheduler + supervisor + control-api). **Development only.** | `rimsky:latest` (the image above, via the `RIMSKY_BASE` arg) | `dockerfiles/Dockerfile.all-in-one` |
 | `rimsky-host-agent-proxy` | The late-bound host-agent proxy service (a single binary built via the `BINARY` arg). | `gcr.io/distroless/static:nonroot` | `dockerfiles/Dockerfile.go-base` (`--build-arg BINARY=rimsky-host-agent-proxy`) |
 | `rimsky-conformance` | Every protocol conformance runner in one image; pick one via `rimsky conformance <protocol>`. Probes an external impl against the rimsky protocol. | `gcr.io/distroless/static-debian12:nonroot` | `dockerfiles/Dockerfile.conformance` |
+
+### The `rimsky` entrypoint — role selection and migrate
+
+`rimsky-entrypoint` is the `rimsky` image's PID-1. It reads its single command
+argument to decide which roles to spawn, and it **validates** that argument:
+
+| Container `command:` | Roles spawned |
+| --- | --- |
+| *(none)* | all three roles — `rimsky-scheduler` + `rimsky-supervisor` + `rimsky-control-api` (the all-in-one stack). |
+| one recognized role — `[rimsky-scheduler]` \| `[rimsky-supervisor]` \| `[rimsky-control-api]` | **only** that role (one role per container). |
+| anything else — an unknown role, `rimsky-migrate`, or more than one argument | none — the entrypoint logs the error and **exits non-zero** (exit code 2). |
+
+`rimsky-migrate` is not a selectable role: migrate is a one-shot init step the
+entrypoint runs **synchronously before** spawning, but only when the invocation
+owns it — the no-command (all-in-one) path always migrates, and a single-role
+container migrates only when its role is `rimsky-control-api`. So a three-
+container split deployment migrates exactly once instead of racing three runs or
+never running. Override with `RIMSKY_ENTRYPOINT_MIGRATE`: `=1` forces migrate
+(e.g. a dedicated one-shot init container), `=0` skips it.
 
 ### `Dockerfile.go-base` — the single-binary builder
 
@@ -92,7 +111,7 @@ claude-agent (Node on Wolfi).
   binary (`rimsky-migrate`, `rimsky-scheduler`, `rimsky-supervisor`,
   `rimsky-control-api`) as its own image; the release ships these four inside
   the combined `rimsky` image instead.
-- A deployment also runs the upstream `postgres:15` image directly for its
+- A deployment also runs the upstream Postgres image directly for its
   database (no rimsky build).
 
 ---

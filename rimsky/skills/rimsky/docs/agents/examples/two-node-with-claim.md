@@ -89,7 +89,7 @@ Expected output:
 The acquirer's claim was committed at its terminal (success → `Commit`); the claim-holders listing for that handle is empty:
 
 ```sh
-# This claim is NON-held: neither node declares `holds:` or `inherits:`,
+# This claim is NON-held: neither node declares `holds:`,
 # so no `rimsky_claim_holders` rows are ever inserted — that is why the
 # listing is empty, not because anything was deleted. (The handle row
 # itself is promoted to state='committed' at the terminal, not deleted.)

@@ -154,6 +154,13 @@ activities, admin-invalidate-as-signals. Rimsky's content-addressed
 templates plus movable tags cover most of what Temporal's versioning
 covers.
 
+Where rimsky overlaps further on durability: rimsky instances are
+durable by default — an instance persists its execution trace until a
+retention sweep reaps it, and self-terminates only when created with the
+opt-in `terminate_after_run` flag (terminating after its next frame
+ends). This matches Temporal's "workflows survive process restarts"
+posture from the orchestration side rather than the event-sourcing side.
+
 Where rimsky diverges: Temporal is event-sourced; rimsky is
 Postgres-state-backed. Temporal's durable execution model means
 workflow code itself is the source of truth; rimsky's templates are

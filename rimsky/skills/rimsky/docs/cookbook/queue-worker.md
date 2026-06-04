@@ -112,11 +112,18 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 The single `worker` node is `running` (or `stale`) while a frame is in
 flight and settles back to `fresh` between iterations. Because
 `@review-queue` recycles on commit, the worker keeps finding work and the
-loop continues frame after frame. To stop it, terminate the instance:
+loop continues frame after frame. The instance is durable — it never
+terminates on its own (instances are durable by default; there is no
+auto-terminate on drain). To stop it, force-terminate then delete:
 
 ```sh
-rimsky instance delete <instance_id>
+rimsky instance kill <instance_id> --force   # marks it terminal, abandons the in-flight run
+rimsky instance delete <instance_id>          # frees the row (refused until terminal)
 ```
+
+A plain `rimsky instance delete` on a still-running instance is **refused**
+("instance is not in terminal state") — `kill --force` is what makes it
+terminal first.
 
 ## Gotchas
 
@@ -136,6 +143,18 @@ rimsky instance delete <instance_id>
   (`on_commit: pop`), not the template — the reference config ships the
   `recycle` policy. Re-point the `store-postgres` config to a `pop` policy
   to exercise the drain-once shape.
+- **A draining worker does NOT free its own instance.** With a `pop`
+  policy the ring eventually empties, but the worker's instance keeps
+  living (durable by default) — when the queue drains the `worker` node
+  simply settles `fresh` and the self-edge stops firing for lack of work.
+  Nothing terminates the instance. For an ephemeral "process whatever is
+  queued, then exit" worker, set `terminate_after_run: true` on the create
+  request: the instance self-terminates after its *next* frame ends (strict
+  "run at most once more"), so this is the run-*one*-item shape, not
+  drain-the-whole-queue. The flag is body-only (the CLI `instance create`
+  has no flag for it) — `POST /instances` with
+  `{"template":"sha256-...","terminate_after_run":true}`. See the
+  [README](README.md#instances-are-durable-by-default).
 
 ## Without rimsky
 

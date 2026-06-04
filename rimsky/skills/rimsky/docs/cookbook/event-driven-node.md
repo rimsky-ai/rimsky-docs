@@ -139,6 +139,18 @@ third segment to `publisher` accordingly. The envelope shape and the
 consuming node are otherwise identical to the operator path above — which
 is the whole point of the unified messages endpoint.
 
+**The idle instance persists — that is the design, not a leak.** An
+event-driven instance spends most of its life idle, waiting for the next
+message; instances are durable by default, so it stays alive across an
+arbitrary number of events without any keep-alive (there is no
+auto-terminate on drain — the pre-v0.5.0 model that ended an instance when
+its work drained is gone). Do **not** set `terminate_after_run: true` here:
+that flag terminates the instance after its *next* frame ends, so the
+instance would tear itself down on the very first event and never see a
+second. When you are done with the instance, force-terminate then delete:
+`rimsky instance kill <instance_id> --force` then `rimsky instance delete
+<instance_id>`.
+
 ## Without rimsky
 
 By hand you would stand up a listener per event source, a durable inbox so

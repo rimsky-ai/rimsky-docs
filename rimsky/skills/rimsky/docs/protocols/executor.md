@@ -7,8 +7,16 @@ over gRPC at dispatch time, with an HTTP+JSON bridge available for non-Go
 services.
 
 There is **no executor SDK** — implement against the wire types in any language. A
-Go service may use the `protocols` module's `serverkit` helpers
-([`go-packages.md`](go-packages.md)) for the gRPC + HTTP/JSON scaffolding. Wire
+Go service may use the `protocols` module's `serverkit` package
+([`go-packages.md`](go-packages.md)) for **generic gRPC server-lifecycle helpers**
+(`serverkit.Listen` / `serverkit.RunGRPC` / `serverkit.GracefulStop`) to stand up
+the `Executor` gRPC server. `serverkit` does **not** carry an executor-specific
+helper: there is no dispatch handler, no async-callback POST client, and no
+incremental-attribute-write helper in it (its HTTP+JSON bridges cover the
+claim-producer / lifecycle-subscriber surfaces, not the executor). The dispatch
+handler, the async-callback POST, and incremental attribute writes are yours to
+write straight against the wire contract — the in-tree `http-node` executor does
+exactly that with `genv1.RegisterExecutorServer` plus a plain `http.Client`. Wire
 contracts: `lib/protocols/proto/v1/executor.proto` (dispatch, required) and
 `lib/protocols/proto/v1/executor_observability.proto` (observability, optional);
 generated field/message/RPC references at
@@ -165,14 +173,15 @@ Wire details that bite:
 - The bearer token is the same `cancel_token` from the `ExecuteRequest` (also used
   on incremental attribute writes).
 
-A Go executor can use the `serverkit` package for this bridge; a non-Go executor
-marshals the `AsyncCallbackBody` shape directly.
+There is no Go helper for this POST — a Go executor marshals `AsyncCallbackBody`
+and POSTs it with a plain `http.Client` (the in-tree `http-node` executor does
+exactly that), the same as a non-Go executor marshalling the shape directly.
 
 **Incremental attribute writes.** An executor may also write attributes *mid-run*,
 before the terminal, against the same `callback_url` base with the `cancel_token`
-as bearer (`serverkit` provides the Go helper; the route and body are in
-[`reference/executor.md`](reference/executor.md)). A run that wrote incrementally
-may then close `Success` with an empty `attributes_delta`.
+as bearer (the route and body are in [`reference/executor.md`](reference/executor.md)).
+This too is a plain POST you write yourself — no `serverkit` helper. A run that wrote
+incrementally may then close `Success` with an empty `attributes_delta`.
 
 ## Resume context
 

@@ -2,18 +2,52 @@
 
 > Project-agnostic reactive node-graph orchestration platform. Workflows are graphs of nodes; an `invalidate` propagates through the graph and the scheduler recalculates eligible stale nodes. Coding agents are the primary documentation consumer.
 
+This is a self-contained, agent-facing corpus: every link below resolves within these docs (paths are relative to the corpus root). It is the same surface the Claude Code skill router (`SKILL.md`) covers — concepts, protocol-implementation guides, generated references, worked configs, the cookbook, system-design patterns, the bundled-service and image catalogs, deployment, and the error catalog. The rimsky release this corpus is reconciled against is recorded in the plugin manifest (`.claude-plugin/plugin.json`, `reconciledAgainst`).
+
 ## Concepts
 
-The canonical concept catalog lives in the rimsky source repo at [`.ok-planner/design/concepts.md`](https://github.com/rimsky-ai/rimsky-core/blob/main/.ok-planner/design/concepts.md) — an auto-generated TOC over the per-concept files in [`.ok-planner/design/concepts/`](https://github.com/rimsky-ai/rimsky-core/tree/main/.ok-planner/design/concepts). Each file carries a definition, purpose, boundaries, and invariants, plus a Notes section recording how the concept evolved. Inline `@concept: <slug>` annotations in the source code point at enforcement sites for each concept; `rg '@concept: <slug>'` finds them.
-
-Read the TOC first to know what nouns the project traffics in, then read the per-concept files for the specific ones load-bearing for your task.
+- [Concept catalog (glossary)](glossary.md): the full table of contents over every concept noun rimsky traffics in. Each entry names a concept; the per-concept files in `concepts/<slug>.md` carry its definition, purpose, boundaries, and invariants. Read the catalog first to learn the vocabulary, then the specific concept files load-bearing for your task.
 
 ## Protocols
 
-- [ClaimProducer](protocols/claim-producer.md): How to implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
-- [Executor](protocols/executor.md): How to implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (Capabilities / GetTrace / StreamTrace).
-- [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus OnRunScopeTerminal).
-- [Publisher](protocols/publisher.md): How to implement a publisher (four verbs — Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via POST /instances/{id}/messages). Sensors (cron / http / object-store / webhook) are one kind of publisher.
+How to implement a service that speaks one of rimsky's wire protocols. The guides are the practical "how to build this" narrative; the field-level wire shapes live in the generated reference under `protocols/reference/`.
+
+- [Protocols overview](protocols/README.md): the HTTP+JSON encoding convention, the optional `@rimsky-ai/protocols` npm package and Go helper packages, and links to the generated wire reference (`protocols/reference/`).
+- [ClaimProducer](protocols/claim-producer.md): implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
+- [Executor](protocols/executor.md): implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol.
+- [LifecycleSubscriber](protocols/lifecycle-subscriber.md): implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus `OnRunScopeTerminal`).
+- [Publisher](protocols/publisher.md): implement a publisher (Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via `POST /instances/{id}/messages`). Sensors (cron / http / object-store / webhook) are one kind of publisher.
+- [Go packages](protocols/go-packages.md): the optional Go helper packages in the single `protocols` module (conveniences — not a required SDK).
+
+## Reference
+
+The definitive specifics an agent reads to build a template or deployment plan.
+
+- [Template & `rimsky.yml` schema](reference/template-schema.md): the complete template / config schema.
+- [REST API](reference/rest-api.md): every control-API route, method, and per-action auth gate.
+- [CLI](reference/cli.md): the `rimsky` command surface.
+- [Worked configs](reference/config/rimsky.yml): a copyable unified `rimsky.yml`; the same directory holds the all-in-one, store, and supervisor examples.
+
+## Cookbook
+
+- [Cookbook](cookbook/README.md): the canonical patterns rimsky's primitives span — queue worker, reactive recompute, capacity limit, convergence loop, event-driven node, claim handoff, sub-graph. Each is problem → rimsky shape → copyable template → gotchas → without-rimsky.
+
+## Patterns
+
+Higher-altitude system shapes (with explicit shipped-vs-aspirational status).
+
+- [Domain stores](patterns/domain-stores.md): giving an agent project-specific state.
+- [Operational health](patterns/operational-health.md): diagnostics, metrics, and the lifecycle-event surface.
+
+## Bundled services & images
+
+- [Services](services/README.md): the bundled stores, executors, sensors, and subscribers — config keys, ports, protocols, and the Dockerfile that builds each.
+- [Images](images/README.md): the published image set and the `rimsky` entrypoint's role selection.
+- [Stores (stub)](stores/stub/README.md) · [Executors (stub)](executors/stub/README.md) · [Blob backends](blob-backends/README.md) · [MCP servers (control-api)](mcp-servers/control-api/README.md): the building-block catalogs and reference implementations.
+
+## Deployment & operations
+
+- [Operator guide](operator-guide.md): deploy from the published images, configure (instance lifecycle, retention, parked-duration caps, the validating entrypoint), and diagnose.
 
 ## Examples
 
@@ -25,8 +59,12 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 
 ## Errors
 
-- [Error catalog](agents/errors/README.md)
+- [Error catalog](agents/errors/README.md): one file per consumer-observable error — what it means, when it happens, what to do.
 
 ## Optional
 
-- [Glossary](glossary.md)
+- [README](README.md): corpus orientation and how the pieces fit.
+- [Comparison](comparison.md): rimsky versus alternatives.
+- [Roadmap](roadmap.md): shipped and planned direction.
+- [Licensing](licensing.md): the Apache-island / dual-licensed-orchestrator posture.
+- [llms-full.txt](agents/llms-full.txt): the concatenated full text (concept bodies + protocol guides) for single-file ingestion.
