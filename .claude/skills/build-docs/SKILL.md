@@ -15,7 +15,9 @@ building, testing, generating, and linting.
 
 The corpus is packaged as an installable Claude Code skill. This repo is a
 **plugin marketplace** (`.claude-plugin/marketplace.json`) shipping one plugin,
-`rimsky`, whose skill bundles the whole corpus under `rimsky/skills/rimsky/`.
+`rimsky`, which bundles two skills: the main one under `rimsky/skills/rimsky/`
+bundles the whole corpus, and a small sibling under `rimsky/skills/rimsky-version/`
+reports the two version numbers from the plugin manifest.
 An agent reaches the corpus through one of two entry points — `SKILL.md` (the
 Claude Code skill router) and `rimsky/skills/rimsky/docs/agents/llms.txt` (the
 llms.txt entry for other agents) — and the plugin manifest
@@ -138,6 +140,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
 | `rimsky/skills/rimsky/docs/images/` | rimsky `dockerfiles/` + per-service Dockerfiles | Derive-and-verify catalog of the published images. Refine against source. |
 | `rimsky/skills/rimsky/SKILL.md` | the corpus it routes to | Skill-owned router. Keep the mental model, the fit→design→implement→deploy→diagnose routing, and the concept-triage current as concepts / protocols / recipes are added or removed; every path it links must resolve. Refine, don't flatten. |
+| `rimsky/skills/rimsky-version/SKILL.md` | the plugin manifest | Skill-owned version reporter, the plugin's second shipped skill. Reads `version` + `reconciledAgainst` from `plugin.json` via a `${CLAUDE_SKILL_DIR}`-relative path (`../../.claude-plugin/plugin.json`) — it ships to consumers, so it must NOT use a repo-relative path. Static; verify the manifest-relative path still resolves and the two-version framing stays consistent with `/version`. |
 | `rimsky/.claude-plugin/plugin.json` | the reconciled rimsky release | Set `reconciledAgainst` to the rimsky release tag this run reconciled against (e.g. `v0.4.1`). Do **not** touch `version` — that is rimsky-docs' own release semver, owned by the `/release` skill. |
 | `.claude-plugin/marketplace.json` | the plugin set | Stable. Flag drift only (e.g. a renamed plugin or changed `source`); do not churn. |
 | `rimsky/skills/rimsky/docs/reference/config/` | `rimsky.yml` schema + the bundled services | Worked example configs (the unified `rimsky.yml`, the store and supervisor configs). Refine against the schema; keep them valid and copyable, with no removed-stack hostnames. |
@@ -577,13 +580,19 @@ not), reasoning kept as tight prose, source-anchored.
 ### skill-packaging
 
 > Reconcile the skill packaging that wraps the corpus. Surfaces:
-> `rimsky/skills/rimsky/SKILL.md` (the skill router), `.claude-plugin/marketplace.json`
-> (marketplace manifest), and `rimsky/.claude-plugin/plugin.json` (plugin manifest).
+> `rimsky/skills/rimsky/SKILL.md` (the skill router),
+> `rimsky/skills/rimsky-version/SKILL.md` (the version-reporter skill),
+> `.claude-plugin/marketplace.json` (marketplace manifest), and
+> `rimsky/.claude-plugin/plugin.json` (plugin manifest).
 >
 > The corpus lives at `rimsky/skills/rimsky/docs/`. The marketplace is the repo;
-> it lists exactly one plugin, `rimsky`, whose single skill bundles that corpus.
-> An installed skill can only read files under its own directory, so everything
-> the router points at must live under `rimsky/skills/rimsky/`.
+> it lists exactly one plugin, `rimsky`, which ships two skills: the corpus
+> router under `rimsky/skills/rimsky/`, and the `rimsky-version` reporter under
+> `rimsky/skills/rimsky-version/`. An installed skill can only read files under
+> its own directory, so everything the router points at must live under
+> `rimsky/skills/rimsky/`, and `rimsky-version` must reach the manifest by a
+> `${CLAUDE_SKILL_DIR}`-relative path (`../../.claude-plugin/plugin.json`), never
+> a repo-relative one.
 >
 > 1. **`SKILL.md` router.** It is a *router*, not a copy of the corpus: a mental
 >    model, then task-based routing (fit → design → implement → deploy →
@@ -616,10 +625,19 @@ not), reasoning kept as tight prose, source-anchored.
 >    if a concrete tag is genuinely wanted there — update it to match this run's.
 >    (Status labels inside `patterns/` are the **narrative** surface's job, not
 >    this one.)
+> 5. **`rimsky-version` skill.** `rimsky/skills/rimsky-version/SKILL.md` is the
+>    plugin's second shipped skill: it prints `version` + `reconciledAgainst`
+>    from the manifest. Verify it reads the manifest by a `${CLAUDE_SKILL_DIR}`-
+>    relative path (`../../.claude-plugin/plugin.json`) — never a repo-relative
+>    `rimsky/.claude-plugin/plugin.json`, which only resolves in this repo, not in
+>    an installed plugin — and that its two-version framing stays consistent with
+>    the maintenance `/version` skill. Its content is static (it names no rimsky
+>    symbols), so this is a correctness check, not a reconcile against rimsky.
 >
-> Return: router / manifest changes made, any router link that does not resolve
-> under the corpus, any entry-point parity drift (as `flag` entries), any prose
-> version pin reconciled, and the version the stamp was set to.
+> Return: router / manifest / `rimsky-version` changes made, any router link that
+> does not resolve under the corpus, any entry-point parity drift (as `flag`
+> entries), any prose version pin reconciled, and the version the stamp was set
+> to.
 
 ### narrative
 

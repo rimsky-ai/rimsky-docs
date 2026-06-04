@@ -1,10 +1,12 @@
 # rimsky-docs
 
 rimsky-docs is a **Claude Code plugin marketplace** shipping one plugin,
-`rimsky`, whose skill bundles an agent-facing documentation corpus for
+`rimsky`, which bundles an agent-facing documentation corpus for
 [rimsky](https://github.com/rimsky-ai/rimsky-core) — a pre-v1, project-agnostic
 reactive node-graph orchestration platform that is **not** in agents' training
-data. The corpus lives under `rimsky/skills/rimsky/docs/`;
+data. The plugin ships two skills: the main one bundles the corpus (which lives
+under `rimsky/skills/rimsky/docs/`), and `rimsky/skills/rimsky-version/` is a
+small reporter that prints the plugin's two version numbers from the manifest.
 `rimsky/skills/rimsky/SKILL.md` is the Claude Code entry point and
 `…/docs/agents/llms.txt` the entry for other agents. The corpus is reconciled
 against a pinned rimsky release, recorded in
