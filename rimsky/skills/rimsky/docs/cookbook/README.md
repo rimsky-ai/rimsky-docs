@@ -87,7 +87,7 @@ they are operator/architecture patterns, not single-problem recipes:
 
 ## Patterns that need a capability the bundled services lack
 
-Three patterns the primitives support are **not** runnable on the bundled
+Four patterns the primitives support are **not** runnable on the bundled
 producers/services as they stand, so they are not written up as recipes:
 
 - **Fan out over a partitioned claim** (and the **backfill** that targets a
@@ -107,3 +107,15 @@ producers/services as they stand, so they are not written up as recipes:
   protocol. Neither bundled store advertises it, so the canonicalizer
   rejects a `durable` claim against them. This recipe needs a
   DataProcessing-capable producer.
+- **Park then resume** (the
+  [parked-state](../concepts/parked-state.md) hold — a node parks on
+  `terminal/park/snooze` or `terminal/park/await_callback`, then resumes
+  with a resume-context) needs an executor that *emits* a park outcome. The
+  `http-node` stub the other recipes run on never parks — it closes every
+  dispatch with success — and the only bundled park emitter is the
+  `claude-agent` executor, whose park paths (rate-limit auto-park; the
+  `report_park` MCP tool) fire only inside a *real* agent run against a live
+  model, not deterministically from a template. So while the park/resume
+  shape is fully supported by the platform, it has no stub-driven,
+  copy-and-run recipe: demonstrating it requires a live `claude-agent`
+  (real API key) or a custom executor that parks on demand.

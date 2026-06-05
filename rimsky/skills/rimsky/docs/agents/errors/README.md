@@ -16,6 +16,7 @@ One file per consumer-observable error. Each file states what the error means, w
 - [`attribute_validation_failed_at_dispatch.md`](attribute_validation_failed_at_dispatch.md) — substituted attributes failed schema validation at dispatch (`template_validation_failed`).
 - [`executor_schema_unavailable.md`](executor_schema_unavailable.md) — the executor's `expected_attributes_schema` was not visible at dispatch, so the node's effective attribute schema could not be computed (`executor_schema_unavailable`).
 - [`attribute_validation_failed_at_commit.md`](attribute_validation_failed_at_commit.md) — executor `attributes_delta` failed schema validation at commit (`attributes_schema_failed`).
+- [`signoff_unobtained.md`](signoff_unobtained.md) — `claude-agent` sign-off gate (`cli.required_signoffs`) unmet within `cli.max_signoff_attempts`; terminal `agent/signoff_unobtained`.
 - [`executor_dial_failed.md`](executor_dial_failed.md) — the supervisor could not dial the executor endpoint or open the `Execute` stream (infra error; re-enqueued, emits `terminal/infra/executor_dial_failed`).
 - [`build_request_failed.md`](build_request_failed.md) — constructing the `ExecuteRequest` failed, typically a producer returning non-JSON claim bytes (infra error; re-enqueued, emits `terminal/infra/build_request_failed`).
 - [`stream_error.md`](stream_error.md) — the executor's `Execute` stream errored mid-dispatch before a terminal arrived (infra error; re-enqueued, emits `terminal/infra/stream_error`).

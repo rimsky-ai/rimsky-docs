@@ -147,7 +147,9 @@ parked-node sweep enforces the cap.
 
 The `claude-agent` reference executor is configured two ways: process environment
 at startup, and per-node attributes at dispatch time. It has no separate config
-file or catalog of external MCP servers.
+file and no operator-managed catalog of external MCP servers — external (host-wired)
+MCP servers are declared per dispatch via the `cli.mcp_servers` node attribute (see
+[MCP wiring](#mcp-wiring) below).
 
 ### Startup environment
 
@@ -181,6 +183,9 @@ values.
 | `cli.max_budget_usd` |
 | `cli.handle_rate_limits` |
 | `cli.max_schema_corrections` |
+| `cli.mcp_servers` |
+| `cli.required_signoffs` |
+| `cli.max_signoff_attempts` |
 
 The full expected-attributes schema is defined by the claude-agent executor itself
 (in-tree at `lib/services/executors/claude-agent/`); see
@@ -189,12 +194,28 @@ for a worked example of how attribute defaults flow through it.
 
 ### MCP wiring
 
-The executor wires exactly one MCP server into each dispatch: its own internal
-`rimsky-callback` (an HTTP MCP server it hosts), through which the agent reports
-terminal outcomes (`report_complete`, `report_error`, `report_blocked`,
-`report_park`), emits named events, and reads/writes node attributes. There is no
-operator-configured catalog of external MCP servers, and templates cannot register
-additional MCP servers for a dispatch to reach.
+Every dispatch always gets the executor's internal `rimsky-callback` (an HTTP MCP
+server it hosts), through which the agent reports terminal outcomes
+(`report_complete`, `report_error`, `report_blocked`, `report_park`), emits named
+events, and reads/writes node attributes. That server is non-removable.
+
+Beyond `rimsky-callback`, a node may wire **host-declared validator MCP servers**
+per dispatch via the `cli.mcp_servers` attribute. Each entry (`{name, url,
+headers?, allowed_tools?}`) is appended to the spawned CLI's `--mcp-config` so the
+agent can dial it, and its tools are auto-allowed — a bare `mcp__<name>` allows all
+of that server's tools, or an explicit `allowed_tools` narrows it to fully-qualified
+`mcp__<name>__<tool>` names. The same list is re-applied on resume (the CLI does not
+carry `--mcp-config` across `--resume`). There is still no *operator-configured*
+catalog of external MCP servers — declaration is per-node, in the template's
+`attributes`, not in `rimsky.yml` or any executor config file.
+
+`cli.mcp_servers` pairs with the **sign-off gate** (`cli.required_signoffs`): each
+`{public_key, path?}` entry must be satisfied by a valid Ed25519 signature in
+`report_complete`'s `signoffs` bag before the dispatch can resolve to terminal
+success. An unmet gate triggers a corrective `report_complete` retry; after
+`cli.max_signoff_attempts` (default 3) the run terminal-errors with
+`agent/signoff_unobtained`. The signers are typically — but not necessarily — the
+host-wired validator servers.
 
 ## Observability: Prometheus metrics
 

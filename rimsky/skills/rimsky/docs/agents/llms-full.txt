@@ -1373,7 +1373,7 @@ The bundled SQL-based reference store registers this protocol alongside `concept
 ## Invariants
 
 - Exactly one stream-close event closes the stream; the executor MUST close the stream immediately after.
-- The await-async-callback outcome switches to expecting an async-callback POST keyed on the assigned ack id, with the body keyed `type` (not `kind`) — enforced by the supervisor's callback route.
+- The await-async-callback outcome switches to expecting an async-callback POST keyed on the assigned ack id; that POST body carries exactly one outcome key — `success`, `error`, or `park` — enforced by the supervisor's callback route, which rejects any other body shape. (The earlier single `type` discriminator was retired; see `tension:_resolved/async-callback-body-key`.)
 - Heartbeat events refresh the node-run's last-heartbeat timestamp; cadence is executor-defined.
 - The userdata schema reported via the observability capabilities call is the only place rimsky reads userdata-adjacent metadata (schema-only, not content).
 - The declared-events list reported via observability is the source of truth for subscription template validation.
@@ -2295,7 +2295,7 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its `erro
 
 ## Aliases and historical names
 
-`graph-node` is an older spelling in early prose. The 4-state vocabulary (`fresh | stale | running | failed`) predates the addition of `parked` in migration 006 — older prose snippets sometimes still cite four states.
+`graph-node` is an older spelling in early prose. The 4-state vocabulary (`fresh | stale | running | failed`) predates the addition of `parked` (added under the platform-extensions design, `spec:2026-05-08-platform-extensions`) — older prose snippets sometimes still cite four states.
 
 ## Open within this concept
 
@@ -2427,7 +2427,7 @@ Owns: the hold-state schema (the park fields on the node-run row), the three exi
 
 ## Aliases and historical names
 
-The state was added under the platform-extensions design (2026-05-08); migration 006 extends the `phase` CHECK constraint to include `'parked'`.
+The state was added under the platform-extensions design (2026-05-08); adding `parked` extended the node-run `phase` CHECK constraint to include `'parked'`.
 
 ## Open within this concept
 
@@ -2911,14 +2911,14 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 
 - How a binary declares its protocol membership in the unified config (the per-service-entry protocol-membership list; see `concept:rimsky-yml`).
 - The capabilities startup handshake (one handshake call per protocol; see `concept:observability` for the discovery-cache that consumes them).
-- Conformance-validation entry points (the per-protocol conformance binaries; see `concept:conformance`).
+- Conformance-validation entry points (the `rimsky conformance <protocol>` subcommand family in the single binary, not standalone per-protocol binaries; see `concept:conformance`).
 - The multi-protocol composition pattern: a binary implementing N rimsky protocols uses N distinct handlers, one per protocol. Method-name collisions across protocols (e.g., a capabilities query on both the claim-producer and the executor-observability protocol) are resolved at the composition site, not by collapsing the protocols into one. Each handler implements one protocol; the binary registers each separately at the gRPC server.
 
 ## Invariants
 
 - Services are declared in the unified config with an explicit protocol-membership list per service.
 - Protocol membership is advertised at startup via the per-protocol capabilities query.
-- Per-protocol conformance binaries validate compliance.
+- Conformance is validated by the per-protocol `rimsky conformance <protocol>` subcommands shipped in the single binary; there are no standalone per-protocol conformance binaries (see `concept:conformance`).
 - Multi-protocol binaries use a distinct handler per protocol; there is no shared capabilities-provider abstraction across protocols (per `spec:2026-05-12-nomenclature-resolution` E.4 — the response shapes are protocol-specific and the downstream code is already protocol-specific).
 
 ## Adjacent
@@ -3301,7 +3301,7 @@ Adjacent: `concept:signal`, `concept:cascade`, `concept:event-log`.
 
 ## Aliases and historical names
 
-None live. Pre-migration-004 code used a boolean changed flag for the cascade-fire decision and a smaller reason vocabulary for audit; both surfaces were sharpened under the reactive-loops design (`spec:2026-05-05-reactive-loops-and-lifecycle-handlers`), then further reshaped under the signal-taxonomy design (`spec:2026-05-23-signal-taxonomy-and-policy-decoupling`) which narrowed the audit-write role for signal-bearing transitions.
+None live. Earlier code used a boolean changed flag for the cascade-fire decision and a smaller reason vocabulary for audit; both surfaces were sharpened under the reactive-loops design (`spec:2026-05-05-reactive-loops-and-lifecycle-handlers`), then further reshaped under the signal-taxonomy design (`spec:2026-05-23-signal-taxonomy-and-policy-decoupling`) which narrowed the audit-write role for signal-bearing transitions.
 
 ## Notes
 
@@ -4270,6 +4270,18 @@ type ClaimSpec struct {
 	Alias        string // per-claim name within node; defaults to ProducerName
 	TemplateID   string // content hash (template-scope envelope)
 	InstanceID   string // instance UUID (instance-scope envelope)
+	// Lifetime is the rimsky-internal claim-lifetime hint carried from the
+	// template store-ref through the acquire path onto the persisted
+	// rimsky_claim_handles.lifetime column: "subgraph" (default) or
+	// "durable". It is a plain string, NOT spec.ClaimLifetime — lib/protocols
+	// may not import lib/foundation/spec (the protocols-purity lint rule);
+	// the acquire path converts to spec.ClaimLifetime at the persistence
+	// boundary. Producer-invisible: it is never sent on OpenRequest / the
+	// wire — only the address/scope/payload the producer returns matter to
+	// the store; lifetime is rimsky's own bookkeeping.
+	//
+	// @concept: claim-lifetime
+	Lifetime string
 }
 ```
 

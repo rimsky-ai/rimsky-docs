@@ -33,7 +33,22 @@ After standing up a rimsky deployment (see the [operator guide](../../operator-g
 curl http://localhost:8080/health
 ```
 
-Expected output: `{"status":"ok"}`.
+The control-api `GET /health` returns a liveness snapshot — `status`, plus a `supervisors` array and a `node_counts` rollup so an operator can eyeball the cluster:
+
+```json
+{
+  "status": "ok",
+  "supervisors": [],
+  "node_counts": { "fresh": 0, "stale": 0, "running": 0, "failed": 0 }
+}
+```
+
+Assert on the `status` field (the `supervisors` / `node_counts` values depend on what is deployed):
+
+```sh
+curl -s http://localhost:8080/health | jq -r '.status'
+# Expected: ok
+```
 
 ## Notes
 
