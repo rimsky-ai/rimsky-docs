@@ -114,6 +114,16 @@ level wins; a genuine tie rounds **up** (say so). Compute the new version `$NEW`
 - **Bump:** Edit `version` in `rimsky/.claude-plugin/plugin.json` to `$NEW` with
   the Edit tool (single-line; do **not** touch `reconciledAgainst`). *(First
   release: skip the bump.)*
+- **Stamp the version-reporter skill.** The shipped `rimsky-version` skill
+  (`rimsky/skills/rimsky-version/SKILL.md`) echoes the two version numbers as
+  literals and reads nothing at runtime — `/release` is what keeps them current.
+  Read `reconciledAgainst` from `rimsky/.claude-plugin/plugin.json`, then with the
+  Edit tool set the two literal lines in that skill's "What to report" block to the
+  current pair — `rimsky release reconciled against : <reconciledAgainst>` and
+  `rimsky-docs plugin version        : <$NEW>`. Change only the version tokens;
+  leave the labels, column alignment, and trailing parentheticals intact. This
+  ships in the release commit. *(First release: still stamp — `$NEW` is the
+  current `version`.)*
 - **Commit** on `$work` — captures the bump plus any pending work:
 
   ```bash
@@ -154,9 +164,10 @@ git push origin "v$NEW"
 ### 6. Report
 
 Print: previous → new version; the bump level and its one-line rationale; the
-`reconciledAgainst` value (confirmed untouched); the gate result; the release
-commit SHA; the tag; that `$default` was advanced (fast-forward / merge) and you
-are now on it; and confirmation that `$default` and the tag were pushed.
+`reconciledAgainst` value (confirmed untouched, and stamped into the
+`rimsky-version` skill alongside the new plugin version); the gate result; the
+release commit SHA; the tag; that `$default` was advanced (fast-forward / merge)
+and you are now on it; and confirmation that `$default` and the tag were pushed.
 
 ## Notes
 

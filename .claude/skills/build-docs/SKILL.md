@@ -140,7 +140,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
 | `rimsky/skills/rimsky/docs/images/` | rimsky `dockerfiles/` + per-service Dockerfiles | Derive-and-verify catalog of the published images. Refine against source. |
 | `rimsky/skills/rimsky/SKILL.md` | the corpus it routes to | Skill-owned router. Keep the mental model, the fit→design→implement→deploy→diagnose routing, and the concept-triage current as concepts / protocols / recipes are added or removed; every path it links must resolve. Refine, don't flatten. |
-| `rimsky/skills/rimsky-version/SKILL.md` | the plugin manifest | Skill-owned version reporter, the plugin's second shipped skill. Reads `version` + `reconciledAgainst` from `plugin.json` via a `${CLAUDE_SKILL_DIR}`-relative path (`../../.claude-plugin/plugin.json`) — it ships to consumers, so it must NOT use a repo-relative path. Static; verify the manifest-relative path still resolves and the two-version framing stays consistent with `/version`. |
+| `rimsky/skills/rimsky-version/SKILL.md` | the plugin manifest (via `/release`) | Skill-owned version reporter, the plugin's second shipped skill. **Echoes** `version` + `reconciledAgainst` as two literals and reads nothing at runtime — the `/release` skill stamps those literals each release. Verify the skill's contract: it echoes exactly the two labeled values and performs **no** manifest/file read, and its two-version framing stays consistent with `/version`. Do NOT cross-check the literal values against the manifest or reintroduce a manifest read — `/release` owns keeping them current (between a reconcile and the next release the `reconciledAgainst` literal legitimately lags). |
 | `rimsky/.claude-plugin/plugin.json` | the reconciled rimsky release | Set `reconciledAgainst` to the rimsky release tag this run reconciled against (e.g. `v0.4.1`). Do **not** touch `version` — that is rimsky-docs' own release semver, owned by the `/release` skill. |
 | `.claude-plugin/marketplace.json` | the plugin set | Stable. Flag drift only (e.g. a renamed plugin or changed `source`); do not churn. |
 | `rimsky/skills/rimsky/docs/reference/config/` | `rimsky.yml` schema + the bundled services | Worked example configs (the unified `rimsky.yml`, the store and supervisor configs). Refine against the schema; keep them valid and copyable, with no removed-stack hostnames. |
@@ -590,9 +590,10 @@ not), reasoning kept as tight prose, source-anchored.
 > router under `rimsky/skills/rimsky/`, and the `rimsky-version` reporter under
 > `rimsky/skills/rimsky-version/`. An installed skill can only read files under
 > its own directory, so everything the router points at must live under
-> `rimsky/skills/rimsky/`, and `rimsky-version` must reach the manifest by a
-> `${CLAUDE_SKILL_DIR}`-relative path (`../../.claude-plugin/plugin.json`), never
-> a repo-relative one.
+> `rimsky/skills/rimsky/`. The `rimsky-version` skill reaches **no** manifest at
+> runtime — it echoes the two version numbers as literals that `/release` stamps
+> each release (an earlier `${CLAUDE_SKILL_DIR}`-relative manifest read resolved
+> unreliably in installed plugins; do not reintroduce it).
 >
 > 1. **`SKILL.md` router.** It is a *router*, not a copy of the corpus: a mental
 >    model, then task-based routing (fit → design → implement → deploy →
@@ -626,13 +627,17 @@ not), reasoning kept as tight prose, source-anchored.
 >    (Status labels inside `patterns/` are the **narrative** surface's job, not
 >    this one.)
 > 5. **`rimsky-version` skill.** `rimsky/skills/rimsky-version/SKILL.md` is the
->    plugin's second shipped skill: it prints `version` + `reconciledAgainst`
->    from the manifest. Verify it reads the manifest by a `${CLAUDE_SKILL_DIR}`-
->    relative path (`../../.claude-plugin/plugin.json`) — never a repo-relative
->    `rimsky/.claude-plugin/plugin.json`, which only resolves in this repo, not in
->    an installed plugin — and that its two-version framing stays consistent with
->    the maintenance `/version` skill. Its content is static (it names no rimsky
->    symbols), so this is a correctness check, not a reconcile against rimsky.
+>    plugin's second shipped skill: it **echoes** `version` + `reconciledAgainst`
+>    as two literals and reads nothing at runtime — the `/release` skill stamps
+>    those literals each release. Verify its **contract**: it prints exactly the
+>    two labeled values and performs no manifest/file read, and its two-version
+>    framing stays consistent with the maintenance `/version` skill. Do NOT
+>    reintroduce a manifest read (the old `${CLAUDE_SKILL_DIR}`-relative
+>    `../../.claude-plugin/plugin.json` lookup resolved unreliably in installed
+>    plugins — that is the bug this design removed), and do NOT cross-check the
+>    literal values against the manifest: `/release` owns their currency, and
+>    between a reconcile and the next release the `reconciledAgainst` literal
+>    legitimately lags. This is a contract check, not a reconcile against rimsky.
 >
 > Return: router / manifest / `rimsky-version` changes made, any router link that
 > does not resolve under the corpus, any entry-point parity drift (as `flag`
