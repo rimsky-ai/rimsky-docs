@@ -43,6 +43,10 @@ Auth:
 Context:
   ctx list | use | add | rm | current
 
+Compose:
+  compose up | down | plan | status   Reconcile a rimsky-compose.yml
+                                      against an already-running rimsky
+
 Host agent:
   agent start | status | stop      Manage the local host-agent daemon
 

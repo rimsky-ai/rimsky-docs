@@ -104,11 +104,16 @@ curl -s http://localhost:8080/instances/<instance_id>/nodes \
 
 Now fire an event into the instance. There is no `messages create` CLI
 verb — the message-emit endpoint is plain HTTP, the same surface a
-publisher uses:
+publisher uses. Every emit MUST carry an `Idempotency-Key` header (rimsky
+dedups via `rimsky_message_idempotencies`; a missing header is rejected
+with `400 Bad Request: "Idempotency-Key header is required"`). The same
+key replayed returns the original `message_id` with `200 OK`; a fresh key
+returns `201 Created`:
 
 ```sh
 curl -s -X POST http://localhost:8080/instances/<instance_id>/messages \
   -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"kind":"invalidate","target":"react","payload":{"note":"file-landed"}}'
 # → {"message_id":"..."}
 ```

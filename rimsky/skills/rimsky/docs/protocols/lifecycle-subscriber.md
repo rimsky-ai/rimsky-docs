@@ -1,5 +1,10 @@
 # Implementing a lifecycle subscriber
 
+> **Version.** The API on this page targets the rimsky release this corpus is
+> reconciled against (`reconciledAgainst` in `.claude-plugin/plugin.json`). For
+> runnable, version-pinned code, copy the subscriber at
+> [`../examples/lifecyclesubscriber/`](../examples/README.md).
+
 A **lifecycle subscriber** reacts to template, instance, and run-scope state
 transitions in rimsky. It implements the opt-in `LifecycleSubscriber` protocol:
 seven RPCs, each `On…(…Request) → LifecycleAck`. It is a mix-in — a service
@@ -70,6 +75,16 @@ The subscriber does **NOT** own (rimsky's job):
 - **Delivery retries.** Rimsky's replay behavior (retries, restarts,
   operator-driven backfill) is rimsky-side; the subscriber does not request
   redelivery.
+
+The protocol's scope is **control-plane / instance lifecycle only** — template
+register / deploy / undeploy / deregister, instance created / terminated, and
+run-scope terminal. It deliberately does **NOT** carry node-cascade events
+(individual node-run transitions such as a node parking, a dispatch starting, a
+named event firing). Node-level transitions live in the event log
+([event-log](../concepts/event-log.md)) and the cascade machinery
+([signal](../concepts/signal.md)); a subscriber that needs to observe them
+consumes those surfaces, not this protocol. The omission is an intentional
+boundary, not a coverage gap.
 
 ## Opting in
 
@@ -171,13 +186,23 @@ each handler as if it could be invoked multiple times for the same
 
 ## Reference impl
 
-There is no standalone reference `LifecycleSubscriber` binary in the tree —
-lifecycle handlers ride inside producer binaries. The in-tree example is the stub
-store (`test/support/stores/stub/`), whose server registers `LifecycleSubscriber`
-handlers when its own config sets `enable_lifecycle: true`. The in-tree OpenLineage
-subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of the
-lineage projection, **not** a `LifecycleSubscriber` implementation — it is a
-different integration shape.
+A minimal, copyable `LifecycleSubscriber` you can adapt is at
+[`../examples/lifecyclesubscriber/`](../examples/README.md) (Apache; vendored
+from rimsky-core's `examples/` module at the reconciled tag) — it acknowledges
+every hook and shows the `serverkit` HTTP+JSON bridge for non-Go callers.
+
+In rimsky's own tree there is no standalone `LifecycleSubscriber` binary —
+lifecycle handlers ride inside producer binaries. The in-tree examples are the
+stub store (`test/support/stores/stub/`) and the bundled postgres store
+(`lib/services/stores/postgres/lifecycle/`), each registering its
+`LifecycleSubscriber` handlers when its own server config sets
+`enable_lifecycle: true`. The postgres store ships its handlers as a no-op
+skeleton — a documented fork-point for operators who want per-template DDL on
+deploy, **not** a shipped per-template-DDL behavior. DDL-on-deploy is the
+archetype this protocol enables, not a bundled feature. The in-tree OpenLineage
+subscriber at `lib/services/subscribers/openlineage/` is a *polling* reader of
+the lineage projection, **not** a `LifecycleSubscriber` implementation — it is
+a different integration shape.
 
 ## See also
 

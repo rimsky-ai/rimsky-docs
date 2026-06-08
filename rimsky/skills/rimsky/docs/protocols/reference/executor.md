@@ -47,6 +47,7 @@ inputs and executor-written outputs. See spec §12.1.
 | `resume_context` | `ResumeContext` | 13 | resume_context carries the bytes the executor previously emitted on Park. When absent, this is a fresh dispatch; when present, this is a resume of a parked node. See ResumeContext. |
 | `prior_dispatch_id` | `optional string` | 14 | prior_dispatch_id is set when this dispatch supersedes a prior failed / abandoned / stale-recovered dispatch for the same (run_scope_id, node_id) pair. Used by executors that maintain per-dispatch session state to identify the predecessor and (optionally) recover or hand off work-in-progress. Unset on the initial dispatch of a node within a RunScope. Per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md §Recovery-aware executor protocol. @concept: run-scope |
 | `prior_dispatch_disposition` | `optional PriorDispatchDisposition` | 15 | prior_dispatch_disposition explains why prior_dispatch_id is set, so the executor can route its recovery / handoff logic. Unset (== PRIOR_NONE) on the initial dispatch. Per spec. |
+| `run_scope_id` | `string` | 16 | run_scope_id is the RunScope this dispatch lives in; used by the host-agent-proxy to key per-run-scope spawn isolation (one spawned late-bound child per (run_scope_id, binding), reaped at run-scope termination). Opaque to in-process executors. @concept: run-scope |
 
 ### ResumeContext
 

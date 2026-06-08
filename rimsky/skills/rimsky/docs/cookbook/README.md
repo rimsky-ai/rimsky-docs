@@ -42,6 +42,10 @@ All recipes run against a rimsky deployment — stand one up from the published 
 - **[Call a reusable sub-graph like a function](sub-graph.md)** — a named
   sub-graph invoked via `delegate:`; the entry node absorbs into the calling
   node and the exit node's writeback carries back as the result.
+- **[Run an executor on your dev machine](local-binary-executor.md)** — a
+  late-bound executor name dispatched through the
+  [host-agent proxy](../concepts/host-agent-proxy.md) to a binary running
+  on your laptop, bound per-instance with no static deployment config.
 
 ## Instances are durable by default
 
@@ -87,7 +91,7 @@ they are operator/architecture patterns, not single-problem recipes:
 
 ## Patterns that need a capability the bundled services lack
 
-Four patterns the primitives support are **not** runnable on the bundled
+Three patterns the primitives support are **not** runnable on the bundled
 producers/services as they stand, so they are not written up as recipes:
 
 - **Fan out over a partitioned claim** (and the **backfill** that targets a
@@ -96,17 +100,20 @@ producers/services as they stand, so they are not written up as recipes:
   (`content`) and postgres (`topics-ring`) producers advertise only their
   write semantics (their `Capabilities` set `SupportsSplitScope` false) —
   so a `fan_out:` node is rejected at template registration. This recipe
-  needs a split-scope-capable producer.
-- **Modify local files through an executor proxy** (run an executor against
-  files on a developer machine) requires a
-  [host-agent proxy](../concepts/host-agent-proxy.md) service, which is not
-  among the bundled services.
+  needs a split-scope-capable producer; for copyable Go starting points
+  see the in-corpus
+  [`atomic-staging-fs-producer`](../examples/atomic-staging-fs-producer/)
+  example (single-scope) and the
+  [`data-processing`](../examples/data-processing/) example (the
+  candidate lifecycle a partitioning producer also needs).
 - **A durable claim that outlives its holding subgraph** (the
   [asset](../concepts/asset.md) shape — `lifetime: durable` on a `stores:`
   entry) requires the producer to advertise the `data_processing` mix-in
   protocol. Neither bundled store advertises it, so the canonicalizer
   rejects a `durable` claim against them. This recipe needs a
-  DataProcessing-capable producer.
+  DataProcessing-capable producer; the in-corpus
+  [`data-processing`](../examples/data-processing/) example is the
+  copyable reference for the candidate-lifecycle surface.
 - **Park then resume** (the
   [parked-state](../concepts/parked-state.md) hold — a node parks on
   `terminal/park/snooze` or `terminal/park/await_callback`, then resumes

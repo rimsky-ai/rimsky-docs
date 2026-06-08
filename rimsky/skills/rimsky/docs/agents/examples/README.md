@@ -7,3 +7,5 @@ Complete, copy-pasteable, no-ellipsis examples. Each file is runnable as written
 - [`two-node-with-claim.md`](two-node-with-claim.md) — claim dependency between two nodes.
 - [`claude-agent-attribute-defaults.md`](claude-agent-attribute-defaults.md) — claude-agent executor receiving model and prompts via attribute `default:` entries.
 - [`holding-subgraph.md`](holding-subgraph.md) — held-claim resolution over a holding subgraph built with `holds:`.
+
+For runnable Go server skeletons (one per protocol — executor, claim-producer, lifecycle-subscriber, publisher, validation, data-processing, atomic-staging-fs-producer) and a runnable `rimsky-compose.yml` + referenced `TemplateSpec` files, see the corpus-level [`../../examples/`](../../examples/README.md).

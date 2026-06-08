@@ -11,6 +11,14 @@ deprecated_terms: []
 
 # Operational health
 
+> **Status (v0.7.0).** Fully supported. The lifecycle-subscriber protocol, the
+> `/admin/diagnostics/*` JSON endpoints, the admin-invalidate route, the
+> Prometheus `/metrics` surface, and the `sensor-cron` publisher all ship and
+> are exercised by the bundled stack. A polished dashboard / lineage-query UI
+> is not yet shipped (the observability backplane is in place; the SPA is on
+> the roadmap) — operators compose Prometheus + their own dashboards over the
+> JSON and metrics surfaces.
+
 Rimsky exposes operator health signals as JSON over HTTP plus Prometheus metrics.
 This page maps those surfaces — lifecycle subscribers, watchdog graphs,
 control-API diagnostics, admin invalidate — and the patterns that compose them
@@ -64,8 +72,9 @@ external monitors:
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /admin/diagnostics/held-frames` | Frames currently held pending node completion. Normal during agent-driven work; persistent holds may indicate stuck reviews. |
+| `GET /admin/diagnostics/held-frames` | Frames with at least one parked node. Normal during agent-driven work; persistent holds may indicate stuck reviews. |
 | `GET /admin/diagnostics/parked-nodes` | Parked nodes with reasons and resume timestamps. Optional `?reason=<name>` filter. |
+| `GET /admin/diagnostics/wait-sets` | Wait-set rows currently blocking dispatch — what each frame is waiting on (sender run, topic, drained state). Useful for diagnosing "the cascade looks like it should fire but the node isn't running." |
 | `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled). Covers dispatches by terminal class, claim acquisitions by producer, node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
 
 ### Admin invalidate

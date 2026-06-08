@@ -1,5 +1,11 @@
 # The protocols module & implementation guides
 
+> **Version.** These guides target the rimsky release this corpus is reconciled
+> against (`reconciledAgainst` in `.claude-plugin/plugin.json`). Runnable,
+> version-pinned server skeletons for each protocol live under
+> [`../examples/`](../examples/README.md), each with a `go.mod` stating the exact
+> `lib/protocols` tag.
+
 rimsky's protocols are language-neutral gRPC contracts. You implement a service against the wire protocol in whatever language you like — there is no required SDK.
 
 For Go projects, rimsky publishes its **`protocols` module** as a convenience. It is the single public Go module: it carries the wire contract (the protobuf-generated types) and a handful of **optional helper packages** you can lean on if you want them, or ignore entirely and code straight to the wire types:
@@ -55,3 +61,13 @@ The proto definitions live in the rimsky repo at `lib/protocols/proto/v1/`; the 
 ## HTTP+JSON encoding
 
 Non-Go services reach the protocols over the HTTP+JSON bridge, which uses **canonical protobuf-JSON**: `bytes` fields are base64-encoded strings, field names are `lowerCamelCase`, and a `oneof` renders as the set variant's name used as the JSON key (e.g. a `StreamClose` carrying the `success` variant → `{ "success": { ... } }`). A `google.protobuf.Struct` is a plain JSON object. The per-message field reference is under [`reference/`](reference/).
+
+## Host-agent-proxy: a transparent forwarder
+
+The `rimsky-host-agent-proxy` binary fronts every fronted rimsky service protocol — `Executor`, `ClaimProducer`, `Publisher`, `Validation`, `DataProcessing` — by one uniform spawn/forward mechanism. Each presents exactly the fronted service's protocol on the supervisor-facing side; none ships as a registered-but-unimplemented stub. A late-bound binary that conforms to its own protocol therefore works behind the proxy by construction — there is no separate proxy conformance suite, and **no protocol surface is excluded** (the `BlobBackend` is the only intentional exclusion, because it is an in-process Go interface, not a gRPC wire protocol).
+
+For an implementor, three consequences matter:
+
+- **Don't read `run_scope_id`.** It exists on `ExecuteRequest` and `OpenRequest` solely so the proxy can key per-run-scope spawn isolation (one spawned child per `(run_scope_id, binding)`, reaped at run-scope termination). Concurrent run-scopes of one fanned-out instance therefore get distinct, isolated children. An in-process executor or claim-producer ignores the field.
+- **Don't read `Binding` overrides.** A binding may carry per-binding exec() overrides (`args`, `env`, `cwd`, `ready_timeout_seconds`). All four are additive — absent means today's default (no extra args, inherited env, the instance-level cwd, and the global Spawn ready-timeout). They are consumed by the agent at spawn time, not by your service.
+- **`DispatchFrame.rpc_method` is the proxy's internal routing key**, not part of your wire surface. For `Publisher`, `Validation`, and `DataProcessing` — which expose multiple unary RPCs whose request messages are distinct types — the proxy carries the RPC name on the wire so the agent can match it against the child service descriptor (the analogue of `claim_producer_verb` for the claim-producer path). You do not handle frames; your child binary just serves the protocol as normal.

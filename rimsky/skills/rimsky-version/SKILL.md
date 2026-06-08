@@ -29,8 +29,8 @@ pinned to the other.
 Print exactly these two lines, verbatim:
 
 ```
-rimsky release reconciled against : v0.6.0   (the rimsky release these docs describe)
-rimsky-docs plugin version        : 1.3.0    (the docs' own release version)
+rimsky release reconciled against : v0.7.0   (the rimsky release these docs describe)
+rimsky-docs plugin version        : 1.4.0    (the docs' own release version)
 ```
 
 Report only these two values. **Read nothing** — not the plugin manifest, not

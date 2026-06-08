@@ -94,6 +94,10 @@ protos share the flat rimsky.v1 message namespace.
 | Field | Type | # | Description |
 |-------|------|---|-------------|
 | `path` | `string` | 1 |  |
+| `args` | `repeated string` | 2 | Per-binding exec() overrides. All four fields are additive and backward-compatible: an absent field means today's default behavior, so a binding declared with none of them spawns exactly as before (no extra args, inherited env, the instance-level cwd, and the global Spawn ready-timeout). |
+| `env` | `repeated EnvEntry` | 3 |  |
+| `cwd` | `string` | 4 |  |
+| `ready_timeout_seconds` | `int32` | 5 |  |
 
 ### SpawnAck
 
@@ -137,6 +141,7 @@ protos share the flat rimsky.v1 message namespace.
 | `stream_id` | `string` | 4 | Stream multiplexing: a single spawn_id can host concurrent dispatch streams (e.g., concurrent ClaimProducer.Open calls). Each stream carries a stream_id. |
 | `kind` | `DispatchFrameKind` | 5 |  |
 | `claim_producer_verb` | `ClaimProducerVerb` | 6 |  |
+| `rpc_method` | `string` | 7 | rpc_method names the unary RPC the agent must invoke on the child for the non-executor, non-claim-producer fronted protocols — e.g. "Subscribe" (publisher), "Validate" (validation), "BeginCandidate" (data-processing). It is the generic analogue of claim_producer_verb: those protocols expose multiple unary RPCs whose request messages are distinct types, so — exactly as Commit/Abandon/Release are byte-identical at claim_id and force claim_producer_verb to carry the verb — the agent cannot reliably infer the target RPC from the payload shape alone. rpc_method is therefore authoritative for publisher / validation / data-processing dispatch, just as claim_producer_verb is authoritative for the claim-producer path. The value is the short or fully-qualified RPC name (the agent matches it against the child service descriptor). Empty on executor dispatch and on the claim-producer path (which uses claim_producer_verb instead). |
 
 ### DispatchFrame.DispatchFrameKind
 

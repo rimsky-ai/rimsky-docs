@@ -133,6 +133,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/operator-guide.md` | code + design | Generated/derived; refine (reconciled by the **config-examples** surface, alongside the worked configs). |
 | `rimsky/skills/rimsky/docs/comparison.md`, `rimsky/skills/rimsky/docs/roadmap.md`, `rimsky/skills/rimsky/docs/licensing.md`, `rimsky/skills/rimsky/docs/patterns/*.md` | code + design | Generated/derived narrative; refine (the **narrative** surface). State a feature's aspirational/partial status up front; keep version-gated status labels current. |
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
+| `rimsky/skills/rimsky/docs/examples/` | rimsky `examples/` module (Apache) | Mechanical (`rimsky-docs-vendor-examples`); vendored snapshot pinned to the reconciled tag — never hand-edit. Fix in rimsky-core's `examples/`. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
 | `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. |
 | `rimsky/skills/rimsky/docs/agents/llms.txt` | the files it links to | The agent entry index. Reconcile against the linked files — fix dead links and stale descriptions; keep it accurate. |
@@ -185,7 +186,7 @@ To re-run just the review → fix → converge loop afterward, use `/refine-docs
    release tag of `https://github.com/rimsky-ai/rimsky-core`:
 
    ```bash
-   RIMSKY_TAG=$(gh api repos/rimsky-ai/rimsky-core/releases/latest --jq .tag_name)
+   export RIMSKY_TAG=$(gh api repos/rimsky-ai/rimsky-core/releases/latest --jq .tag_name)
    # fallback when gh is unavailable:
    #   RIMSKY_TAG=$(git ls-remote --tags --sort=-v:refname \
    #     https://github.com/rimsky-ai/rimsky-core \
@@ -290,6 +291,7 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-gopkg
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-template-ref
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-rest-ref
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-cli-ref
+cd cmd && RIMSKY_REPO="$RIMSKY_REPO" RIMSKY_TAG="$RIMSKY_TAG" go run ./rimsky-docs-vendor-examples -version="$RIMSKY_TAG"
 ```
 
 `rimsky-docs-llms-full` writes `rimsky/skills/rimsky/docs/agents/llms-full.txt` + the repo-root copy
@@ -313,6 +315,15 @@ auth gate, from the action registry `lib/control/controlapi/actions.go`); and
 `rimsky-docs-cli-ref` writes `rimsky/skills/rimsky/docs/reference/cli.md` from the `rimsky` CLI's own
 `help` output (it shells `go run ./cmd/rimsky` inside `${RIMSKY_REPO}`, so that
 checkout must build — slower than the others).
+
+`rimsky-docs-vendor-examples` projects rimsky-core's Apache `examples/` module
+into `rimsky/skills/rimsky/docs/examples/` as read-and-adapt source: the `.go`
+files verbatim, `go.mod` de-`replace`d and pinned to `$RIMSKY_TAG`, and the
+README version-banner-stamped with the tag. `go.sum` and binaries are dropped (a
+copier runs `go mod tidy`). It resolves the pin from `-version` → `$RIMSKY_TAG` →
+plugin.json `reconciledAgainst`, so the local-override path (where `RIMSKY_TAG`
+may be unset) falls back to the corpus's current pin. The source of truth is
+rimsky-core's `examples/` (gate-tested there); never hand-edit the vendored copy.
 
 All of these are mechanical — never hand-edit them.
 

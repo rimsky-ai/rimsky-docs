@@ -1,9 +1,9 @@
 ---
 concept: domain-stores
 definition: |
-  A pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. As of v0.6.0 the reference claude-agent executor supports this directly: per-node `cli.mcp_servers` attributes wire one or more host-supplied external HTTP MCP servers into a dispatch (appended to the spawned `claude` CLI's `--mcp-config`, tools auto-allowed). The executor's own internal `rimsky-callback` MCP surface is unchanged and is how agent work re-enters the graph.
+  A pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. As of v0.7.0 the reference claude-agent executor supports this directly through two complementary surfaces: a per-executor startup catalog of named MCP servers (env `RIMSKY_EXECUTOR_MCP_CATALOG` → YAML/JSON file, with four transports — `http`, `stdio`, `module`, `http-loopback`) that nodes reference by `{ ref: <name> }`, plus an inline `{ name, url, headers?, allowed_tools? }` form for nodes that declare their own server (permitted only when `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1`, default disallowed). Either way the resolved server list is appended to the spawned `claude` CLI's `--mcp-config` and its tools are auto-allowed. The executor's own internal `rimsky-callback` MCP surface is unchanged and is how agent work re-enters the graph.
 proto_symbol: (none — MCP, not a rimsky service protocol)
-config_field: claude-agent per-node attributes (attributes.cli.mcp_servers, attributes.cli.*); internal rimsky-callback MCP tools
+config_field: claude-agent startup env (RIMSKY_EXECUTOR_MCP_CATALOG, RIMSKY_EXECUTOR_MCP_ALLOW_INLINE); per-node attributes (attributes.cli.mcp_servers, attributes.cli.*); internal rimsky-callback MCP tools
 api_surface: (none)
 related: [executor, attribute, named-event]
 deprecated_terms: []
@@ -11,53 +11,92 @@ deprecated_terms: []
 
 # Domain stores
 
-> **Status (v0.6.0).** Supported, with a caveat about intent. The reference
-> `claude-agent` executor **does** wire consumer-built external MCP servers into
-> a dispatch — via the per-node `cli.mcp_servers` attribute (each
-> `{name, url, headers?, allowed_tools?}`). Each declared server is appended to
-> the spawned `claude` CLI's `--mcp-config` and its tools are auto-allowed, so
-> the agent can dial it during the run. That is exactly the "domain store as a
-> pluggable MCP tool catalog" shape. **The caveat:** in-code, `cli.mcp_servers`
-> is framed as wiring *validator* MCP servers that the optional `cli.required_signoffs`
-> sign-off gate depends on. Nothing restricts the servers to validators — any
-> HTTP MCP server reachable from the executor works as a domain-state catalog —
-> but the field was added for the sign-off use case, so rimsky ships no
-> operator-managed *catalog* of these servers and no `ref`-based catalog
-> resolution. You wire the server list per node, in the node's attributes. This
-> page documents both the external-MCP surface (`cli.mcp_servers`) and the
-> internal `rimsky-callback` surface, and how an agent node's outputs flow into
-> the graph.
+> **Status (v0.7.0).** First-class. The reference `claude-agent` executor now
+> ships an operator-managed **startup catalog** of named MCP servers
+> (`env:RIMSKY_EXECUTOR_MCP_CATALOG` → a YAML/JSON file parsed once at executor
+> startup) plus a per-node `cli.mcp_servers` attribute whose entries are
+> `{ ref: <catalog-name> }` references resolved against that catalog at
+> dispatch. Catalog entries declare a `transport`: `http` (remote
+> streamable-HTTP), `stdio` (local subprocess), or `module` / `http-loopback`
+> (in-tree MCP module fronted on a per-dispatch loopback HTTP listener). The
+> earlier inline `{ name, url, headers?, allowed_tools? }` form is still
+> accepted, but only when `env:RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1` (default
+> false — the catalog is the authoritative server source); an inline entry with
+> the policy off is rejected at dispatch with a config error. The wiring is no
+> longer validator-only by intent: the catalog exists precisely so an operator
+> can publish a curated set of domain stores that any node references by name.
 
 A **domain store** is a project-built MCP server holding project-specific state
 — prompt context, learnings, examples, corrections, glossaries, evaluation
 rubrics, partial pipeline state — exposed as a tool catalog an agent executor
 consumes during a dispatch. Rimsky ships no domain store of its own, but the
-reference `claude-agent` executor can dial one you build and host: list it under
-the node's `cli.mcp_servers` and the agent reaches its tools during the run.
+reference `claude-agent` executor can dial one you build and host: register it
+in the executor's startup catalog (or, with the inline policy on, declare it
+directly on the node), and the agent reaches its tools during the run.
 
 The executor exposes **two** MCP surfaces to a dispatch: its own internal
 `rimsky-callback` (always present; how work re-enters the graph) and any
-host-wired external servers you declare in `cli.mcp_servers` (zero or more). This
-page documents both, then how an agent node's outputs flow downstream.
+host-wired external servers resolved from `cli.mcp_servers` (zero or more,
+sourced from the startup catalog and/or inline declarations per the
+`allow_inline` policy). This page documents both, then how an agent node's
+outputs flow downstream.
 
-## Wiring an external domain store (`cli.mcp_servers`)
+## The startup catalog (operator wiring)
+
+`@source: lib/services/executors/claude-agent/src/mcp-catalog.ts`.
+
+At executor startup `env:RIMSKY_EXECUTOR_MCP_CATALOG` names a YAML or JSON file
+(both parse via the same YAML parser). The file is a `name → entry` map; each
+entry declares a transport. A malformed catalog **throws at startup** — a
+silently-dropped entry would surface mid-dispatch as an opaque `{ ref: }`
+resolution failure, which the executor refuses to allow.
+
+| Transport | Shape | What the executor emits into `--mcp-config` |
+| --- | --- | --- |
+| `http` | `{ transport: "http", url, headers?, allowed_tools? }` | A remote streamable-HTTP MCP leaf. |
+| `stdio` | `{ transport: "stdio", command, args?, env?, allowed_tools? }` | A local subprocess spawned per dispatch, wired as a `type: "stdio"` leaf. |
+| `module` / `http-loopback` | `{ transport: "module" \| "http-loopback", module, allowed_tools? }` | The named module is dynamically `import()`-ed at dispatch and fronted on a per-dispatch loopback HTTP listener (the Claude CLI only speaks MCP over a wire transport, so an in-tree module must be wrapped on a loopback). The two names distinguish operator intent; the stand-up mechanism is identical. |
+
+The other startup knob is `env:RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` (default
+`false`). When `false`, only `{ ref: }` entries are accepted on a node — the
+catalog is the single source of truth. When `true`, a node may additionally
+declare an inline `{ name, url, headers?, allowed_tools? }` server alongside (or
+instead of) refs.
+
+Sample catalog file:
+
+```yaml
+# /etc/rimsky/mcp-catalog.yml — referenced by RIMSKY_EXECUTOR_MCP_CATALOG
+project-context:
+  transport: http
+  url: "http://project-context-store:8000/mcp"
+  headers:
+    Authorization: "Bearer ${PROJECT_CONTEXT_TOKEN}"
+glossary:
+  transport: stdio
+  command: glossary-mcp
+  args: ["--db", "/var/lib/glossary.sqlite"]
+```
+
+## Wiring per node (`cli.mcp_servers`)
 
 `@source: lib/services/executors/claude-agent/src/agent-run.ts` (host-server
 wiring) and `…/src/server.ts::parseMcpServers` (attribute parsing).
 
-A node's `attributes.cli.mcp_servers` is an array; each entry declares one HTTP
-MCP server the agent should be able to reach:
+A node's `attributes.cli.mcp_servers` is an array of two possible entry shapes:
 
-| Field | Required | Meaning |
+| Shape | Fields | Notes |
 | --- | --- | --- |
-| `name` | yes | Server name. Tools surface to the agent as `mcp__<name>__<tool>`. |
-| `url` | yes | HTTP MCP endpoint the executor dials. |
-| `headers` | no | Flat string→string map sent on the MCP connection (e.g. an auth token). |
-| `allowed_tools` | no | Restrict the agent to these tool names. Omitted ⇒ **all** of that server's tools are auto-allowed (the bare `mcp__<name>` server-prefix entry). |
+| **Catalog ref** | `{ ref: <catalog-name> }` | Resolves against the startup catalog. The catalog entry's transport determines the emitted leaf. Always permitted. |
+| **Inline** | `{ name, url, headers?, allowed_tools? }` | A self-contained HTTP MCP server declared on the node. **Permitted only when `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1`**; otherwise rejected at dispatch with a config error. Tools surface as `mcp__<name>__<tool>`. |
+
+For both shapes, `allowed_tools` (on the catalog entry or the inline entry)
+restricts the agent to those tool names; omitted means **all** of that server's
+tools are auto-allowed (the bare `mcp__<name>` server-prefix entry).
 
 Mechanics that matter:
 
-- Each declared server is appended to the spawned `claude` CLI's `--mcp-config`,
+- Each resolved server is appended to the spawned `claude` CLI's `--mcp-config`,
   so the agent can actually dial it. A URL only mentioned in a prompt is
   unreachable — the CLI speaks MCP only to servers it was configured with.
 - Tools are **auto-allowed**: with no `allowed_tools` the server-prefix entry
@@ -66,14 +105,17 @@ Mechanics that matter:
 - The same server list is re-applied on **resume** (after a park), because the
   CLI does not carry `--mcp-config` across `--resume`. A resumed dispatch still
   reaches the domain store.
+- A `module` / `http-loopback` catalog entry is stood up on a fresh loopback
+  port **per dispatch** and torn down when the dispatch ends.
 - Validation is type-shape-only — rimsky never inspects the values — but a
   *present-but-malformed* entry fails the dispatch with terminal error class
   `agent/attribute_invalid` rather than being silently dropped (a dropped server
   could unwire a tool the host intended the agent to use, or a validator the
-  sign-off gate depends on).
+  sign-off gate depends on). An unresolved `{ ref: }` (no matching catalog
+  entry) is the same class of config error.
 
 ```yaml
-# template node — wire an external domain-store MCP server into the dispatch
+# template node — reference a catalog-published domain store
 nodes:
   - type: triage
     executor: claude-agent
@@ -91,11 +133,8 @@ nodes:
             type: object
             default:
               mcp_servers:
-                - name: project-context
-                  url: "http://project-context-store:8000/mcp"
-                  headers:
-                    Authorization: "Bearer ${PROJECT_CONTEXT_TOKEN}"
-                  # allowed_tools omitted ⇒ all of this server's tools auto-allowed
+                - ref: project-context   # resolved against RIMSKY_EXECUTOR_MCP_CATALOG
+                - ref: glossary
 ```
 
 The sign-off lineage shows in the sibling fields: `cli.required_signoffs`

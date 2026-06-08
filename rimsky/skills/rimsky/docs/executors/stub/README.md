@@ -2,7 +2,7 @@
 
 The `stub` executor (`test/support/executors/stub/` in the rimsky tree) is a **test double** for rimsky's `Executor` protocol. It is the executor analog of a fake/mock: a deterministic, scripted implementation of the `Executor` gRPC service used to exercise rimsky's supervisor against canned outcomes.
 
-It is **not** a skeleton template, not a copy-paste starting point. If you are writing a real executor, start from the [executor guide](../../protocols/executor.md) and implement against the wire contract (`lib/protocols/proto/v1/executor.proto`). The production-shaped reference executors ship in rimsky's tree under `lib/services/executors/` — `http-node` (Go; HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI end-to-end), and the `verifier-http` / `verifier-shape-checks` verifiers. Each carries its own README.
+It is **not** a skeleton template, not a copy-paste starting point. If you are writing a real executor, start from the [executor guide](../../protocols/executor.md) and the copyable Apache skeleton it links ([`../../examples/executor/`](../../examples/README.md)), implementing against the wire contract (`lib/protocols/proto/v1/executor.proto`). The official executors rimsky ships under `lib/services/executors/` — `http-node` (Go; HTTP-call workloads) and the `verifier-http` / `verifier-shape-checks` verifiers (AGPL), plus `claude-agent` (TypeScript; runs the Claude Code CLI end-to-end; Apache) — are runnable products to study, not starters to copy. Each carries its own README.
 
 ## Two forms, two uses
 

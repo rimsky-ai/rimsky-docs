@@ -188,6 +188,44 @@ curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
   [holding-subgraph example](../agents/examples/holding-subgraph.md) walks
   the resolution mechanics in more depth.
 
+## Atomic-staging substrates
+
+The recipe above runs against the `content` filesystem producer, whose
+`Commit` is a direct-mode finalize (the lock releases; nothing swaps).
+The same template shape — held claim across a chain of co-holders,
+auto-terminal Commit on all-success / Abandon on any-failure — is the
+rimsky-side half of the [atomic-staging](../concepts/atomic-staging.md)
+pattern: a producer whose `Commit` verb performs an atomic substrate swap
+(POSIX `rename`, Postgres schema swap, Iceberg branch fast-forward) and
+whose `Abandon` drops the staged area. The atomic-staging concept doc
+records the per-substrate atomicity envelope.
+
+The bundled `store-postgres` **is** a swap-on-Commit substrate, for
+`staged_async` scope-bytes claims whose selector names a schema (the
+schema-shaped path). `Open` reserves a per-claim staging schema and
+returns its name as the claim's `address`; `Commit` performs the
+schema swap (drop the canonical schema, rename staging into its place)
+inside one store-side transaction; `Abandon` drops the staging schema.
+Swap failure surfaces the declared error class `pg/swap_failed` and
+leaves the staging intact. Opaque (path-shaped) selectors keep the
+verbatim-echo / no-op terminal path; only schema-shaped selectors
+engage the swap lifecycle. See
+[`protocols/claim-producer.md` § `Commit`](../protocols/claim-producer.md#commit--consumer-succeeded).
+
+The bundled `store-filesystem` is **not** a swap-on-Commit substrate
+— its `Commit` is a direct-mode finalize (the recipe above is exactly
+that case). For an out-of-tree atomic-staging producer over a POSIX
+root — staging directory at `Open`, two-rename atomic swap at
+`Commit`, drop at `Abandon` — the in-corpus
+[`atomic-staging-fs-producer`](../examples/atomic-staging-fs-producer/)
+example is the copy-and-modify starting point (a vendored mirror of
+the upstream
+[`rimsky-core/examples/atomic-staging-fs-producer`](https://github.com/rimsky-ai/rimsky-core/tree/main/examples/atomic-staging-fs-producer)).
+Copy that directory, register the binary as a producer in `rimsky.yml`,
+and the same `holds:` chain shape above acquires staging, co-holds
+across verifier nodes, and atomically swaps the staged area into the
+canonical view at the end of the chain.
+
 ## Without rimsky
 
 By hand you would open the resource in the first step, thread its

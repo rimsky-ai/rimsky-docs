@@ -17,7 +17,7 @@ The producer list and executor list are needed by every service-orchestrating pr
 
 ## Boundaries
 
-Owns: the file shape, validations at startup (write-semantics-allowed subset, blob backend gating), a per-protocol `late_bind_service_proxies` map (protocol name → the proxy service name that fronts late-bound services for that protocol), the loader. Does NOT own: service protocol shapes (those are the protocol concepts' territory), per-feature defaults (live in code). Adjacent: `claim-producer`, `executor`, `lifecycle-subscriber`, `service`, `blob-backend`, `persistence-database`, `write-semantics`, `host-agent-proxy`.
+Owns: the file shape (persistence + named-locks + claim-producers + executors + publishers + templates blocks), validations at startup (write-semantics-allowed subset, blob backend gating), a per-protocol `late_bind_service_proxies` map (protocol name → the proxy service name that fronts late-bound services for that protocol), the `templates.ref_validation_mode` strictness knob for template-registration ref-validation, the loader. Does NOT own: service protocol shapes (those are the protocol concepts' territory), per-feature defaults (live in code). Adjacent: `claim-producer`, `executor`, `lifecycle-subscriber`, `publisher`, `service`, `blob-backend`, `persistence-database`, `write-semantics`, `host-agent-proxy`, `template`.
 
 ## Invariants
 

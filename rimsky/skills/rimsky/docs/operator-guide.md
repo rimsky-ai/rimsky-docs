@@ -146,23 +146,27 @@ parked-node sweep enforces the cap.
 ## claude-agent: configuration
 
 The `claude-agent` reference executor is configured two ways: process environment
-at startup, and per-node attributes at dispatch time. It has no separate config
-file and no operator-managed catalog of external MCP servers — external (host-wired)
-MCP servers are declared per dispatch via the `cli.mcp_servers` node attribute (see
+at startup, and per-node attributes at dispatch time. It has no separate YAML
+config file — operator-managed knobs are all environment variables, including the
+startup MCP-server catalog (`RIMSKY_EXECUTOR_MCP_CATALOG`, see
 [MCP wiring](#mcp-wiring) below).
 
 ### Startup environment
 
-Set on the `claude-agent` executor process.
+Set on the `claude-agent` executor process. The full env-var table is in the
+[bundled services catalog](services/README.md#claude-agent); the operator-relevant
+subset:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | — | At least one is required in non-stub mode; the executor refuses to start without one. In API-key mode the key is written to a 0600 temp file behind an `apiKeyHelper` and never enters the spawned `claude` process's environment. |
 | `RIMSKY_EXECUTOR_STUB_MODE` | unset | `=1` ⇒ stub mode: the executor spawns no `claude` subprocess and returns a canned completion. The cookbook recipes run claude-agent in stub mode. |
-| `RIMSKY_EXECUTOR_HOST` | — | Bind address for the gRPC executor and HTTP+JSON bridge. |
+| `RIMSKY_EXECUTOR_HOST` | `0.0.0.0` | Bind address for the gRPC executor and HTTP+JSON bridge. |
 | `RIMSKY_EXECUTOR_PORT_GRPC` | `9090` | gRPC executor port. |
 | `RIMSKY_EXECUTOR_PORT_HTTP` | `9190` | HTTP+JSON bridge port. |
 | `RIMSKY_EXECUTOR_SILENCE_MS` | `120000` | How long the subprocess may produce no stdout before the silence-tracker acts. |
+| `RIMSKY_EXECUTOR_MCP_CATALOG` | unset | Path to a YAML/JSON catalog of named MCP servers (the operator-managed authoritative source). Parsed **once at startup**; a malformed catalog fails startup loudly. See [MCP wiring](#mcp-wiring). |
+| `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` | `0` (deny) | Per-deployment policy. When unset / falsy, inline `{name, url}` servers in `cli.mcp_servers` are rejected and only catalog `{ref: "<name>"}` references are accepted. Set to `1` / `true` / `yes` to opt back into inline servers. |
 | `RIMSKY_DISPATCH_MAX_USD` | — | Deployment-wide spend cap forwarded to the CLI as `--max-budget-usd`. A per-node `cli.max_budget_usd` attribute wins over this when set. |
 
 ### Per-node attributes
@@ -199,15 +203,35 @@ server it hosts), through which the agent reports terminal outcomes
 (`report_complete`, `report_error`, `report_blocked`, `report_park`), emits named
 events, and reads/writes node attributes. That server is non-removable.
 
-Beyond `rimsky-callback`, a node may wire **host-declared validator MCP servers**
-per dispatch via the `cli.mcp_servers` attribute. Each entry (`{name, url,
-headers?, allowed_tools?}`) is appended to the spawned CLI's `--mcp-config` so the
-agent can dial it, and its tools are auto-allowed — a bare `mcp__<name>` allows all
-of that server's tools, or an explicit `allowed_tools` narrows it to fully-qualified
-`mcp__<name>__<tool>` names. The same list is re-applied on resume (the CLI does not
-carry `--mcp-config` across `--resume`). There is still no *operator-configured*
-catalog of external MCP servers — declaration is per-node, in the template's
-`attributes`, not in `rimsky.yml` or any executor config file.
+Beyond `rimsky-callback`, a node wires **host-declared MCP servers** per dispatch
+via the `cli.mcp_servers` attribute. There are two declaration shapes; which one
+is accepted is gated by the deployment's `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE`
+policy (default: deny):
+
+- **Catalog reference (recommended): `{ref: "<name>"}`.** Resolves against the
+  startup catalog loaded from `RIMSKY_EXECUTOR_MCP_CATALOG` (a YAML/JSON file
+  mapping name → entry). Each catalog entry declares a `transport`: `http`
+  (remote streamable-HTTP `{url, headers?, allowed_tools?}`), `stdio` (local
+  subprocess `{command, args?, env?, allowed_tools?}`), or `module` /
+  `http-loopback` (in-tree MCP module `{module, allowed_tools?}` fronted on a
+  per-dispatch loopback HTTP listener). A `{ref: ...}` to an unknown catalog
+  name fails the dispatch at resolution.
+- **Inline declaration: `{name, url, headers?, allowed_tools?}`** — only accepted
+  when `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1`. The intended model is that the
+  catalog is the authoritative server source; inline is an explicit opt-out for
+  ad-hoc deployments.
+
+Secrets in catalog `http.headers` use a `${env:VAR_NAME}` reference syntax. The
+unresolved reference is what the supervisor persists and traces; resolution
+against the executor's process environment happens **only at spawn time**, when
+assembling the transient per-dispatch `--mcp-config`. An unset variable resolves
+to the empty string (the downstream server fails loud on a missing credential).
+
+Resolved entries are appended to the spawned CLI's `--mcp-config` so the agent
+can dial them. Each server's tools are auto-allowed — a bare `mcp__<name>` allows
+all of that server's tools, or an explicit `allowed_tools` narrows it to
+fully-qualified `mcp__<name>__<tool>` names. The same list is re-applied on
+resume (the CLI does not carry `--mcp-config` across `--resume`).
 
 `cli.mcp_servers` pairs with the **sign-off gate** (`cli.required_signoffs`): each
 `{public_key, path?}` entry must be satisfied by a valid Ed25519 signature in
@@ -217,13 +241,23 @@ success. An unmet gate triggers a corrective `report_complete` retry; after
 `agent/signoff_unobtained`. The signers are typically — but not necessarily — the
 host-wired validator servers.
 
+## Per-process binding
+
+The control-api binds its HTTP server with `RIMSKY_CONTROL_API_HOST` (default
+`127.0.0.1`) and `RIMSKY_CONTROL_API_PORT` (default `8080`). The
+`rimsky-all-in-one` image overrides the host to `0.0.0.0` so a published port
+reaches it out of the box. The scheduler and supervisor have no public HTTP
+surface; the supervisor's callback listener is configured via the
+`supervisor-config.yml` `callback:` block (see
+[`reference/config/supervisor-config.yml`](reference/config/supervisor-config.yml)).
+
 ## Observability: Prometheus metrics
 
 Each rimsky binary can expose a `/metrics` endpoint.
 
 | Binary | Settings |
 | --- | --- |
-| `rimsky-control-api` | `RIMSKY_METRICS_PORT` (0 = disabled, default). Bound to the same host as the control API. |
+| `rimsky-control-api` | `RIMSKY_METRICS_PORT` (0 = disabled, default). Bound to `RIMSKY_CONTROL_API_HOST`. |
 | `rimsky-scheduler` | `RIMSKY_METRICS_PORT` and `RIMSKY_METRICS_HOST` (default `127.0.0.1`). |
 | `rimsky-supervisor` | Same as scheduler. |
 

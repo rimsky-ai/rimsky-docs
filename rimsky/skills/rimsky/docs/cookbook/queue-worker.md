@@ -34,12 +34,21 @@ cascade resolution per pulled item).
 
 ## Walkthrough
 
-Needs a rimsky deployment whose postgres store is configured as the
-`topics-ring` producer with the `@review-queue` pick policy, against a
-`topics_items` table. Stand rimsky up from the published images (see the
-[operator guide](../operator-guide.md)); the
-[reference config](../reference/config/store-postgres.yml) shows the
-producer and pick-policy shape.
+**Assumes running.** This recipe references three services by the names
+in the template below; each must already be running and registered
+under that name. The corpus does not ship a copy-pasteable deploy
+chain — wire these up per their config docs:
+
+- A **control-api** process (rimsky's HTTP API on `:8080`) — see
+  [`reference/config/rimsky.yml`](../reference/config/rimsky.yml) and
+  [`services/README.md`](../services/README.md).
+- A **`store-postgres` claim-producer registered as `topics-ring`**,
+  configured with the `@review-queue` pick policy against a
+  `topics_items` table — see
+  [`reference/config/store-postgres.yml`](../reference/config/store-postgres.yml).
+- An **`http-node` executor in stub mode**
+  (`RIMSKY_EXECUTOR_STUB_MODE=1`) registered under the executor name
+  `http-node` — see [`services/README.md`](../services/README.md).
 
 Seed a few items into the store's admin endpoint (port `9121` in the
 reference config). Operators seed the store directly, never through rimsky:

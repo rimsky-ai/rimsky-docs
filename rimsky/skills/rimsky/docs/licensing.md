@@ -3,7 +3,8 @@
 Rimsky is multi-licensed along **one bright line**, applied per-file: two
 surfaces, three license options. **Apache 2.0 covers exactly the implement/link
 surface** — the wire-protocol contract, the TypeScript executor reference impl,
-and the docs; it carries no copyleft and no commercial track. **Everything else
+the docs, and the copy-and-modify protocol examples under `examples/`; it
+carries no copyleft and no commercial track. **Everything else
 rimsky ships is the dual-licensed orchestrator layer:** AGPL-3.0-or-later by
 default (no action required), OR a Fall Guy Consulting commercial license as an
 alternative over the same code. That layer is the `rimsky` CLI, the Go reference
@@ -25,6 +26,7 @@ its parent's bucket.
 | Wire-protocol contract (IDL + generated bindings + protocol-kit / conformance libraries) | `lib/protocols/` | Apache 2.0 |
 | TypeScript executor reference impl | `lib/services/executors/claude-agent/` | Apache 2.0 |
 | Documentation (cold-read style guide) | `cold-read/` | Apache 2.0 |
+| Copy-and-modify protocol examples (one Go server per protocol; the `compose/` manifest example) | `examples/` | Apache 2.0 |
 | `rimsky` CLI (all role binaries; conformance subcommands) | `cmd/` | AGPL-3.0-or-later / commercial |
 | Go reference executors (`http-node`, the verifiers) | `lib/services/executors/` (except `claude-agent/`) | AGPL-3.0-or-later / commercial |
 | Reference stores | `lib/services/stores/` (`filesystem`, `postgres`) | AGPL-3.0-or-later / commercial |
@@ -33,10 +35,13 @@ its parent's bucket.
 | Orchestrator core (foundation, graph, control, runtime) | `lib/foundation/`, `lib/graph/`, `lib/control/`, `lib/runtime/` | AGPL-3.0-or-later / commercial |
 | Tests + dev tooling | `test/`, `tools/` | AGPL-3.0-or-later / commercial |
 
-The Apache surface is **exactly those three entries** — the wire contract, the
-TypeScript executor, and the docs. Nothing else rimsky ships is Apache. There is
-no permissive "stub" carve-out: the test-support stub doubles live under the AGPL
-trees and are AGPL like the rest of `test/`.
+The Apache surface is **exactly those four entries** — the wire contract, the
+TypeScript executor, the docs, and the copy-and-modify `examples/` module
+(deliberately permissive so consumers can lift a per-protocol server into their
+own project, since it depends only on `lib/protocols/` plus permissive
+third-party). Nothing else rimsky ships is Apache. There is no permissive "stub"
+carve-out: the test-support stub doubles live under the AGPL trees and are AGPL
+like the rest of `test/`.
 
 The Apache code forms a single closed island: because `lib/protocols/` imports
 nothing internal (the protocols-purity depguard), no Apache-licensed file can

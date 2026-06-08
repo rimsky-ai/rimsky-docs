@@ -1,5 +1,11 @@
 # Implementing an executor
 
+> **Version.** The API on this page targets the rimsky release this corpus is
+> reconciled against (`reconciledAgainst` in `.claude-plugin/plugin.json`). For
+> runnable, version-pinned code, copy the executor at
+> [`../examples/executor/`](../examples/README.md) — its `go.mod` states the
+> exact `lib/protocols` tag.
+
 An **executor** runs one node's work. It implements the dispatch protocol
 `Executor` (one method, `Execute`) and, optionally, the read-only
 `ExecutorObservability` protocol. It is out-of-process: the supervisor dials it
@@ -83,6 +89,7 @@ Full field reference: [`reference/executor.md`](reference/executor.md).
 | `dispatch_id` | string | The `rimsky_node_runs.id`; key per-dispatch traces/state on it. |
 | `resume_context` | `ResumeContext` | Populated on resume of a parked node (see [Resume context](#resume-context)); absent on a fresh dispatch. |
 | `prior_dispatch_id`, `prior_dispatch_disposition` | string, enum | Set when this dispatch supersedes a prior failed / stale / recalculated one for the same `(run_scope_id, node_id)`. Disposition (`PRIOR_HEARTBEAT_STALE` / `PRIOR_RETRY_AFTER_ERROR` / `PRIOR_RECALCULATE`; `PRIOR_NONE` when unset) tells a session-keeping executor *why* it is taking over. |
+| `run_scope_id` | string | The run-scope this dispatch lives in. Opaque to in-process executors. Only meaningful to the host-agent-proxy, which keys per-run-scope spawn isolation on it (one spawned child per `(run_scope_id, binding)`, reaped at run-scope termination) so concurrent run-scopes of a fanned-out instance get distinct late-bound children. Ignore unless you are writing a forwarder. |
 
 ### `ExecuteEvent` records
 
@@ -212,14 +219,22 @@ calls during conformance. The same checks are exposed as a Go library under
 
 ## Reference impls
 
+- **Copyable skeleton (Apache)** — a minimal executor you can copy and adapt:
+  [`../examples/executor/`](../examples/README.md). It registers, answers the
+  `Capabilities` schema gate, and returns terminal success, with the
+  `StreamClose` oneof constructions spelled out. Vendored from rimsky-core's
+  Apache-licensed `examples/` module at the reconciled tag — the one
+  protocol-speaking executor here meant to be built on.
 - **Test double** — the stub at `test/support/executors/stub/`, for scenario tests
   and conformance. **Not a skeleton template** — see
   [`../executors/stub/README.md`](../executors/stub/README.md).
-- **Production-shaped** — under `lib/services/executors/`: `http-node` (Go;
-  HTTP-call workloads), `claude-agent` (TypeScript; runs the Claude Code CLI,
-  demonstrates the async-callback path end-to-end), plus `verifier-http` and
-  `verifier-shape-checks`. Each carries its own README and config; read them
-  alongside the wire contract.
+- **Official services** — the executors rimsky ships under
+  `lib/services/executors/`: `http-node` (Go; HTTP-call workloads),
+  `verifier-http`, and `verifier-shape-checks` are **AGPL** runnable products;
+  `claude-agent` (TypeScript; runs the Claude Code CLI, demonstrates the
+  async-callback path end-to-end) is independently **Apache**. Study them for
+  protocol patterns, but do not copy the AGPL services into a non-AGPL project —
+  build from the wire contract and the copyable skeleton above.
 
 The `claude-agent` reference executor loads the wire contract via the published
 `@rimsky-ai/protocols` npm package (`@grpc/proto-loader` + the package's

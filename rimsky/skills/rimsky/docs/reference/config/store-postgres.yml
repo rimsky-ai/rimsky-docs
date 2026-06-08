@@ -17,3 +17,6 @@ http_port: 9111
 http_bridge_url: "http://store-postgres:9111"
 admin_port: 9121
 sweep_interval_seconds: 30
+# Optional protocol mix-ins on the same binary. Defaults: false.
+# enable_lifecycle: true   # also serve the LifecycleSubscriber protocol
+# enable_executor: true    # also serve the Executor protocol (atomic-staging-with-verifier pattern)

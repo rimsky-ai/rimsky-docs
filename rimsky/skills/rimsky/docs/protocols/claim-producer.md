@@ -1,5 +1,10 @@
 # Implementing a claim producer
 
+> **Version.** The API on this page targets the rimsky release this corpus is
+> reconciled against (`reconciledAgainst` in `.claude-plugin/plugin.json`). For
+> runnable, version-pinned code, copy the producer at
+> [`../examples/claimproducer/`](../examples/README.md).
+
 A **claim producer** is an out-of-process service that produces claim handles for
 rimsky's lock-and-claim primitives. It implements the `ClaimProducer` protocol over
 gRPC — five required methods (`Capabilities`, `Open`, `Commit`, `Abandon`,
@@ -115,13 +120,14 @@ slice of state for the duration of its run; it binds an alias, an intent (`r` or
 | `claim_id` | Rimsky-generated UUID; record it first (obligation 2). |
 | `producer_name`, `selector`, `intent`, `alias` | The resolved claim spec. `selector` is post-substitution; the producer parses it. |
 | `template_id`, `instance_id` | Opaque to rimsky, provided for namespace routing or trace correlation. `template_id` (the wire-protocol field name) carries the content hash; `instance_id` is the instance UUID. |
+| `run_scope_id` | Opaque per-run-scope identifier; ignore unless you are the host-agent-proxy (which keys per-run-scope spawn isolation on it so two concurrent run-scopes of the same instance get distinct late-bound child processes). A normal in-process producer does not need to read it. |
 
 ### `OpenResponse` (`oneof`)
 
 | Variant | Fields | Meaning |
 | --- | --- | --- |
 | `Acquired` | `address`, `payload`, `claim_scope`, `realized_write_semantics` | The claim was acquired. `address` = producer-supplied bytes the executor uses to access claimed state. `payload` = producer-supplied data captured at acquisition (e.g. a picked queue item's user data). `claim_scope` = canonicalized scope bytes; two acquisitions that should conflict must produce byte-equal `claim_scope`. `realized_write_semantics` = the per-claim value; must be a member of the envelope returned by `Capabilities`. |
-| `Unavailable` | none | No claim available right now (e.g. an empty items-table queue). Rimsky retries on the next scheduler tick. Producer-side faults flow as gRPC error status codes, not as an `Unavailable` response. |
+| `Unavailable` | optional `error_class` | No claim available right now (e.g. an empty items-table queue). Rimsky retries on the next scheduler tick. Producer-side faults flow as gRPC error status codes, not as an `Unavailable` response. Set `error_class` to a member of your producer's declared error vocabulary (e.g. `"pg/claim_unavailable"`) so rimsky's acquisition-failure routing keys the operator's `error_types:` chain on it; leave it empty to preserve the historical synthetic class `acquire/unavailable`. |
 
 Resume detection is the producer's responsibility. If `Open` arrives with a
 `claim_id` the producer has seen before, the producer recognizes the resume
@@ -135,6 +141,33 @@ consumer of the claim succeeded. Producer disposition is per-producer config.
 Examples: for `rw` claims on `staged_*` mode, atomically publish the staging area's
 contents into live state; for `sync`-mode `rw` claims, producer-side no-op (writes
 already live); for pick-policy claims, apply the configured commit-default action.
+
+The bundled postgres store demonstrates the SQL-substrate shape: for a
+`staged_async` claim whose selector names a schema, `Open` reserves a per-claim
+staging schema and returns its name as the claim's `address`; the executor
+writes into the staging schema; `Commit` performs the swap (drop the canonical
+schema, rename staging into its place) inside one store-side transaction;
+`Abandon` discards the staging schema; `Release` reaps any residual staging from
+an interrupted claim. The `claim_scope` stays the canonical selector so
+byte-equality conflict detection is unaffected. A swap that would lose external
+dependencies surfaces the declared error class `pg/swap_failed` and leaves the
+staging intact (the claim's recorded state stays `OPEN`). The lifecycle engages
+only for schema-shaped selectors; opaque (path-shaped) scope-bytes claims keep
+the verbatim selector-echo at `Open` and no-op terminals. This is not a
+wire-protocol change — every producer is free to implement the same atomic-staging
+shape against whatever substrate (Iceberg manifest pointer, S3 prefix swap, etc.)
+makes sense.
+
+The atomic-staging pattern composes with the held-claim sign-off gate
+([atomic-staging](../concepts/atomic-staging.md),
+[write-semantics](../concepts/write-semantics.md)): when verifier nodes co-hold
+the staging claim, the supervisor's aggregation fires `Commit` (atomic swap) on
+all-success and `Abandon` (drop staging) on any-failure. The gate binds the
+run's **effective bound attributes** (terminal-final delta merged with any
+incremental writebacks, last-write-wins) so the bound output equals the
+persisted output. From the producer's perspective the verbs are
+indistinguishable from a non-held terminal; the held resolution is rimsky-side
+machinery.
 
 Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional
 fields, both inert to rimsky:
@@ -268,15 +301,24 @@ tests.
 
 ## Reference impls
 
+- **Copyable skeleton (Apache)** — a minimal read-only producer you can copy and
+  adapt: [`../examples/claimproducer/`](../examples/README.md). It shows the
+  `OpenResponse` oneof (Acquired vs. Unavailable) and the Commit / Abandon /
+  Release lifecycle. Vendored from rimsky-core's Apache `examples/` module at the
+  reconciled tag.
 - **Test double** — the stub at `test/support/stores/stub/`, an in-memory fixture
   (see [`../stores/stub/README.md`](../stores/stub/README.md)). It is a test double,
   not a production starting point.
-- **Production-shaped** — the concrete-paths `filesystem` store and the
-  regional-access / items-queue `postgres` store, under
-  `lib/services/stores/{filesystem,postgres}`. Read their `config-example.yml` and
-  their server packages alongside the wire contract when building a store of your
-  own.
+- **Official services (AGPL)** — the concrete-paths `filesystem` store and the
+  regional-access / items-queue / atomic-staging-schema `postgres` store, under
+  `lib/services/stores/{filesystem,postgres}`. The postgres store demonstrates
+  the SQL-substrate atomic-staging lifecycle (per-claim staging schema reserved
+  at `Open`, atomic swap on `Commit`, drop on `Abandon`) plus the `pg/swap_failed`
+  declared-error-class emit site. These are AGPL runnable products; study their
+  `config-example.yml` and server packages for patterns, but build your own
+  producer from the Apache wire contract and the copyable skeleton above rather
+  than copying AGPL service code.
 
 ## See also
 
-[claim-producer](../concepts/claim-producer.md) · [claim](../concepts/claim.md) · [claim-handle](../concepts/claim-handle.md) · [claim-scope](../concepts/claim-scope.md) · [write-semantics](../concepts/write-semantics.md)
+[claim-producer](../concepts/claim-producer.md) · [claim](../concepts/claim.md) · [claim-handle](../concepts/claim-handle.md) · [claim-scope](../concepts/claim-scope.md) · [write-semantics](../concepts/write-semantics.md) · [atomic-staging](../concepts/atomic-staging.md)

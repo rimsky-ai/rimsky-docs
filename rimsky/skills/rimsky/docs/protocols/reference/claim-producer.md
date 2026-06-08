@@ -130,6 +130,7 @@ trace correlation.
 | `alias` | `string` | 5 |  |
 | `template_id` | `string` | 6 |  |
 | `instance_id` | `string` | 7 |  |
+| `run_scope_id` | `string` | 8 | run_scope_id is the RunScope this claim lives in; used by the host-agent-proxy to key per-run-scope spawn isolation on the claim-producer path. Opaque to rimsky. |
 
 ### OpenResponse
 
@@ -164,7 +165,20 @@ across byte-equal-scope claims (uniformity invariant per spec §2.5).
 
 ### Unavailable
 
-Unavailable signals "no claim available right now." No fields.
+Unavailable signals "no claim available right now." The optional
+error_class names the producer-declared acquisition-failure class
+(a member of the producer's declared error vocabulary, e.g.
+"pg/claim_unavailable") rimsky's acquisition-failure routing keys the
+operator's `error_types:` chain on. Leaving it empty preserves the
+historical behavior: rimsky routes the unavailability under the
+synthetic class "acquire/unavailable". The Available=false wire shape
+(this Unavailable arm of the oneof) is unchanged; the class is an
+out-of-band hint consumed on the rimsky routing side, not a new
+acquisition outcome.
+
+| Field | Type | # | Description |
+|-------|------|---|-------------|
+| `error_class` | `string` | 1 |  |
 
 ### CommitRequest
 

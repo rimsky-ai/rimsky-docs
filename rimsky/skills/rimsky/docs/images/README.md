@@ -120,4 +120,5 @@ claude-agent (Node on Wolfi).
 
 | Name | Contains | Base image | Dockerfile |
 | --- | --- | --- | --- |
-| `stubexecutor` | the test-only stub Executor (returns `Success` for every dispatch). Built on demand by the integration harness via testcontainers `FromDockerfile`; **never published**. | `gcr.io/distroless/static:nonroot` | `lib/services/test/stubexecutor/Dockerfile.stubexecutor` |
+| `stubexecutor` | the test-only stub Executor (returns `Success` for every dispatch, or a single terminal `Error` when `EXECUTOR_STUB_FORCE_ERROR=1`). Built on demand by the integration harness via testcontainers `FromDockerfile`; **never published**. | `gcr.io/distroless/static:nonroot` | `lib/services/test/stubexecutor/Dockerfile.stubexecutor` |
+| `overlapproducer` | the test-only overlap ClaimProducer (advertises a prefix-containment `ScopesConflict` predicate + `SplitScope`, so the `S-claimproducer-scopesconflict-wired` scenario can exercise non-byte-equal overlap detection). Built on demand by the integration harness via testcontainers `FromDockerfile`; **never published**. | `gcr.io/distroless/static:nonroot` | `lib/services/test/overlapproducer/Dockerfile.overlapproducer` |

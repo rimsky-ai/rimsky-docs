@@ -233,6 +233,11 @@ func parseRoutes(actionsFile string) ([]route, error) {
 		return nil, fmt.Errorf("parse %s: %w", actionsFile, err)
 	}
 
+	consts, err := collectStringConsts(fset, actionsFile)
+	if err != nil {
+		return nil, err
+	}
+
 	lit := findRegistryLiteral(f)
 	if lit == nil {
 		return nil, fmt.Errorf("%s: could not find registry slice literal %q", actionsFile, registryVar)
@@ -244,7 +249,7 @@ func parseRoutes(actionsFile string) ([]route, error) {
 		if !ok {
 			continue
 		}
-		action, isWrite, desc, rts := parseEntry(entry)
+		action, isWrite, desc, rts := parseEntry(entry, consts)
 		if action == "" {
 			return nil, fmt.Errorf("%s: registry entry with no Action field", actionsFile)
 		}
@@ -259,6 +264,51 @@ func parseRoutes(actionsFile string) ([]route, error) {
 		}
 	}
 	return routes, nil
+}
+
+// collectStringConsts walks every .go file in actionsFile's directory and
+// returns a map of package-level string-typed const name → unquoted value.
+// Registry entries may reference these constants instead of inline literals
+// (e.g. `{Action: composeOriginAction, ...}` where the const lives in a
+// sibling file).
+func collectStringConsts(fset *token.FileSet, actionsFile string) (map[string]string, error) {
+	dir := filepath.Dir(actionsFile)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read package dir %s: %w", dir, err)
+	}
+	out := map[string]string{}
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".go") || strings.HasSuffix(ent.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, ent.Name())
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					if s := stringValue(vs.Values[i], nil); s != "" {
+						out[name.Name] = s
+					}
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // findRegistryLiteral locates the `var v1Actions = []ActionEntry{...}`
@@ -294,8 +344,10 @@ type rawRoute struct {
 }
 
 // parseEntry pulls the Action, IsWrite, Description, and Routes out of one
-// ActionEntry composite literal.
-func parseEntry(entry *ast.CompositeLit) (action string, isWrite bool, desc string, routes []rawRoute) {
+// ActionEntry composite literal. consts maps package-level string-const names
+// to their values, so entries that name a const for Action (or Description)
+// instead of an inline literal still resolve.
+func parseEntry(entry *ast.CompositeLit, consts map[string]string) (action string, isWrite bool, desc string, routes []rawRoute) {
 	for _, el := range entry.Elts {
 		kv, ok := el.(*ast.KeyValueExpr)
 		if !ok {
@@ -307,9 +359,9 @@ func parseEntry(entry *ast.CompositeLit) (action string, isWrite bool, desc stri
 		}
 		switch key.Name {
 		case "Action":
-			action = stringValue(kv.Value)
+			action = stringValue(kv.Value, consts)
 		case "Description":
-			desc = stringValue(kv.Value)
+			desc = stringValue(kv.Value, consts)
 		case "IsWrite":
 			isWrite = boolValue(kv.Value)
 		case "Routes":
@@ -320,7 +372,9 @@ func parseEntry(entry *ast.CompositeLit) (action string, isWrite bool, desc stri
 }
 
 // parseRoutesField extracts every {"METHOD", "/path"} pair from a
-// `[]Route{...}` composite literal.
+// `[]Route{...}` composite literal. Route literals only ever use string
+// literals for method+path (never package-level consts), so no const map
+// is needed here.
 func parseRoutesField(v ast.Expr) []rawRoute {
 	lit, ok := v.(*ast.CompositeLit)
 	if !ok {
@@ -350,35 +404,41 @@ func parseRouteLiteral(rl *ast.CompositeLit) rawRoute {
 			if key, ok := kv.Key.(*ast.Ident); ok {
 				switch key.Name {
 				case "Method":
-					rt.Method = stringValue(kv.Value)
+					rt.Method = stringValue(kv.Value, nil)
 				case "Path":
-					rt.Path = stringValue(kv.Value)
+					rt.Path = stringValue(kv.Value, nil)
 				}
 			}
 			continue
 		}
 		switch pos {
 		case 0:
-			rt.Method = stringValue(el)
+			rt.Method = stringValue(el, nil)
 		case 1:
-			rt.Path = stringValue(el)
+			rt.Path = stringValue(el, nil)
 		}
 		pos++
 	}
 	return rt
 }
 
-// stringValue returns the value of a string-literal expression, or "".
-func stringValue(e ast.Expr) string {
-	lit, ok := e.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return ""
+// stringValue returns the value of a string-literal expression, or "". If
+// consts is non-nil and the expression is an identifier whose name is in the
+// map, the const's value is returned — letting registry entries reference
+// package-level string consts (e.g. `{Action: composeOriginAction}`) instead
+// of inline literals.
+func stringValue(e ast.Expr, consts map[string]string) string {
+	if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+		s, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return ""
+		}
+		return s
 	}
-	s, err := strconv.Unquote(lit.Value)
-	if err != nil {
-		return ""
+	if id, ok := e.(*ast.Ident); ok && consts != nil {
+		return consts[id.Name]
 	}
-	return s
+	return ""
 }
 
 // boolValue returns the value of a `true`/`false` identifier expression.

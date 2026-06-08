@@ -22,7 +22,8 @@ var referenceGenerators = []string{
 	"rimsky-docs-gopkg",        // protocols/go-packages.md
 	"rimsky-docs-template-ref", // reference/template-schema.md
 	"rimsky-docs-rest-ref",     // reference/rest-api.md
-	"rimsky-docs-cli-ref",      // reference/cli.md (builds the rimsky CLI)
+	"rimsky-docs-cli-ref",         // reference/cli.md (builds the rimsky CLI)
+	"rimsky-docs-vendor-examples", // examples/ (vendored from rimsky-core/examples at the reconciled tag)
 }
 
 // runReferenceParity shells each generated-reference binary in -check mode and

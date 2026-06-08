@@ -18,6 +18,7 @@ How to implement a service that speaks one of rimsky's wire protocols. The guide
 - [LifecycleSubscriber](protocols/lifecycle-subscriber.md): implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus `OnRunScopeTerminal`).
 - [Publisher](protocols/publisher.md): implement a publisher (Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via `POST /instances/{id}/messages`). Sensors (cron / http / object-store / webhook) are one kind of publisher.
 - [Go packages](protocols/go-packages.md): the optional Go helper packages in the single `protocols` module (conveniences — not a required SDK).
+- [Runnable examples](examples/README.md): minimal, copyable Apache server skeletons — executor, claim-producer, atomic-staging-fs-producer, lifecycle-subscriber, publisher, validation, data-processing — vendored from rimsky-core's `examples/` module at the reconciled tag, each with the exact Go wiring and a pinned `go.mod`; plus the `examples/compose/` directory carrying a runnable `rimsky-compose.yml` manifest and two referenced `TemplateSpec` files (`template-a.yml`, `template-b.yml`) for the `rimsky compose up | plan | down` verbs.
 
 ## Reference
 
@@ -25,12 +26,12 @@ The definitive specifics an agent reads to build a template or deployment plan.
 
 - [Template & `rimsky.yml` schema](reference/template-schema.md): the complete template / config schema.
 - [REST API](reference/rest-api.md): every control-API route, method, and per-action auth gate.
-- [CLI](reference/cli.md): the `rimsky` command surface.
+- [CLI](reference/cli.md): the `rimsky` command surface. Covers `rimsky compose` (`up | down | plan | status`) — the declarative reconcile verb that owns the reserved `compose:<project>:` tag / instance-key namespace and operates against an already-running rimsky (it starts nothing).
 - [Worked configs](reference/config/rimsky.yml): a copyable unified `rimsky.yml`; the same directory holds the all-in-one, store, and supervisor examples.
 
 ## Cookbook
 
-- [Cookbook](cookbook/README.md): the canonical patterns rimsky's primitives span — queue worker, reactive recompute, capacity limit, convergence loop, event-driven node, claim handoff, sub-graph. Each is problem → rimsky shape → copyable template → gotchas → without-rimsky.
+- [Cookbook](cookbook/README.md): the canonical patterns rimsky's primitives span — queue worker, reactive recompute, capacity limit, convergence loop, event-driven node, claim handoff, sub-graph, local-binary executor (dev-loop dispatch through the host-agent proxy). Each is problem → rimsky shape → copyable template → gotchas → without-rimsky.
 
 ## Patterns
 

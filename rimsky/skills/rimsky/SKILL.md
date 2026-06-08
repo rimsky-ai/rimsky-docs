@@ -65,6 +65,8 @@ cookbook recipe** — these map the primitives onto real shapes:
 - `docs/cookbook/capacity-limit.md` — bounding concurrency with claims/locks
 - `docs/cookbook/claim-handoff.md` — passing a held claim down a node chain
 - `docs/cookbook/sub-graph.md` — calling a reusable sub-graph via `delegate:`
+- `docs/cookbook/local-binary-executor.md` — host-agent proxy + per-instance
+  service binding to run an executor on your dev machine
 
 For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
 `operational-health.md`). Working templates to copy live in `docs/agents/examples/`
@@ -82,6 +84,15 @@ For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
   `lifecycle-subscriber.md`, `publisher.md` — plus the generated wire reference
   `docs/protocols/reference/` and the optional Go helper packages
   `docs/protocols/go-packages.md`. Conformance: `docs/concepts/conformance.md`.
+  Copyable Apache-licensed Go server skeletons — one per protocol the consumer
+  implements (executor, claim-producer, lifecycle-subscriber, publisher, plus
+  the registration-time mix-ins validation and data-processing, an
+  atomic-staging filesystem claim-producer variant, and a `compose/` manifest
+  example), each carrying the exact wiring (generated imports, streaming-server
+  method signatures, oneof terminal construction, startup handshake) and a
+  pinned `go.mod` — live under `docs/examples/` (see `docs/examples/README.md`).
+  These are not test doubles and not deployable — copy a directory, rename the
+  module, replace the body.
 - **Picking bundled building blocks:** `docs/stores/`, `docs/executors/`,
   `docs/blob-backends/`, `docs/mcp-servers/`.
 

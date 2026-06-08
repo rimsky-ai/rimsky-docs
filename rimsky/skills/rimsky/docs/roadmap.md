@@ -53,9 +53,18 @@ load-bearing primitives:
   at the control-api; the same surface available as MCP tools at
   `POST /mcp` for LLM-accessible operation.
 - **API-key auth.** Bearer tokens with per-key JSONB permission
-  grants, verb-noun action grammar, implicit anonymous bootstrap,
-  rotation with grace, structured audit on the existing events log,
-  per-handler dry-run mode.
+  grants. Each grant entry is `{action, mode?, scope?}` — the
+  noun-verb action string (with `*` / `<noun>:*` / `*:<verb>`
+  wildcards at action boundaries), an optional identity-bound
+  `mode` floor (`execute` default | `dry_run`; the per-request
+  dry-run flag may restrict further but never escalate), and an
+  optional `scope` resource selector that narrows the entry to
+  matching targets. A request is allowed iff some entry's action
+  matches AND its scope (if present) is satisfied — set-membership,
+  not first-match. Plus implicit anonymous bootstrap, rotation
+  with grace, structured audit on the existing events log
+  (`audit:read` granted separately from `event:read`), and a
+  per-request dry-run flag.
 - **Three runtime processes plus migration and conformance tools.**
   Scheduler, supervisor, control-api communicate only through
   Postgres.
@@ -63,16 +72,26 @@ load-bearing primitives:
   local service binaries to an instance at run time: `rimsky run
   --service <name>=<path>` auto-starts a local host-agent daemon
   (`cmd/rimsky-host-agent`), which spawns the binary and proxies it
-  through `cmd/rimsky-host-agent-proxy`. The daemon is managed with
-  `rimsky agent start | status | stop`. See concepts `host-agent` and
+  through `cmd/rimsky-host-agent-proxy`. The proxy is a transparent
+  forwarder for every fronted rimsky service protocol — executor,
+  claim-producer, publisher, validation, and data-processing — over one
+  uniform spawn/forward mechanism; a binary that conforms to its own
+  protocol works behind the proxy by construction (no separate
+  conformance surface). The daemon is managed with `rimsky agent
+  start | status | stop`. See concepts `host-agent` and
   `host-agent-proxy`.
 
 Reference implementations of bundled claim producers (filesystem,
-postgres, stub), executors (`http-node`, `claude-agent`,
-`verifier-http`, `verifier-shape-checks`, stubs), sensors
+postgres), executors (`http-node`, `claude-agent`,
+`verifier-http`, `verifier-shape-checks`), sensors
 (`sensor-{cron,http,object-store,webhook}`), and lifecycle subscribers
 (the `openlineage` subscriber, emitting OpenLineage events) ship in the
-same repository.
+same repository as the eleven bundled-service Docker images built by
+`make service-images`. Stub doubles for testing (a stub claim producer
+and a stub executor, plus an overlap producer the integration harness
+uses to exercise conflict matrices) live under `test/support/` and
+`lib/services/test/stubexecutor/` + `lib/services/test/overlapproducer/`;
+they are not bundled services and are not built by `make service-images`.
 
 ## Recently shipped
 
@@ -100,9 +119,10 @@ Major work landed since the previous roadmap pass:
 - **Dual-licensing the orchestrator layer.** The AGPL surface is now
   dual-licensed: AGPL-3.0-or-later by default, OR a Fall Guy Consulting
   commercial license as an alternative over the same code. The Apache
-  island (the `lib/protocols/` wire contract plus the TypeScript executor
-  reference impl and the docs) stays permissive with no commercial track.
-  See `licensing.md`.
+  island (the `lib/protocols/` wire contract, the TypeScript executor
+  reference impl, the docs, and the copy-and-modify `examples/`
+  per-protocol servers) stays permissive with no commercial track. See
+  `licensing.md`.
 - **Layer crystallization, public docs, tri-licensing.**
   Four-Go-module workspace (`lib/protocols`, `lib/foundation`,
   `lib/services`, root) with depguard-enforced import boundaries; the

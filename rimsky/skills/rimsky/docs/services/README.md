@@ -134,6 +134,7 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | — | externally-reachable bridge URL advertised for observability. |
   | `RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS` | `60000` | per-request upstream timeout. |
   | `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` | `10485760` | response-body size cap. |
+  | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `error_class` | JSON field read from a parseable 4xx upstream error body to populate the emitted `error_class`. A per-node `attributes.error_class_field` overrides this for an individual dispatch; when the field is absent from the body, classification falls back to the stable `http/request_invalid/_unspecified` leaf. |
   | `RIMSKY_EXECUTOR_STUB_MODE` | `0` | `1` short-circuits the network path (returns canned success). |
 - **Ports:** gRPC `9091`, HTTP `9092` (Dockerfile `EXPOSE 9091 9092`).
 - **Dockerfile:** `lib/services/executors/http-node/Dockerfile.http-node`.
@@ -156,6 +157,8 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_SILENCE_MS` | `120000` | silence-detection timeout. |
   | `RIMSKY_EXECUTOR_CALLBACK_HOST` | `127.0.0.1` | host for the internal MCP callback URL. |
   | `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` | — | externally-reachable bridge URL (reference-config value). |
+  | `RIMSKY_EXECUTOR_MCP_CATALOG` | unset | Path to a YAML/JSON catalog file (one parser handles both — YAML is a JSON superset) of named MCP servers a dispatch can reference by `{ ref: "<name>" }` in its `cli.mcp_servers` attribute. Each entry declares a `transport` (`http` / `stdio` / `module` / `http-loopback`). Parsed **once at startup** and shared by both transports; a malformed catalog fails startup loudly. |
+  | `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` | `0` (deny) | per-deployment policy. When unset / falsy, inline `{ name, url }` MCP servers in `cli.mcp_servers` are rejected and only catalog `{ ref: "<name>" }` references are accepted — the catalog is the authoritative server source. Set to `1` / `true` / `yes` to opt back into inline servers. |
   | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | unset | one is required in non-stub mode (API key wins). |
 - **Ports:** gRPC `9090`, HTTP `9190` (Dockerfile `EXPOSE 9090 9190`).
 - **Dockerfile:** `lib/services/executors/claude-agent/Dockerfile` (Node 24 on a
@@ -226,7 +229,14 @@ binary. All sensors share two env vars:
   the retired internal scheduler cron-fire path.
 - **Protocol:** Publisher.
 - **Config** (env): `RIMSKY_ENDPOINT` (default `http://localhost:8080`),
-  `RIMSKY_SENSOR_CRON_HOST` (`0.0.0.0`), `RIMSKY_SENSOR_CRON_PORT` (`9081`).
+  `RIMSKY_SENSOR_CRON_HOST` (`0.0.0.0`), `RIMSKY_SENSOR_CRON_PORT` (`9081`),
+  and optional `RIMSKY_SENSOR_CRON_STATE_DSN` — a **Postgres** DSN for
+  persisting active cron subscriptions and `next_fire_at` watermarks across
+  restarts (the durability property: a restarted binary fires on the
+  originally-scheduled window rather than recomputing `sched.Next(restartTime)`
+  and skipping the in-flight window). When unset the sensor runs in-memory and
+  resyncs via `Publisher.Subscribe` replay at control-api startup. SQLite is
+  not supported (the state schema uses Postgres-only `now()` and `TIMESTAMPTZ`).
 - **Ports:** gRPC `9081` (Dockerfile `EXPOSE 9081`).
 - **Dockerfile:** `lib/services/sensors/sensor-cron/Dockerfile.sensor-cron`.
 
@@ -315,12 +325,15 @@ binary. All sensors share two env vars:
 ### stubexecutor
 
 - **What it is:** a **test-only** Executor that returns `Success` for every
-  dispatch. The integration harness builds it on demand (testcontainers
+  dispatch (or, with `EXECUTOR_STUB_FORCE_ERROR=1`, a single terminal `Error`
+  with `error_class: "stub/forced_error"` — used by held-subgraph abandon-case
+  scenarios). The integration harness builds it on demand (testcontainers
   `FromDockerfile`) and registers it as a peer executor so tests about stores,
   subscribers, and observability can complete the claim loop without a real
   executor. It is **never published as a product image**.
 - **Protocol:** [Executor](../concepts/executor.md) (`Execute` emits a single
-  terminal `StreamClose{Success}` — zero heartbeats, no attribute writeback)
+  terminal `StreamClose` — `Success` by default, or `Error{stub/forced_error}`
+  when `EXECUTOR_STUB_FORCE_ERROR=1`; zero heartbeats, no attribute writeback)
   plus the read-only `ExecutorObservability` mix-in.
 - **Observability / attribute schema:** `Capabilities` answers with a
   **permissive open** [expected-attributes schema](../concepts/attribute.md)
@@ -329,11 +342,32 @@ binary. All sensors share two env vars:
   and settle: the dispatch-time attribute-surface gate rejects any
   attribute-bearing node whose executor advertises **no** schema with
   `executor_schema_unavailable`, and a permissive open schema clears that
-  gate. The stub keeps **no traces** — `GetTrace` and `StreamTrace` return
-  gRPC `Unimplemented`, and `Capabilities` reports
-  `supports_trace_get: false` / `supports_trace_stream: false`. It carries no
-  `Validation` mix-in.
+  gate. In `EXECUTOR_STUB_FORCE_ERROR=1` mode, `Capabilities` additionally
+  advertises `stub/forced_error` in `DeclaredErrorClasses` so a template can
+  route that class through an `error_types:` policy without the registration
+  validator rejecting the unknown class. The stub keeps **no traces** —
+  `GetTrace` and `StreamTrace` return gRPC `Unimplemented`, and `Capabilities`
+  reports `supports_trace_get: false` / `supports_trace_stream: false`. It
+  carries no `Validation` mix-in.
 - **Config** (env): `EXECUTOR_STUB_BIND` — gRPC bind address (default
-  `0.0.0.0:9300`).
+  `0.0.0.0:9300`); `EXECUTOR_STUB_FORCE_ERROR` — `1` flips the stub from
+  success-only to error-only (single terminal `Error` per dispatch).
 - **Ports:** gRPC `9300` (Dockerfile `EXPOSE 9300`).
 - **Dockerfile:** `lib/services/test/stubexecutor/Dockerfile.stubexecutor`.
+
+### overlapproducer
+
+- **What it is:** a **test-only** ClaimProducer that advertises a non-trivial
+  `ScopesConflict` predicate (prefix-containment over selector strings) plus
+  `SplitScope`. Exists so the `S-claimproducer-scopesconflict-wired` scenario
+  can drive a real rimsky stack against a producer whose overlapping scopes are
+  not byte-equal — the case rimsky's default byte-equal conflict check cannot
+  detect. The integration harness builds it on demand (testcontainers
+  `FromDockerfile`) and registers it as a peer claim-producer on the shared
+  docker network. It is **never published as a product image**.
+- **Protocol:** [ClaimProducer](../concepts/claim-producer.md), advertising
+  `supports_scopes_conflict` and `supports_split_scope`.
+- **Config** (env): `OVERLAP_PRODUCER_BIND` — gRPC bind address (default
+  `0.0.0.0:9400`).
+- **Ports:** gRPC `9400` (Dockerfile `EXPOSE 9400`).
+- **Dockerfile:** `lib/services/test/overlapproducer/Dockerfile.overlapproducer`.

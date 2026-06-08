@@ -1,5 +1,10 @@
 # Implementing a publisher
 
+> **Version.** The API on this page targets the rimsky release this corpus is
+> reconciled against (`reconciledAgainst` in `.claude-plugin/plugin.json`). For
+> runnable, version-pinned code, copy the publisher at
+> [`../examples/publisher/`](../examples/README.md).
+
 A **publisher** is a peer service that publishes messages into rimsky. It
 implements the `Publisher` protocol (four verbs: `Capabilities`, `Subscribe`,
 `Unsubscribe`, `ListSubscriptions`) and emits each message by POSTing a message
@@ -13,6 +18,13 @@ A Go service may use the `protocols` module's `publisherkit` package
 retry/backoff scaffolding; it is a convenience, not a requirement. Wire contract:
 `lib/protocols/proto/v1/publisher.proto`; generated field/message/RPC reference at
 [`reference/publisher.md`](reference/publisher.md).
+
+The `rimsky-host-agent-proxy` transparently fronts `Publisher` alongside the
+other four fronted protocols (`Executor`, `ClaimProducer`, `Validation`,
+`DataProcessing`) — a late-bound publisher binary that conforms to this wire
+contract works behind the proxy by construction with no proxy-specific code. See
+[`README.md`](README.md#host-agent-proxy-a-transparent-forwarder) for the
+implementor consequences.
 
 <!-- @source: ../../.ok-planner/design/concepts/publisher.md -->
 
@@ -205,8 +217,16 @@ The same checks are exposed as a Go library under
 
 ## Reference impls
 
+A copyable, **Apache** skeleton you can adapt is at
+[`../examples/publisher/`](../examples/README.md): it manages subscriptions
+(Subscribe / Unsubscribe / ListSubscriptions) in memory and advertises a kind via
+`Capabilities`. Vendored from rimsky-core's `examples/` module at the reconciled
+tag.
+
 Sensors are one kind of publisher. The four reference sensors ship under
-`lib/services/sensors/`:
+`lib/services/sensors/` as **AGPL** runnable products — study them for patterns,
+but build your own from the wire contract and the copyable skeleton above rather
+than copying AGPL service code:
 
 | Binary | Substrate |
 | --- | --- |
@@ -216,7 +236,7 @@ Sensors are one kind of publisher. The four reference sensors ship under
 | `sensor-webhook` | Inbound webhook receiver. |
 
 Each is single-replica per the [replica contract](#replica-contract) and carries
-its own README and config; read them alongside the wire contract.
+its own README and config.
 
 `sensor-object-store` validates backends at startup and advertises (via
 `Capabilities`) **only** the registered set; the default bundled image registers
