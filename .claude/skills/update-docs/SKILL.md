@@ -43,7 +43,7 @@ public rimsky release.
 
    | State | Action |
    |---|---|
-   | Latest rimsky release is **newer** than `reconciledAgainst` — **or you cannot determine the latest** | **`/build-docs`** — full reconcile to the latest release: it pulls the rimsky source, regenerates the mechanical references, runs the 7-lint gate, runs `/refine-docs` at its review stage, stamps `reconciledAgainst`, and reports. The safe default when uncertain, because it is idempotent (a no-op against unchanged source) and resolves/acquires the source itself. |
+   | Latest rimsky release is **newer** than `reconciledAgainst` — **or you cannot determine the latest** | **`/build-docs`** — full reconcile to the latest release: it pulls the rimsky source, regenerates the mechanical references, runs the 7-lint gate, executes the journey walkthroughs against the published images (its artifact gate; Docker required), runs `/refine-docs` at its review stage, stamps `reconciledAgainst`, and reports. The safe default when uncertain, because it is idempotent (a no-op against unchanged source) and resolves/acquires the source itself. |
    | Pinned release is current **and** the working tree has uncommitted doc edits | **`/refine-docs`** — converge the hand-edits (the review→fix→lint loop; no source pull or regen). |
    | Pinned release is current **and** the working tree is clean | Nothing to do — report that the corpus is current against `<reconciledAgainst>` and stop. Do not run a reconcile for its own sake. |
 

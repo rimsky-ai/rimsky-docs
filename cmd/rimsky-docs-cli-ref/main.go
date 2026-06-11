@@ -20,6 +20,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 func main() {
@@ -33,10 +35,17 @@ func main() {
 	}
 
 	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/cli.md", "path to write the CLI reference (relative to cmd/ cwd)")
+	pluginJSON := flag.String("plugin", "../rimsky/.claude-plugin/plugin.json", "plugin.json carrying the reconciledAgainst version banner pin")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 
-	if err := run(rimskyRepo, *out, *check); err != nil {
+	version, err := refpin.Resolve(*pluginJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := run(rimskyRepo, *out, version, *check); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

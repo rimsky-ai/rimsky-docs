@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // buildProtocolsFixture materializes a tiny protocols-module tree under a temp
@@ -41,11 +43,15 @@ func buildProtocolsFixture(t *testing.T) string {
 	return protocolsDir
 }
 
+// testVersion is the reconciled-version pin threaded into run() by tests; the
+// real binary resolves it from plugin.json reconciledAgainst.
+const testVersion = "v9.9.9-test"
+
 func TestRun_GeneratesExpectedSections(t *testing.T) {
 	protocolsDir := buildProtocolsFixture(t)
 	out := filepath.Join(t.TempDir(), "go-packages.md")
 
-	if err := run(protocolsDir, out, false); err != nil {
+	if err := run(protocolsDir, out, testVersion, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -56,6 +62,7 @@ func TestRun_GeneratesExpectedSections(t *testing.T) {
 
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# rimsky protocols module — Go package reference",
 		"## sample",
 		"### type Widget",
@@ -84,17 +91,17 @@ func TestRun_CheckMode_PassesThenDetectsDrift(t *testing.T) {
 	protocolsDir := buildProtocolsFixture(t)
 	out := filepath.Join(t.TempDir(), "go-packages.md")
 
-	if err := run(protocolsDir, out, false); err != nil {
+	if err := run(protocolsDir, out, testVersion, false); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	if err := run(protocolsDir, out, true); err != nil {
+	if err := run(protocolsDir, out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 
 	if err := os.WriteFile(out, []byte("stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(protocolsDir, out, true); err == nil {
+	if err := run(protocolsDir, out, testVersion, true); err == nil {
 		t.Fatal("expected drift error, got nil")
 	}
 }

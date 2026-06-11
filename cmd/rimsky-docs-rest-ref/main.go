@@ -23,6 +23,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 func main() {
@@ -38,10 +40,17 @@ func main() {
 	defaultActionsFile := rimskyRepo + "/lib/control/controlapi/actions.go"
 	actionsFile := flag.String("actions-file", defaultActionsFile, "rimsky control-api action registry source (defaults to ${RIMSKY_REPO}/lib/control/controlapi/actions.go)")
 	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/rest-api.md", "path to write the REST API reference (relative to cmd/ cwd)")
+	pluginJSON := flag.String("plugin", "../rimsky/.claude-plugin/plugin.json", "plugin.json carrying the reconciledAgainst version banner pin")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 
-	if err := run(*actionsFile, *out, *check); err != nil {
+	version, err := refpin.Resolve(*pluginJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := run(*actionsFile, *out, version, *check); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

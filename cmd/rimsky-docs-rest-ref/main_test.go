@@ -9,7 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
+
+// testVersion is the reconciled-version pin threaded into run() by tests; the
+// real binary resolves it from plugin.json reconciledAgainst.
+const testVersion = "v9.9.9-test"
 
 // buildActionsFixture materializes a miniature actions.go under a temp dir from
 // the testdata fixture (stored as .go.txt so it is not compiled with the cmd
@@ -32,7 +38,7 @@ func TestRun_GeneratesExpectedTable(t *testing.T) {
 	actionsFile := buildActionsFixture(t)
 	out := filepath.Join(t.TempDir(), "rest-api.md")
 
-	if err := run(actionsFile, out, false); err != nil {
+	if err := run(actionsFile, out, testVersion, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -43,6 +49,7 @@ func TestRun_GeneratesExpectedTable(t *testing.T) {
 
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# REST / HTTP control API reference",
 		"Bare, unversioned paths",
 		"auth-gated per-action",
@@ -75,17 +82,17 @@ func TestRun_CheckMode_PassesThenDetectsDrift(t *testing.T) {
 	actionsFile := buildActionsFixture(t)
 	out := filepath.Join(t.TempDir(), "rest-api.md")
 
-	if err := run(actionsFile, out, false); err != nil {
+	if err := run(actionsFile, out, testVersion, false); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	if err := run(actionsFile, out, true); err != nil {
+	if err := run(actionsFile, out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 
 	if err := os.WriteFile(out, []byte("stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(actionsFile, out, true); err == nil {
+	if err := run(actionsFile, out, testVersion, true); err == nil {
 		t.Fatal("expected drift error, got nil")
 	}
 }
@@ -104,26 +111,28 @@ func TestRun_AgainstRimskyRepo(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "rest-api.md")
-	if err := run(actionsFile, out, false); err != nil {
+	if err := run(actionsFile, out, testVersion, false); err != nil {
 		t.Fatalf("run against %s: %v", actionsFile, err)
 	}
 	md, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The real registry routes everything under /v1 (as of rimsky v0.8.0), so
+	// every route lands in the /v1 group.
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# REST / HTTP control API reference",
-		"## /instances",
-		"## /admin",
-		"| `GET` | `/instances` | `instance:read` |",
+		"## /v1",
+		"| `GET` | `/v1/instances` | `instance:read` |",
 	} {
 		if !strings.Contains(string(md), want) {
 			t.Errorf("real-registry output missing %q", want)
 		}
 	}
 	// -check against the just-generated file must pass (deterministic output).
-	if err := run(actionsFile, out, true); err != nil {
+	if err := run(actionsFile, out, testVersion, true); err != nil {
 		t.Errorf("check after generate against real registry: %v", err)
 	}
 }

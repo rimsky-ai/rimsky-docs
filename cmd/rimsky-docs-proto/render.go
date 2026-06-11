@@ -4,16 +4,17 @@
 
 // render.go — renders a single FileDescriptorProto to markdown. The
 // SourceCodeInfo path encoding used to look up comments:
-//   file-level comment .......... [12]   (FileDescriptorProto.syntax) is not
-//                                         it; the file comment is the location
-//                                         with an empty path or path [2]
-//                                         (package). We use path [] / [2].
-//   service i ................... [6, i]
-//     method j .................. [6, i, 2, j]
-//   message i ................... [4, i]
-//     field j ................... [4, i, 2, j]
-//   enum i ...................... [5, i]
-//     enum value j .............. [5, i, 2, j]
+//
+//	file-level comment .......... [12]   (FileDescriptorProto.syntax) is not
+//	                                      it; the file comment is the location
+//	                                      with an empty path or path [2]
+//	                                      (package). We use path [] / [2].
+//	service i ................... [6, i]
+//	  method j .................. [6, i, 2, j]
+//	message i ................... [4, i]
+//	  field j ................... [4, i, 2, j]
+//	enum i ...................... [5, i]
+//	  enum value j .............. [5, i, 2, j]
 package main
 
 import (
@@ -21,6 +22,8 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/types/descriptorpb"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // FileDescriptorProto field numbers used in source-info paths.
@@ -39,11 +42,11 @@ const (
 	enumValueField = 2
 )
 
-func renderFile(fdp *descriptorpb.FileDescriptorProto) string {
+func renderFile(fdp *descriptorpb.FileDescriptorProto, version string) string {
 	idx := buildCommentIndex(fdp)
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "%s\n\n", autogenBanner)
+	fmt.Fprintf(&b, "%s\n%s\n\n", autogenBanner, refpin.Banner(version))
 	fmt.Fprintf(&b, "# %s\n\n", titleize(fdp.GetName()))
 	fmt.Fprintf(&b, "Source: `lib/protocols/proto/v1/%s`\n\n", fdp.GetName())
 

@@ -16,6 +16,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 func main() {
@@ -31,10 +33,17 @@ func main() {
 	defaultProtoDir := rimskyRepo + "/lib/protocols/proto/v1"
 	protoDir := flag.String("proto-dir", defaultProtoDir, "directory of .proto files (defaults to ${RIMSKY_REPO}/lib/protocols/proto/v1)")
 	outDir := flag.String("out-dir", "../rimsky/skills/rimsky/docs/protocols", "directory to write reference markdown into (relative to cmd/ cwd)")
+	pluginJSON := flag.String("plugin", "../rimsky/.claude-plugin/plugin.json", "plugin.json carrying the reconciledAgainst version banner pin")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 
-	if err := run(*protoDir, *outDir, *check); err != nil {
+	version, err := refpin.Resolve(*pluginJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := run(*protoDir, *outDir, version, *check); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -16,6 +16,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // structOrder is the curated top-down rendering order for the schema structs:
@@ -48,9 +50,9 @@ var structOrder = []string{
 }
 
 // renderReference builds the full markdown schema reference from the model.
-func renderReference(m *specModel) string {
+func renderReference(m *specModel, version string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", autogenBanner)
+	fmt.Fprintf(&b, "%s\n%s\n\n", autogenBanner, refpin.Banner(version))
 	fmt.Fprintf(&b, "# rimsky template schema (`rimsky.yml`) reference\n\n")
 	fmt.Fprintf(&b, "This is the complete, mechanical reference for the rimsky template "+
 		"schema — the shape of a `rimsky.yml`. It is generated from the spec "+

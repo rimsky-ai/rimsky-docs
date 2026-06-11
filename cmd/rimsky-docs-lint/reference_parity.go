@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // referenceGenerators are the binaries that generate a documentation reference
@@ -18,10 +21,10 @@ import (
 // output path, which points at the relocated corpus), exiting non-zero on any
 // drift. The glossary generator is checked separately by glossary-parity.
 var referenceGenerators = []string{
-	"rimsky-docs-proto",        // protocols/reference/*.md (needs protoc)
-	"rimsky-docs-gopkg",        // protocols/go-packages.md
-	"rimsky-docs-template-ref", // reference/template-schema.md
-	"rimsky-docs-rest-ref",     // reference/rest-api.md
+	"rimsky-docs-proto",           // protocols/reference/*.md (needs protoc)
+	"rimsky-docs-gopkg",           // protocols/go-packages.md
+	"rimsky-docs-template-ref",    // reference/template-schema.md
+	"rimsky-docs-rest-ref",        // reference/rest-api.md
 	"rimsky-docs-cli-ref",         // reference/cli.md (builds the rimsky CLI)
 	"rimsky-docs-vendor-examples", // examples/ (vendored from rimsky-core/examples at the reconciled tag)
 }
@@ -55,6 +58,48 @@ func runReferenceParity(args []string) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("generated reference(s) failed parity (stale, or could not be regenerated — see stderr; run the generator to refresh): %s", strings.Join(failed, ", "))
+	}
+	return checkVersionBanners(*repoRoot)
+}
+
+// checkVersionBanners verifies every generated reference page carries the
+// version banner naming the reconciledAgainst release. Parity alone proves
+// committed == regenerated; this additionally proves the regenerated content
+// states which rimsky release it reflects — a generator regression that drops
+// the banner would pass parity but ship unversioned references.
+func checkVersionBanners(repoRoot string) error {
+	version, err := refpin.Resolve(filepath.Join(repoRoot, "../rimsky/.claude-plugin/plugin.json"))
+	if err != nil {
+		return fmt.Errorf("version-banner check: %w", err)
+	}
+	banner := refpin.Banner(version)
+
+	docsRoot := filepath.Join(repoRoot, "../rimsky/skills/rimsky/docs")
+	pages := []string{
+		filepath.Join(docsRoot, "protocols/go-packages.md"),
+		filepath.Join(docsRoot, "reference/template-schema.md"),
+		filepath.Join(docsRoot, "reference/rest-api.md"),
+		filepath.Join(docsRoot, "reference/cli.md"),
+	}
+	wireRefs, err := filepath.Glob(filepath.Join(docsRoot, "protocols/reference/*.md"))
+	if err != nil {
+		return err
+	}
+	pages = append(pages, wireRefs...)
+
+	var missing []string
+	for _, page := range pages {
+		content, err := os.ReadFile(page)
+		if err != nil {
+			missing = append(missing, page+" (unreadable: "+err.Error()+")")
+			continue
+		}
+		if !strings.Contains(string(content), banner) {
+			missing = append(missing, page)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("generated reference(s) missing the version banner for %s (regenerate with the current generators):\n  %s", version, strings.Join(missing, "\n  "))
 	}
 	return nil
 }

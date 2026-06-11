@@ -64,6 +64,14 @@ messages, and not agent↔human chat (that is `citation-grammar.md`).
   in `protocols/README`.
 - **Cookbook** (`cookbook/*.md`): `Problem` · `Rimsky shape` (primitives + why) ·
   `Template` (copyable) · `Gotchas` · `Without rimsky`.
+- **Journey walkthrough** (`cookbook/zero-to-deployed.md`): `Problem` ·
+  prerequisites · stepwise commands, **each step stating its expected observable
+  output** · `Gotchas`. Executed verbatim against the published images by the
+  build gate — every command must be copy-runnable from a clean state.
+- **Diagnosis session** (`cookbook/debug-*.md`): `Symptom` · the command
+  sequence with example outputs (real payloads, refreshed by the build gate) ·
+  a decision tree · links into the error catalog for every leaf. Executed
+  against a live deployment by the build gate.
 - **Catalog** (`services/`, `images/`, `reference/`): tables first; prose only for
   cross-cutting rules.
 - **Pattern** (`patterns/`): assertion-first — lead with the real surface, not the

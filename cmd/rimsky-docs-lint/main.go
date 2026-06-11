@@ -35,7 +35,7 @@ var subcommands = []subcommand{
 	{"llms-txt-validity", runLLMSTxtValidity, "verify llms.txt is well-formed and links resolve"},
 	{"link-validity", runLinkValidity, "verify every relative markdown link in docs/ resolves on disk"},
 	{"symbol-existence", runSymbolExistence, "verify every CamelCase symbol a guide names exists in the generated references"},
-	{"reference-parity", runReferenceParity, "verify each generated reference matches regenerating from source (needs RIMSKY_REPO + protoc)"},
+	{"reference-parity", runReferenceParity, "verify each generated reference matches regenerating from source and carries the reconciledAgainst version banner (needs RIMSKY_REPO + protoc)"},
 	{"all", runAll, "run all seven lints; exits non-zero if any fail"},
 }
 

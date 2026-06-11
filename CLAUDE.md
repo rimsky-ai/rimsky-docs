@@ -65,5 +65,7 @@ These live in `.claude/skills/` and are **not** part of the distributed plugin
 
 The gate `/build-docs` and `/release` run is `cd cmd && go build ./... && go test
 ./... && RIMSKY_REPO=<rimsky checkout at the reconciledAgainst tag> go run
-./rimsky-docs-lint all` (the seven structural lints). See `.claude/rules/rules.md`
-for the full post-change checklist.
+./rimsky-docs-lint all` (the seven structural lints). `/build-docs` additionally
+executes the cookbook journey walkthroughs against the published images at the
+reconciled release (its artifact gate, step 3c — Docker required); `/release`
+does not. See `.claude/rules/rules.md` for the full post-change checklist.

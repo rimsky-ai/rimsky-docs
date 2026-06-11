@@ -24,6 +24,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 func main() {
@@ -39,10 +41,17 @@ func main() {
 	defaultSpecDir := rimskyRepo + "/lib/foundation/spec"
 	specDir := flag.String("spec-dir", defaultSpecDir, "rimsky spec package directory (defaults to ${RIMSKY_REPO}/lib/foundation/spec)")
 	out := flag.String("out", "../rimsky/skills/rimsky/docs/reference/template-schema.md", "path to write the template schema reference (relative to cmd/ cwd)")
+	pluginJSON := flag.String("plugin", "../rimsky/.claude-plugin/plugin.json", "plugin.json carrying the reconciledAgainst version banner pin")
 	check := flag.Bool("check", false, "verify existing output matches regenerated content; exit non-zero on diff")
 	flag.Parse()
 
-	if err := run(*specDir, *out, *check); err != nil {
+	version, err := refpin.Resolve(*pluginJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := run(*specDir, *out, version, *check); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

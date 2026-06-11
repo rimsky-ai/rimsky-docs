@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // sampleCapture is a tiny stand-in for the CLI's real help output, used to
@@ -24,11 +26,16 @@ func sampleCapture() capture {
 	}
 }
 
+// testVersion is the reconciled-version pin threaded into run() by tests; the
+// real binary resolves it from plugin.json reconciledAgainst.
+const testVersion = "v9.9.9-test"
+
 func TestAssemble_RendersTreeAndGroups(t *testing.T) {
-	md := assemble(sampleCapture())
+	md := assemble(sampleCapture(), testVersion)
 
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# rimsky CLI reference",
 		"RIMSKY_CONTROL_API",
 		"REST control API",
@@ -53,7 +60,7 @@ func TestAssemble_RendersTreeAndGroups(t *testing.T) {
 
 func TestWriteOrCheck_WriteThenCheckThenDrift(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "reference", "cli.md")
-	md := assemble(sampleCapture())
+	md := assemble(sampleCapture(), testVersion)
 
 	if err := writeOrCheck(md, out, false); err != nil {
 		t.Fatalf("write: %v", err)
@@ -99,7 +106,7 @@ func TestRun_AgainstRealCLI(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "cli.md")
-	if err := run(rimskyRepo, out, false); err != nil {
+	if err := run(rimskyRepo, out, testVersion, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -122,7 +129,7 @@ func TestRun_AgainstRealCLI(t *testing.T) {
 	}
 
 	// -check must be stable immediately after generation.
-	if err := run(rimskyRepo, out, true); err != nil {
+	if err := run(rimskyRepo, out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 }

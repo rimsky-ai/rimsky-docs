@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // requireProtoc skips the test when protoc is not on PATH, so the suite stays
@@ -21,10 +23,14 @@ func requireProtoc(t *testing.T) {
 	}
 }
 
+// testVersion is the reconciled-version pin threaded into run() by tests; the
+// real binary resolves it from plugin.json reconciledAgainst.
+const testVersion = "v9.9.9-test"
+
 func TestRun_GeneratesExpectedSections(t *testing.T) {
 	requireProtoc(t)
 	out := t.TempDir()
-	if err := run("testdata", out, false); err != nil {
+	if err := run("testdata", out, testVersion, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(out, "reference", "sample.md"))
@@ -35,6 +41,7 @@ func TestRun_GeneratesExpectedSections(t *testing.T) {
 
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# Sample",
 		"## Services",
 		"### Greeter",
@@ -60,10 +67,10 @@ func TestRun_GeneratesExpectedSections(t *testing.T) {
 func TestRun_CheckMode_PassesThenDetectsDrift(t *testing.T) {
 	requireProtoc(t)
 	out := t.TempDir()
-	if err := run("testdata", out, false); err != nil {
+	if err := run("testdata", out, testVersion, false); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	if err := run("testdata", out, true); err != nil {
+	if err := run("testdata", out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 
@@ -72,7 +79,7 @@ func TestRun_CheckMode_PassesThenDetectsDrift(t *testing.T) {
 	if err := os.WriteFile(p, []byte("stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run("testdata", out, true); err == nil {
+	if err := run("testdata", out, testVersion, true); err == nil {
 		t.Fatal("expected drift error, got nil")
 	}
 }

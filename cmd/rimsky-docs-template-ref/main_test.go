@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-docs/cmd/internal/refpin"
 )
 
 // buildSpecFixture materializes a tiny spec package under a temp dir from the
@@ -27,11 +29,15 @@ func buildSpecFixture(t *testing.T) string {
 	return specDir
 }
 
+// testVersion is the reconciled-version pin threaded into run() by tests; the
+// real binary resolves it from plugin.json reconciledAgainst.
+const testVersion = "v9.9.9-test"
+
 func TestRun_GeneratesExpectedSections(t *testing.T) {
 	specDir := buildSpecFixture(t)
 	out := filepath.Join(t.TempDir(), "template-schema.md")
 
-	if err := run(specDir, out, false); err != nil {
+	if err := run(specDir, out, testVersion, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -42,6 +48,7 @@ func TestRun_GeneratesExpectedSections(t *testing.T) {
 
 	for _, want := range []string{
 		autogenBanner,
+		refpin.Banner(testVersion),
 		"# rimsky template schema (`rimsky.yml`) reference",
 		"## Structs",
 		"### WidgetSpec",
@@ -87,17 +94,17 @@ func TestRun_CheckMode_PassesThenDetectsDrift(t *testing.T) {
 	specDir := buildSpecFixture(t)
 	out := filepath.Join(t.TempDir(), "template-schema.md")
 
-	if err := run(specDir, out, false); err != nil {
+	if err := run(specDir, out, testVersion, false); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	if err := run(specDir, out, true); err != nil {
+	if err := run(specDir, out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 
 	if err := os.WriteFile(out, []byte("stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(specDir, out, true); err == nil {
+	if err := run(specDir, out, testVersion, true); err == nil {
 		t.Fatal("expected drift error, got nil")
 	}
 }
@@ -130,10 +137,10 @@ func TestRun_AgainstRimskyRepo(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "template-schema.md")
 
-	if err := run(specDir, out, false); err != nil {
+	if err := run(specDir, out, testVersion, false); err != nil {
 		t.Fatalf("generate against RIMSKY_REPO: %v", err)
 	}
-	if err := run(specDir, out, true); err != nil {
+	if err := run(specDir, out, testVersion, true); err != nil {
 		t.Errorf("expected check pass after generate, got %v", err)
 	}
 

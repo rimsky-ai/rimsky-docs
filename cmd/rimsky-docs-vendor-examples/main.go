@@ -11,10 +11,10 @@
 // generators project the proto/go-package references. Transforms:
 //
 //   - *.go            copied verbatim (the import paths are full-module, so the
-//                     copied source compiles unchanged against a pinned tag).
+//     copied source compiles unchanged against a pinned tag).
 //   - go.mod          the in-tree `replace ... => ../lib/protocols` is dropped
-//                     and the lib/protocols require is pinned to the reconciled
-//                     tag, so the copied module is standalone.
+//     and the lib/protocols require is pinned to the reconciled
+//     tag, so the copied module is standalone.
 //   - README.md       a generated version banner is prepended.
 //   - go.sum, bin     omitted; a copier runs `go mod tidy`.
 //

@@ -111,6 +111,13 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-lint all
 
 Hand any failure to a fixer and re-run until clean.
 
+This loop does **not** execute the cookbook journey walkthroughs against a
+deployment — that is `/build-docs`' artifact gate (its step 3c, which needs
+Docker and the published images). Reviewers here still check the walkthroughs
+like any recipe (commands and routes resolve in the references, links resolve,
+the doc reads runnable); a hand-edit that changes what a walkthrough *does* is
+only execution-verified at the next `/build-docs` run.
+
 ## Report
 
 Render the journal into `.build-docs/report.md` and print it:

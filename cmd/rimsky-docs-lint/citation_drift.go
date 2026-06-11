@@ -15,7 +15,7 @@ import (
 )
 
 // conceptRefRE matches inline concept-reference tokens like `concept:claim` or
-// `` `concept:claim-handle` `` that appear in concept prose. The slug is the
+// `concept:claim-handle` (usually backtick-wrapped in prose). The slug is the
 // captured group and must match the published concept filename (minus `.md`).
 var conceptRefRE = regexp.MustCompile(`concept:([a-z0-9-]+)`)
 

@@ -31,11 +31,15 @@ set-and-forget files.
 
 The skill is the orchestrator. It does not write docs or run builds itself —
 it dispatches one subagent per surface, calls the repo's Go binaries for
-mechanical generation, runs the tooling tests, gates on the lint suite, runs a
-review-and-fix loop, and reports. A run is not done until the build, tests, and
-lints are all green. Verifying the docs against rimsky's *runtime behavior* is a
-separate, optional pass (step 3b) — this is a documentation project, not a test
-harness for rimsky.
+mechanical generation, runs the tooling tests, gates on the lint suite, executes
+the journey walkthroughs against the published images (step 3c), runs a
+review-and-fix loop, and reports. A run is not done until the build, tests,
+lints, and walkthrough executions are all green. The distinction that keeps this
+a documentation project and not a test harness for rimsky: **verifying that
+rimsky does what it claims is out of scope** (step 3b probes that, optionally,
+to find rimsky-core bugs); **verifying that a published walkthrough actually
+works when followed is in scope and gated** (step 3c) — that tests a product of
+the docs, not the platform.
 
 ## The source of truth
 
@@ -135,7 +139,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `rimsky/skills/rimsky/docs/examples/` | rimsky `examples/` module (Apache) | Mechanical (`rimsky-docs-vendor-examples`); vendored snapshot pinned to the reconciled tag — never hand-edit. Fix in rimsky-core's `examples/`. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
-| `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. |
+| `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. Also owns the three **journey walkthroughs** (`zero-to-deployed.md`, `debug-stuck-stale.md`, `debug-unreleased-claim.md`) — required members, exempt from the parsimony reduction, executed as a gate in step 3c. |
 | `rimsky/skills/rimsky/docs/agents/llms.txt` | the files it links to | The agent entry index. Reconcile against the linked files — fix dead links and stale descriptions; keep it accurate. |
 | `rimsky/skills/rimsky/docs/agents/errors/`, `rimsky/skills/rimsky/docs/agents/examples/` | code error classes + template/instance examples | Reconcile against source: every error class the catalog should carry is present and accurately described; every example validates and runs against the current release. Fix drift and fill gaps; remove what no longer exists. |
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
@@ -349,6 +353,16 @@ rimsky-core's `examples/` (gate-tested there); never hand-edit the vendored copy
 
 All of these are mechanical — never hand-edit them.
 
+**Version banners.** Every generated reference page carries a one-line version
+banner naming the rimsky release it reflects, emitted by the generators from
+`plugin.json`'s `reconciledAgainst` (the `cmd/internal/refpin` package). This is
+why step order matters: the skill-packaging surface stamps `reconciledAgainst`
+in step 1, *before* this step regenerates. Hand-written prose must never
+hard-code a release tag (it drifts silently — see the skill-packaging template);
+generated pages may, because reference-parity regenerates and byte-compares them
+every run, and its banner check fails any generated page whose banner does not
+name the current `reconciledAgainst`.
+
 ### 3. Verify docs against code — the gate
 
 The gate is **docs-vs-code**: build and test the tooling, then lint (step 4).
@@ -371,7 +385,34 @@ template, watch the diagnostics. This is **not a gate**, and this repo ships no
 stack to run; its value is that it surfaces **rimsky-core bugs**, which are
 recorded in the bug list (`.build-docs/` run scratch, promoted to rimsky-core
 when curated) — *not* fixed here. Skip it freely; a green gate (step 3 +
-step 4) is what a run requires.
+step 3c + step 4) is what a run requires.
+
+### 3c. Execute the journey walkthroughs — the artifact gate
+
+The cookbook's journey walkthroughs (`zero-to-deployed.md` and the two debug
+sessions — see the cookbook surface template) are executable artifacts, and a
+walkthrough nobody executes rots silently. Unlike 3b, this step is a **gate**:
+follow each walkthrough exactly as written, against the **published images** at
+the `reconciledAgainst` release. Docker and those images are gate dependencies,
+alongside `protoc` and a buildable rimsky tree.
+
+- Run the deploy walkthrough's command sequence verbatim from a clean state to
+  its stated end, checking that each step's documented expected output actually
+  appears.
+- Drive each debug session's symptom into the deployed stack, run its command
+  sequence, and verify the documented outputs. Example payloads the doc carries
+  are refreshed from the live responses when they drift.
+
+Verdict semantics — this gates the *docs*, not rimsky:
+
+- The walkthrough fails because the doc is wrong (a stale flag, a missing step,
+  a wrong expected output) → hand it to a fixer subagent and re-run. The run is
+  not done until the walkthroughs execute clean.
+- The walkthrough fails because rimsky itself misbehaves → `flag:
+  source-conflict` in the journal (the fix belongs in rimsky-core), and the
+  affected walkthrough step gets a status note naming the failure so a reader
+  is not sent into it blind. The run may complete with the flag — the same
+  semantics as a 3b finding — but never silently.
 
 ### 4. Lint gate
 
@@ -382,7 +423,8 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-lint all
 `all` runs the seven structural lints — including the two accuracy gates of the
 agent-doc style's accuracy model (`.claude/rules/agent-doc-style.md`, full form
 in `cold-read/cold-read-docs-style-guide.md`): **reference-parity** (ring 1 — each
-generated reference still byte-matches regenerating from source; needs `protoc`
+generated reference still byte-matches regenerating from source *and* carries the
+version banner naming the current `reconciledAgainst`; needs `protoc`
 and a buildable rimsky tree, which this run already has) and **symbol-existence**
 (ring 2 — every symbol the prose names exists in the references; new verified-real
 internal symbols go in that lint's `verifiedInternalSymbols` allowlist). If any
@@ -536,11 +578,35 @@ not), reasoning kept as tight prose, source-anchored.
 >    register/deploy/instantiate steps, runnable against a rimsky deployment —
 >    and a "without rimsky" baseline. Optimize for what an agent copies: the
 >    exact template and the gotchas, not a turnkey stack.
+> 5. **Maintain the journey walkthroughs.** Three recipes are *required
+>    members* of the set, exempt from the parsimony reduction in step 2 (they
+>    are end-to-end journeys, not primitive patterns). Create each if missing,
+>    reconcile if present:
+>    - `zero-to-deployed.md` — from an empty host with Docker to a node driven
+>      to terminal: pull the published images at the reconciled release, bring
+>      up the all-in-one image as the spine (with a variant section for the
+>      three-role split: control-api + store + supervisor), register a template
+>      with one `http-node` executor node, instantiate it, and watch it settle.
+>      Every step states its expected observable output ("you should now see X
+>      in `rimsky instance status`").
+>    - `debug-stuck-stale.md` — a narrated diagnosis of a node stuck stale:
+>      symptom → the wait-set / frame diagnostics routes (with an example
+>      response payload) → a decision tree → the error-catalog page that
+>      resolves each leaf.
+>    - `debug-unreleased-claim.md` — the same diagnosis shape for a claim that
+>      is never released: orphan-reaper / heartbeat diagnosis.
+>    Anchors: the published images catalog (`rimsky/skills/rimsky/docs/images/`)
+>    and worked configs, the CLI and REST references for every command and
+>    route cited, and the error catalog
+>    (`rimsky/skills/rimsky/docs/agents/errors/`) for every decision-tree leaf.
+>    These walkthroughs are **executed verbatim as a gate** (step 3c) against
+>    the published images — write every command to be copy-runnable and every
+>    expected output to be observable.
 >
 > Return: the canonical pattern set (created / refined / merged / retired, with a
-> one-line rationale each), the `decision` entries for merges and drops, and any
-> pattern whose template you could not validate against the schema (as `flag`
-> entries).
+> one-line rationale each), the journey walkthroughs created / reconciled, the
+> `decision` entries for merges and drops, and any pattern whose template you
+> could not validate against the schema (as `flag` entries).
 
 ### agents-index
 
