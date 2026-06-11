@@ -1,12 +1,12 @@
 # Attribute defaults are inert in Rimsky
 
-A single-node template whose `attributes:` schema declares one property as a static-default value (a literal `{{...}}` string). Rimsky must NOT substitute the default's value. The executor receives it verbatim. The verification observes that Rimsky's `attributes_substituted` event lists only properties with `source:` directives — static-default properties are not substitution targets.
+A single-node template whose `attributes:` schema declares one property as a static-default value (a literal `{{...}}` string). Rimsky must NOT substitute the default's value. The executor receives it verbatim. The verification reads the node's persisted attribute bag back and observes the `{{...}}` literal survived dispatch unsubstituted.
 
 This example demonstrates the structural-inertness discipline (see `concept:inertness`) that replaced the retired `userdata` concept under the 2026-05-21 userdata-collapse spec. Pre-collapse, the same demonstration used a `userdata:` block. Post-collapse, the analogous surface is a `default:` value on the unified attribute schema.
 
 **Precondition:** a running rimsky deployment (stand one up from the published images — see the [operator guide](../../operator-guide.md)).
 
-The bundled `executor-stub` runs in stub mode (`RIMSKY_EXECUTOR_STUB_MODE=1`). The stub ignores attribute values for behavior selection — its job here is simply to receive the dispatch and close the stream with a terminal `StreamClose{Success}`. The proof that Rimsky did not substitute the static default is upstream of the executor: the `attributes_substituted` event in the events log records the fields Rimsky resolved at dispatch.
+The `stub` executor here is the dockerized test stub executor (a test fixture, not a published image — see [`../../executors/stub/README.md`](../../executors/stub/README.md)). It returns a canned terminal `StreamClose{Success}` (`changed=false`, no attribute writeback) for every dispatch unconditionally, ignoring the request's `attributes` bag and `node_type`. (The `RIMSKY_EXECUTOR_STUB_MODE=1` env var is a separate mechanism on the `http-node` and verifier executors that short-circuits their network paths for testing; the test stub executor does not read it.) Its job here is simply to receive the dispatch and close the stream with a terminal `StreamClose{Success}`. The proof that Rimsky did not substitute the static default is the persisted attribute bag itself: the value dispatched for `prompt` (readable back via `GET /v1/nodes/{id}`, `latest_attributes`) still contains the `{{...}}` literal.
 
 ## 1. The template
 
@@ -48,22 +48,26 @@ rimsky instance create sha256-...
 
 ## 3. Inspect the dispatch event log
 
-After the instance settles, fetch the per-instance event log and look at the `attributes_substituted` event for the `summarize` node. That event names exactly the attribute schema fields whose `source:` directives Rimsky resolved at dispatch — it does not list static-default properties because static defaults are not substitution targets.
+After the instance settles, fetch the per-instance event log and look at the `attributes_substituted` event for the `summarize` node. The event's `payload.substituted_fields` records the field names present in the resolved dispatch bag — source-resolved AND default-filled alike — so for this template it lists `prompt` and `model` even though neither was substituted. <!-- @source: lib/runtime/runner_dispatch.go::fieldNames over the resolved dispatch bag --> The event proves a dispatch bag was resolved; it does NOT distinguish defaults from substitutions, which is why the inertness proof in the Verification section reads the persisted *value*, not the event's field list.
 
 ```sh
-curl "http://localhost:8080/events?instance_id=<instance_id>"
+curl "http://localhost:8080/v1/events?instance_id=<instance_id>"
 ```
 
-Expected: events of kind `attributes_substituted` list only schema fields with `source:` directives. In this template no field has a `source:`, so `substituted_fields` is empty. The static-default properties (`prompt`, `model`) flow into the dispatch bag from the schema's `default:` keyword verbatim — never substituted, but persisted alongside source-resolved values in `rimsky_node_attributes.data`.
+Expected: one event of kind `attributes_substituted` for the `summarize` node whose `payload.substituted_fields` contains `prompt` and `model`. The static-default properties flow into the dispatch bag from the schema's `default:` keyword verbatim — never substituted — and are persisted alongside any source-resolved values in `rimsky_node_attributes.data`.
 
 ## Verification
 
+The inertness proof: read the node's persisted attribute bag back and confirm the `{{nodes.upstream.attribute.value}}` literal in `prompt` survived dispatch unsubstituted.
+
 ```sh
-curl -s "http://localhost:8080/events?instance_id=<instance_id>" \
-  | jq -r '[.events[] | select(.kind=="attributes_substituted") | .payload.substituted_fields[]] | length'
+node_id=$(curl -s "http://localhost:8080/v1/instances/<instance_id>/nodes" \
+  | jq -r '.nodes[] | select(.node_type=="summarize") | .id')
+curl -s "http://localhost:8080/v1/nodes/$node_id" \
+  | jq '.latest_attributes.prompt | contains("{{nodes.upstream.attribute.value}}")'
 ```
 
-Expected output: `0` (no schema field had a `source:` directive in this template, so substitution touched nothing — and since static-default values are not substitution candidates, the `{{nodes.upstream.attribute.value}}` literal in `properties.prompt.default` was never even a candidate for substitution).
+Expected output: `true` (the default's value reached the dispatch bag verbatim — Rimsky applied no substitution pass to it; `latest_attributes` is the node's most-recent resolved attribute bag, returned only on the `GET /v1/nodes/{id}` detail read).
 
 ## The `claude-agent` `cli.*` attribute reference
 
@@ -78,6 +82,8 @@ attribute schema at template registration). `model` / `system_prompt` /
 | Attribute | Shape | Default | Notes |
 | --- | --- | --- | --- |
 | `model` | string | `claude-sonnet-4-5` | Top-level, not under `cli`. |
+| `cwd_from_store` | string | `""` | Top-level. Names a store-config entry; the CLI's cwd becomes that store handle's `address` (the filesystem store fills it with an absolute path). Validated as an existing directory before spawn; mismatch ⇒ `agent/attribute_invalid`. |
+| `cwd` | string | `""` | Top-level. Raw static-cwd override of last resort; lower priority than `cwd_from_store`. Empty = no override. |
 | `cli.bare` | boolean | unset | |
 | `cli.permission_mode` | enum `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | `bypassPermissions` (executor default) | |
 | `cli.allowed_tools` | array of string | unset | Unioned with the auto-allows from `cli.mcp_servers` (below). |
@@ -86,7 +92,7 @@ attribute schema at template registration). `model` / `system_prompt` /
 | `cli.max_budget_usd` | string | unset | |
 | `cli.handle_rate_limits` | boolean | `true` | Explicit `false` disables rate-limit auto-park. |
 | `cli.max_schema_corrections` | integer ≥ 0 | `3` | Corrective `report_complete` retries on schema-validation failure; exhaustion ⇒ terminal `agent/schema_violation`. |
-| `cli.mcp_servers` | array of `{ name, url, headers?, allowed_tools? }` | unset | Host-wired external HTTP MCP servers (see below). |
+| `cli.mcp_servers` | array; each entry `{ ref }` (catalog reference) or inline `{ name, url, headers?, allowed_tools? }` | unset | Host-wired MCP servers (see below). Inline entries are accepted only when the executor's `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` policy is on. |
 | `cli.required_signoffs` | array of `{ public_key, path? }` | unset (no gate) | Arms the Ed25519 sign-off gate. |
 | `cli.max_signoff_attempts` | integer ≥ 0 | `3` | Sign-off correction budget; exhaustion ⇒ terminal `agent/signoff_unobtained`. |
 
@@ -96,28 +102,30 @@ executor reads only the keys above. `model` carries a schema `default:` —
 inert per the demonstration above (rimsky does not substitute it; the schema's
 `default:` keyword fills it into the dispatch bag verbatim).
 
-### `cli.mcp_servers` — host-wired external MCP servers
+### `cli.mcp_servers` — host-wired MCP servers
 
-Each entry wires one external HTTP MCP server into the spawned CLI:
+Each entry takes one of two shapes:
 
-| Field | Shape | Required | Meaning |
-| --- | --- | --- | --- |
-| `name` | string, non-empty | yes | MCP server name; becomes the `mcp__<name>` tool prefix. |
-| `url` | string, non-empty | yes | HTTP MCP endpoint the CLI dials. |
-| `headers` | object (string → string) | no | Per-request headers (e.g. auth). |
-| `allowed_tools` | array of string | no | Tool names to allow; absent ⇒ all of the server's tools are auto-allowed. |
+| Shape | Fields | Accepted when |
+| --- | --- | --- |
+| Catalog reference | `{ ref }` — `ref` is a non-empty server name in the executor's startup catalog | Always (the default mechanism). The catalog file is loaded once at executor startup from `env:RIMSKY_EXECUTOR_MCP_CATALOG`; each catalog entry declares a `transport` (`http` / `stdio` / `module` / `http-loopback`). An unknown `ref` is rejected as `agent/attribute_invalid`. |
+| Inline server | `{ name, url, headers?, allowed_tools? }` — `name` and `url` non-empty; `headers` is string→string; `allowed_tools` is an array of tool names | Only when the executor's `env:RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` policy is truthy (default off in a catalog deployment) — otherwise the entry is rejected as `agent/attribute_invalid` with a message citing `allow_inline`. |
 
-Each declared server is appended to the spawned CLI's `--mcp-config` so the
+Each resolved server is appended to the spawned CLI's `--mcp-config` so the
 agent can actually dial it (a URL only mentioned in a prompt is unreachable —
 the CLI speaks MCP only to servers it was configured with). Its tools are
 auto-allowed into `--allowedTools`: with no per-server `allowed_tools`, the bare
 `mcp__<name>` prefix allows all of that server's tools; an explicit
-`allowed_tools` narrows it to the fully-qualified `mcp__<name>__<tool>` names.
-The same list is re-applied on resume (`--allowedTools` is process-local
-invocation config, not session state, so a resumed dispatch that omitted it
-could not reach the validators). A present-but-malformed entry (missing or
-empty `name`/`url`) is rejected as `agent/attribute_invalid`, never silently
-dropped.
+`allowed_tools` narrows it to the fully-qualified `mcp__<name>__<tool>` names
+(for a catalog reference, `<name>` is the `ref`). The same list is re-applied on
+resume (`--allowedTools` is process-local invocation config, not session state,
+so a resumed dispatch that omitted it could not reach the validators). A
+present-but-malformed or forbidden entry (missing/empty `name`/`url`, unknown
+`ref`, inline-when-disallowed) is rejected as `agent/attribute_invalid`, never
+silently dropped — a dropped server could unwire a validator the sign-off gate
+depends on. Header values in `http` server entries (inline or catalog) may use
+`${env:VAR}` references; they resolve from the executor's environment at spawn,
+so the secret never sits in the template or the persisted attribute bag.
 
 ### The sign-off gate — `cli.required_signoffs` / `cli.max_signoff_attempts`
 

@@ -1,5 +1,5 @@
 ---
-error: signoff_unobtained
+error: agent/signoff_unobtained
 surfaced_to: executor
 ---
 
@@ -31,7 +31,7 @@ The gate runs in the executor's `report_complete` handler, as the second sequent
 
 The gate's `required` list (the `{ public_key, path }` entries) is taken from the dispatch-time `cli.required_signoffs`, never re-read from `attributes_delta` — so a gated agent cannot weaken its own gate by emitting a `cli.required_signoffs` override in its delta. Each signature itself binds to `domain ‖ dispatch_id ‖ canonical(value-at-path)`: the `dispatch_id` makes a signature valid for only the one real dispatch (anti-replay), and the signed bytes cover the gate's bound value-at-path drawn from `attributes_delta` (not the `required` list).
 
-A separate failure mode is **not** this error: a `cli.required_signoffs` (or `cli.mcp_servers`) entry that is *present but malformed* — e.g. an entry missing `public_key` — is rejected up front as `agent/attribute_invalid` (it never reaches the gate), because silently dropping a malformed gate entry would disable the gate. See [`attribute_validation_failed_at_commit.md`](attribute_validation_failed_at_commit.md) for the related attribute-shape failure mode.
+A separate failure mode is **not** this error: a `cli.required_signoffs` (or `cli.mcp_servers`) entry that is *present but malformed* — e.g. an entry missing `public_key` — is rejected up front as `agent/attribute_invalid` (it never reaches the gate), because silently dropping a malformed gate entry would disable the gate. See [`agent_attribute_invalid.md`](agent_attribute_invalid.md) for that class.
 
 ## What to do
 

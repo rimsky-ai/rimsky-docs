@@ -12,6 +12,7 @@ For a production producer, the in-tree reference producers are the concrete-path
 ## Configuration
 
 The stub is configured by a Go `server.Config` struct, not a YAML file or an environment variable. The shape (see `test/support/stores/stub/config-example.yml` and `server/server.go`):
+<!-- @source: test/support/stores/stub/server/server.go::Config -->
 
 - `Substrate` — the in-memory store config, including the write-semantics envelope and any optional `pick_policies` for tests that need pick-policy semantics.
 - `EnableLifecycle` — when true, registers no-op `LifecycleSubscriber` handlers alongside `ClaimProducer`.

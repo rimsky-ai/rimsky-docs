@@ -1,7 +1,7 @@
 ---
 concept: domain-stores
 definition: |
-  A pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. As of v0.7.0 the reference claude-agent executor supports this directly through two complementary surfaces: a per-executor startup catalog of named MCP servers (env `RIMSKY_EXECUTOR_MCP_CATALOG` → YAML/JSON file, with four transports — `http`, `stdio`, `module`, `http-loopback`) that nodes reference by `{ ref: <name> }`, plus an inline `{ name, url, headers?, allowed_tools? }` form for nodes that declare their own server (permitted only when `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1`, default disallowed). Either way the resolved server list is appended to the spawned `claude` CLI's `--mcp-config` and its tools are auto-allowed. The executor's own internal `rimsky-callback` MCP surface is unchanged and is how agent work re-enters the graph.
+  A pattern for consumer-built MCP servers that hold project-specific state and expose it as a tool catalog an agent executor consumes during a dispatch. As of v0.8.0 the reference claude-agent executor supports this directly through two complementary surfaces: a per-executor startup catalog of named MCP servers (env `RIMSKY_EXECUTOR_MCP_CATALOG` → YAML/JSON file, with four transports — `http`, `stdio`, `module`, `http-loopback`) that nodes reference by `{ ref: <name> }`, plus an inline `{ name, url, headers?, allowed_tools? }` form for nodes that declare their own server (permitted only when `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE=1`, default disallowed). Either way the resolved server list is appended to the spawned `claude` CLI's `--mcp-config` and its tools are auto-allowed. The executor's own internal `rimsky-callback` MCP surface is unchanged and is how agent work re-enters the graph.
 proto_symbol: (none — MCP, not a rimsky service protocol)
 config_field: claude-agent startup env (RIMSKY_EXECUTOR_MCP_CATALOG, RIMSKY_EXECUTOR_MCP_ALLOW_INLINE); per-node attributes (attributes.cli.mcp_servers, attributes.cli.*); internal rimsky-callback MCP tools
 api_surface: (none)
@@ -11,8 +11,9 @@ deprecated_terms: []
 
 # Domain stores
 
-> **Status (v0.7.0).** First-class. The reference `claude-agent` executor now
-> ships an operator-managed **startup catalog** of named MCP servers
+> **Status (v0.8.0).** First-class; surface unchanged since v0.7.0. The
+> reference `claude-agent` executor ships an operator-managed **startup
+> catalog** of named MCP servers
 > (`env:RIMSKY_EXECUTOR_MCP_CATALOG` → a YAML/JSON file parsed once at executor
 > startup) plus a per-node `cli.mcp_servers` attribute whose entries are
 > `{ ref: <catalog-name> }` references resolved against that catalog at
@@ -164,8 +165,11 @@ surfaces. The two coexist in one dispatch.
 
 ## How a dispatch is configured
 
-Each dispatch is configured by the node's `attributes`, not by an
-operator-managed catalog. Beyond `cli.mcp_servers` above, the executor reads:
+Each dispatch is configured by the node's `attributes`. The one
+operator-managed indirection is the MCP startup catalog above —
+`cli.mcp_servers` entries are resolved against it at dispatch; every other
+knob below is read directly from the node's attributes, with no catalog
+layer. Beyond `cli.mcp_servers`, the executor reads:
 
 - `model`, `system_prompt`, `user_prompt` — the core agent inputs.
 - An optional `cli.*` sub-object that tunes the spawned `claude` CLI:

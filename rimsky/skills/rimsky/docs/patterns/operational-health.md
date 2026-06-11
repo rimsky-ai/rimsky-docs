@@ -4,19 +4,24 @@ definition: |
   How operators observe and maintain a running rimsky deployment: lifecycle subscribers for audit and per-tenant rollups, retry-loop detection, parked-node watchdogs, frame-stuck warnings.
 proto_symbol: (none)
 config_field: (none)
-api_surface: GET /admin/diagnostics/held-frames, GET /admin/diagnostics/parked-nodes, GET /metrics
+api_surface: GET /v1/admin/diagnostics/held-frames, GET /v1/admin/diagnostics/parked-nodes, GET /v1/admin/diagnostics/wait-sets, POST /v1/admin/instances/{instance}/nodes/{node_id}/invalidate, GET /v1/events, GET /metrics
 related: [lifecycle-subscriber, parked-state, frame, error-policy]
 deprecated_terms: []
 ---
 
 # Operational health
 
-> **Status (v0.7.0).** Fully supported. The lifecycle-subscriber protocol, the
-> `/admin/diagnostics/*` JSON endpoints, the admin-invalidate route, the
+> **Status (v0.8.0).** Fully supported. The lifecycle-subscriber protocol, the
+> `/v1/admin/diagnostics/*` JSON endpoints, the admin-invalidate route, the
 > Prometheus `/metrics` surface, and the `sensor-cron` publisher all ship and
-> are exercised by the bundled stack. A polished dashboard / lineage-query UI
-> is not yet shipped (the observability backplane is in place) — operators
-> compose Prometheus + their own dashboards over the JSON and metrics surfaces.
+> are exercised by the bundled stack. Two v0.8.0 changes touch this page:
+> every control-API route (including health) now mounts under a `/v1/` prefix
+> — repoint pollers, probes, and load-balancer health checks — and event-log
+> kinds are now a typed `OperationalKind` proto enum, so `GET /v1/events`
+> rejects unknown `?kind=` values with a 400 instead of returning empty. A
+> polished dashboard / lineage-query UI is not yet shipped (the observability
+> backplane is in place) — operators compose Prometheus + their own dashboards
+> over the JSON and metrics surfaces.
 
 Rimsky exposes operator health signals as JSON over HTTP plus Prometheus metrics.
 This page maps those surfaces — lifecycle subscribers, watchdog graphs,
@@ -27,15 +32,31 @@ into observability and remediation.
 
 ### Lifecycle-subscriber services
 
-Any service registered with `protocols: [claim_producer, lifecycle_subscriber]`
-in `rimsky.yml` receives the seven lifecycle events at the points they
-fire: the four template events (registered / deployed / undeployed /
-deregistered), the two instance events (created / terminated), and the
-run-scope-terminal event (carrying the run-scope id and a terminal
-reason). Template and instance events fire from the control-api; the
-run-scope-terminal event fires from the supervisor that closes the
-scope. Wire a domain-shaped audit log to a lifecycle subscriber and the
-audit trail composes for free. The events are persistently idempotent:
+A lifecycle subscriber is a peer declared in `rimsky.yml`'s
+`claim_producers:` or `executors:` block — the only two blocks rimsky
+dials — with `lifecycle_subscriber` alongside its primary protocol in
+its `protocols` list, e.g. `protocols: [claim_producer,
+lifecycle_subscriber]`. Declaring the protocol is necessary but not
+sufficient: lifecycle fan-out is scoped per template to the peers that
+template's nodes reference (a node's `stores:` alias or `executor:`
+field). A declared subscriber that no node references receives
+**nothing** — there is no global broadcast and no standalone
+`subscribers:` block. To wire a domain-shaped audit log, declare the
+audit service under `claim_producers:` with the `lifecycle_subscriber`
+mix-in and reference it as a store on at least one node of every
+template whose lifecycle it should audit; for those templates the audit
+trail then composes for free.
+
+A referenced subscriber receives the seven lifecycle events at the
+points they fire: the four template events (registered / deployed /
+undeployed / deregistered), the two instance events (created /
+terminated), and the run-scope-terminal event (carrying the run-scope
+id and a terminal reason). Template and instance events fire from the
+control-api. The run-scope-terminal event fires from whichever process
+closes the scope: the control-api for the instance's main run-scope
+(instance delete and the terminator worker), the supervisor for
+sub-graph and fanout-partition scope closes.
+The events are persistently idempotent:
 rimsky tracks a per-`(service, event)` ledger and fires each pair
 exactly once, so a re-fire is a no-op on the consumer side.
 
@@ -50,7 +71,7 @@ as a graph rather than as ad hoc scripts.
 The primitives that compose the watchdog:
 - The standalone **`sensor-cron` publisher** fires the cadence. It is a
   Publisher-protocol service that evaluates cron expressions and POSTs a
-  message envelope into the control API (`POST /instances/{id}/messages`,
+  message envelope into the control API (`POST /v1/instances/{id}/messages`,
   `sender_kind=publisher`) on each tick; the watchdog node subscribes to
   that message. (Template-level `cron:` node fields and the admin
   force-fire route were retired — cron firing lives only in `sensor-cron`
@@ -71,14 +92,15 @@ external monitors:
 
 | Endpoint | Returns |
 | --- | --- |
-| `GET /admin/diagnostics/held-frames` | Frames with at least one parked node. Normal during agent-driven work; persistent holds may indicate stuck reviews. |
-| `GET /admin/diagnostics/parked-nodes` | Parked nodes with reasons and resume timestamps. Optional `?reason=<name>` filter. |
-| `GET /admin/diagnostics/wait-sets` | Wait-set rows currently blocking dispatch — what each frame is waiting on (sender run, topic, drained state). Useful for diagnosing "the cascade looks like it should fire but the node isn't running." |
-| `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled). Covers dispatches by terminal class, claim acquisitions by producer, node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
+| `GET /v1/admin/diagnostics/held-frames` | Frames with at least one parked node. Normal during agent-driven work; persistent holds may indicate stuck reviews. |
+| `GET /v1/admin/diagnostics/parked-nodes` | Parked nodes with reasons and resume timestamps. Optional `?reason=<name>` filter. (Also mounted as `GET /v1/diagnostics/parked`.) |
+| `GET /v1/admin/diagnostics/wait-sets` | Wait-set rows currently blocking dispatch — what each frame is waiting on (sender run, topic, drained state). Useful for diagnosing "the cascade looks like it should fire but the node isn't running." |
+| `GET /v1/events` | Paginated read of the append-only event log; filterable by `instance_id`, `node_id`, `kind`, `since`, `until`. `?kind=` is validated against the typed `OperationalKind` enum — a snake_case operational name (e.g. `state_transition`, `claim_acquired`) or a canonical slash-delimited signal type-path (`terminal/*`, `transient/*`, …); an unknown kind returns 400 listing the valid values. |
+| `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled). **Not** under the control API's `/v1/` tree — it is its own listener with a bare `/metrics` path. Covers dispatches by terminal class, claim acquisitions by producer, node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
 
 ### Admin invalidate
 
-`POST /admin/instances/{instance}/nodes/{node_id}/invalidate` is the operator
+`POST /v1/admin/instances/{instance}/nodes/{node_id}/invalidate` is the operator
 escape hatch. It dispatches by node state:
 
 | Node state | Effect |
@@ -102,10 +124,11 @@ something to investigate.
 
 ### Per-tenant SLA observability
 
-Templates can be tagged with the consumer they belong to. The
-lifecycle-subscriber service receives that tag at template-deployed
-time and can surface per-tenant rollups in the operator's monitoring
-stack.
+Templates can be tagged with the consumer they belong to. A
+lifecycle-subscriber service (wired as above — declared in
+`claim_producers:`/`executors:` and referenced by a node of each
+template it should observe) receives that tag at template-deployed time
+and can surface per-tenant rollups in the operator's monitoring stack.
 
 ### Detect retry loops with no progress
 

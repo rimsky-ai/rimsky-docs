@@ -7,18 +7,29 @@ a configured `BlobBackend` rather than inline in `rimsky_node_attributes`
 
 Rimsky ships four reference backends:
 
-- [`inline`](./inline.md) — degenerate (no spill); the default.
-- [`pg-largeobject`](./pg-largeobject.md) — stores blobs in the same
-  Postgres instance via the LO API.
-- [`filesystem`](./filesystem.md) — stores blobs as files under a
-  configured root.
-- [`memory`](./memory.md) — in-process map; **dev-only**, rejected at
-  startup unless `RIMSKY_PROCESS_ROLE=unified`.
+| Backend | Default? | Multi-process safe? | Handle prefix | Dev-only gate |
+| --- | --- | --- | --- | --- |
+| [`inline`](./inline.md) | **yes** | yes (no spill, no shared state) | — (never produces handles) | — |
+| [`pg-largeobject`](./pg-largeobject.md) | no | yes (state in the same Postgres) | `pglo:` | — |
+| [`filesystem`](./filesystem.md) | no | yes, given a shared `root` volume | `fs:` | — |
+| [`memory`](./memory.md) | no | **NO** (in-process map) | `mem:` | rejected at startup unless `RIMSKY_PROCESS_ROLE=unified` |
+
+`inline` is degenerate — it stores everything in the existing columns and
+never spills. `pg-largeobject` keeps blobs inside the Postgres instance
+every process already talks to (via the LO API); `filesystem` writes
+files under a configured root that every process must mount; `memory`
+is for the unified single-process dev setup only — the startup
+validator (`ValidateBlobConfig`) enforces the gate.
+<!-- @source: lib/foundation/persistence/blob_config.go::ValidateBlobConfig -->
 
 Configuration: the `persistence.blob.backend` key plus per-backend sub-blocks
 (`spill_threshold_bytes`, `filesystem.root`, `pg_largeobject`, `retention`).
-The schema is parsed in `lib/control/config/` (`persistence.blob` block) and
-defaults to `inline` with a 64 KiB notional threshold when the key is absent.
+The schema is parsed in `lib/control/config/` (`persistence.blob` block),
+which validates the config and constructs the backend at startup, and
+defaults to `inline` with a 64 KiB notional threshold when the key is
+absent.
+<!-- @source: lib/control/config/blob.go::OpenBlobBackend -->
+<!-- @source: lib/foundation/persistence/blob_config.go::DefaultBlobConfig -->
 
 ## Cross-backend invariants
 
@@ -31,11 +42,16 @@ defaults to `inline` with a 64 KiB notional threshold when the key is absent.
 - Handles are self-describing: each backend prefixes with its name
   (`pglo:`, `fs:`, `mem:`) so a future migration tool can route by
   prefix.
+- The spill decision: spill only when a backend is configured, the
+  threshold is > 0, the backend is not `inline`, and the payload
+  exceeds the threshold.
+  <!-- @source: lib/foundation/persistence/blob_spill.go::ShouldSpillBlob -->
 - Orphan reaping: when an attribute's `value_handle` is overwritten or
   the row is deleted, the old handle is queued in
   `rimsky_blob_orphans`; the `SweepOrphanedBlobs` sweep deletes the
   bytes from the backend after `retention.retention_after_unreferenced`
   has passed (default 24h).
+  <!-- @source: lib/foundation/persistence/blob_spill.go::QueueBlobOrphan -->
 
 ## Conformance
 

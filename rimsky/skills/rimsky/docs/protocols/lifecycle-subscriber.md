@@ -17,7 +17,7 @@ types over the contract; [`go-packages.md`](go-packages.md)), or code straight t
 the wire types. Wire contract: `lib/protocols/proto/v1/lifecycle.proto`; generated
 field/message/RPC reference at [`reference/lifecycle.md`](reference/lifecycle.md).
 
-<!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
+<!-- @source: .ok-planner/design/concepts/lifecycle-subscriber.md -->
 
 **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or
 access control. Service-to-service auth is operator-configured at the deployment
@@ -107,13 +107,15 @@ distinct surfaces in two different files.
 
 2. **The producer binary's own config — tells the binary to register the handlers.**
    A producer that ships a no-op `LifecycleSubscriber` may gate registration behind
-   its own startup-config flag. The in-tree stub store
-   (`test/support/stores/stub/`) registers its handlers only when its server config
-   sets `enable_lifecycle: true`, not from rimsky.yml — so operators can turn the
-   handlers on without forking the binary.
+   its own startup-config flag, not rimsky.yml — so operators can turn the handlers
+   on without forking the binary. The bundled postgres store exposes it as the
+   `enable_lifecycle:` key in its own YAML config; the in-tree stub store gates on
+   the equivalent Go `server.Config.EnableLifecycle` field, set by the test
+   fixture that starts it.
+   <!-- @source: lib/services/stores/postgres/cmd/main.go -->
 
    ```yaml
-   # the producer binary's own config
+   # the producer binary's own config (postgres store shown)
    enable_lifecycle: true
    ```
 
@@ -156,7 +158,7 @@ deregister requests carry only the `template_hash`.
 Lifecycle events fire **synchronously** from the rimsky-side process that owns the
 triggering transition. The six template/instance events fire from control-api, so
 a slow subscriber slows the control-api response on the triggering operation (e.g.
-a slow `OnTemplateDeployed` makes `POST /templates/{id}/deploy` slow).
+a slow `OnTemplateDeployed` makes `POST /v1/templates/{id}/deploy` slow).
 `OnRunScopeTerminal` fires from control-api (main scopes, polling-driven) or the
 **supervisor** (sub-graph and fan-out-partition scopes, synchronous, in-transaction);
 a slow subscriber there holds up the firing process's path.
@@ -193,10 +195,10 @@ every hook and shows the `serverkit` HTTP+JSON bridge for non-Go callers.
 
 In rimsky's own tree there is no standalone `LifecycleSubscriber` binary —
 lifecycle handlers ride inside producer binaries. The in-tree examples are the
-stub store (`test/support/stores/stub/`) and the bundled postgres store
-(`lib/services/stores/postgres/lifecycle/`), each registering its
-`LifecycleSubscriber` handlers when its own server config sets
-`enable_lifecycle: true`. The postgres store ships its handlers as a no-op
+stub store (`test/support/stores/stub/`, gated on its Go
+`server.Config.EnableLifecycle` field) and the bundled postgres store
+(`lib/services/stores/postgres/lifecycle/`, gated on the `enable_lifecycle:`
+key in its own YAML config). The postgres store ships its handlers as a no-op
 skeleton — a documented fork-point for operators who want per-template DDL on
 deploy, **not** a shipped per-template-DDL behavior. DDL-on-deploy is the
 archetype this protocol enables, not a bundled feature. The in-tree OpenLineage

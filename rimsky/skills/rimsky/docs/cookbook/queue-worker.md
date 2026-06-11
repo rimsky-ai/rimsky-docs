@@ -1,13 +1,13 @@
 # A single-node queue worker
 
-## The problem
+## Problem
 
 One worker drains a stream of work items — review tasks, scrape targets,
 documents to classify — landing in a table: pull the next item, process
 it, come back for more. No two workers grab the same item; no item is lost
 if a worker dies mid-flight.
 
-## The rimsky shape
+## Rimsky shape
 
 A queue is just a [claim producer](../concepts/claim-producer.md) whose
 selector resolves to "the next available row" instead of a fixed address.
@@ -32,7 +32,7 @@ Primitives: **claim producer** (the postgres pick policy), **claim**
 (the picked item), **self-subscription** (the loop), **frame** (one
 cascade resolution per pulled item).
 
-## Walkthrough
+## Template
 
 **Assumes running.** This recipe references three services by the names
 in the template below; each must already be running and registered
@@ -78,6 +78,21 @@ nodes:
       - { name: topics-ring, selector: "@review-queue", intent: rw, alias: item }
     subscribes:
       - { node: worker, type: terminal/success, frame: next }
+    # Pre-dispatch acquisition failures route through error_types:,
+    # keyed on the EXACT error class. This entry catches the synthetic
+    # acquire/unavailable class (a durable-conflict on the claim scope,
+    # or a producer that names no class on its Unavailable response);
+    # without it, those failures take the fail-fast default (give_up)
+    # rather than pass. It does NOT catch the drained queue: the postgres store names its
+    # own class (pg/claim_unavailable) on the empty-pick Unavailable,
+    # and that key cannot be declared here — registration range-checks
+    # error_types: keys against the executor's declared_error_classes,
+    # and http-node declares only http/*. See Gotchas for what an empty
+    # queue actually does.
+    error_types:
+      acquire/unavailable:
+        policy:
+          - { action: pass }
     attributes:
       schema:
         type: object
@@ -105,14 +120,14 @@ rimsky template register queue-worker.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 Watch the worker cycle through items (each run records the item it picked
 in the `picked` attribute):
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"worker","state":"running"}   # while a pull is in flight
 # → {"node_type":"worker","state":"fresh"}      # between iterations
@@ -152,17 +167,48 @@ terminal first.
   (`on_commit: pop`), not the template — the reference config ships the
   `recycle` policy. Re-point the `store-postgres` config to a `pop` policy
   to exercise the drain-once shape.
-- **A draining worker does NOT free its own instance.** With a `pop`
-  policy the ring eventually empties, but the worker's instance keeps
-  living (durable by default) — when the queue drains the `worker` node
-  simply settles `fresh` and the self-edge stops firing for lack of work.
-  Nothing terminates the instance. For an ephemeral "process whatever is
-  queued, then exit" worker, set `terminate_after_run: true` on the create
-  request: the instance self-terminates after its *next* frame ends (strict
-  "run at most once more"), so this is the run-*one*-item shape, not
-  drain-the-whole-queue. The flag is body-only (the CLI `instance create`
-  has no flag for it) — `POST /instances` with
-  `{"template":"sha256-...","terminate_after_run":true}`. See the
+- **An empty queue is an *error class*, not a quiet no-op — and you
+  cannot route it to `pass` on this worker.** With a `pop` policy the
+  ring eventually empties; the next pull's `Open` returns
+  `Available: false` with the producer-declared class
+  `pg/claim_unavailable`, and rimsky keys the node's `error_types:`
+  chain on that **exact** class (a producer-declared class overrides the
+  synthetic `acquire/unavailable`, so the template's
+  `acquire/unavailable: pass` entry never fires for this store's empty
+  queue — it covers only durable-conflicts and class-less producers).
+  But `error_types: { pg/claim_unavailable: ... }` is **rejected at
+  registration**: the validator range-checks `error_types:` keys against
+  the node's *executor's* `declared_error_classes`, http-node declares
+  only `http/*`, and `pg/claim_unavailable` is not in the
+  runtime-synthesized exempt set (`acquire/*` plus a fixed list). The
+  producer-declared class is owned by the *store*, not the worker's
+  executor, so no `error_types:` entry on this node can both register
+  and match it. The drain therefore takes the
+  [error-policy](../concepts/error-policy.md) fail-fast default:
+  `give_up`, and the worker settles **`failed`**. The drain is still
+  deterministic and observable — `give_up` emits
+  `terminal/error/pg/claim_unavailable` (not `terminal/success`), so the
+  self-edge stops matching and the loop ends cleanly, with the
+  producer-declared class on the event log as the drain marker. Watch
+  for it directly
+  (`GET /v1/events?instance_id=<instance_id>&kind=terminal/error/pg/claim_unavailable`),
+  or react in-graph with a second node carrying an instance-scoped
+  wildcard subscription
+  (`subscribes: [{ instance: true, type: terminal/error/*, frame: in }]`)
+  — instance-scoped wildcards are not range-checked against any
+  executor's vocabulary, which is exactly how rimsky-core's own
+  `pg_error_classes` scenario observes this class.
+- **A draining worker does NOT free its own instance.** When the queue
+  drains, the `worker` node settles (`failed` via the `give_up` default
+  above) and the self-edge stops firing — but the instance keeps living (durable
+  by default). Nothing terminates the instance. For an ephemeral "run one
+  more frame, then exit" worker, set `terminate_after_run: true` at
+  create time: the instance self-terminates after its *next* frame ends
+  (strict "run at most once more"), so this is the run-*one*-item shape,
+  not drain-the-whole-queue. Set it with `rimsky run
+  --terminate-after-run` (implied by `rimsky run --no-keep`), or — since
+  the CLI `instance create` has no flag for it — `POST /v1/instances`
+  with `{"template":"sha256-...","terminate_after_run":true}`. See the
   [README](README.md#instances-are-durable-by-default).
 
 ## Without rimsky

@@ -30,10 +30,10 @@ executors:
 After standing up a rimsky deployment (see the [operator guide](../../operator-guide.md)):
 
 ```sh
-curl http://localhost:8080/health
+curl http://localhost:8080/v1/health
 ```
 
-The control-api `GET /health` returns a liveness snapshot — `status`, plus a `supervisors` array and a `node_counts` rollup so an operator can eyeball the cluster:
+The control-api `GET /v1/health` returns a liveness snapshot — `status`, plus a `supervisors` array and a `node_counts` rollup so an operator can eyeball the cluster:
 
 ```json
 {
@@ -46,7 +46,7 @@ The control-api `GET /health` returns a liveness snapshot — `status`, plus a `
 Assert on the `status` field (the `supervisors` / `node_counts` values depend on what is deployed):
 
 ```sh
-curl -s http://localhost:8080/health | jq -r '.status'
+curl -s http://localhost:8080/v1/health | jq -r '.status'
 # Expected: ok
 ```
 

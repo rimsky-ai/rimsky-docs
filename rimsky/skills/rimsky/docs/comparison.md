@@ -62,8 +62,21 @@ not apply to that platform.
 | Held-subgraph stage-then-promote     |   ❌    |   ❌    |   ❌    |    ❌    |    ❌     |  ❌  | ❌  |   ✅   |
 | Out-of-process workers               |   ✅    |   ✅    |   ✅    |    ✅    |    ✅     |  ❌  | ❌  |   ✅   |
 | Content-addressed graph definitions  |   ❌    |   🟡    |   ❌    |    🟡    |    ❌     |  ❌  | ❌  |   ✅   |
-| Cron-style schedule advances on row  |   ❌    |   ❌    |   ❌    |    n/a   |    n/a    | n/a  | n/a |   ✅   |
+| Cron advances from prior watermark (no clock backfill)¹ |   ❌    |   ❌    |   ❌    |    n/a   |    n/a    | n/a  | n/a |   ✅   |
 | Stream / window / watermark          |   ❌    |   ❌    |   ❌    |    ❌    |    ❌     |  ❌  | ❌  |   ❌   |
+
+¹ While running, rimsky's `sensor-cron` publisher advances each subscription's
+`next_fire_at` from the row's prior value, not from the wall clock: a long
+outage produces exactly one post-outage fire instead of a backfilled
+thundering herd. Watermark persistence across a sensor *restart* is opt-in
+and DSN-gated: with `RIMSKY_SENSOR_CRON_STATE_DSN` set, watermarks persist to
+a Postgres state DB and a restarted binary recovers the originally scheduled
+`next_fire_at` (firing on the in-flight window); in the default in-memory
+mode, subscriptions are resynced at restart with
+`next_fire_at = sched.Next(now)` — at most one missed fire per restart per
+subscription. Airflow/Dagster/Prefect instead offer catch-up/backfill
+semantics keyed off the clock; for Temporal, LangGraph, Burr, and dbt the
+dimension does not apply (no built-in cron-subscription rows).
 
 The two rows where rimsky is distinctively ahead are
 **held-subgraph aggregate-outcome resolution** and
@@ -356,11 +369,13 @@ primitive. None of the comparators have a direct equivalent.
   data lineage.
 - **dbt**: Lineage graph from model dependencies; `dbt docs`
   generates a queryable view.
-- **rimsky**: Cascade graph plus events log. Structural lineage is
-  the cascade graph. Content lineage (what specific values produced
-  this value) is present via the lineage projection — `claim_terminal`
-  records, queryable at `GET /lineage/claims/{claim_handle_id}` and
-  `GET /lineage/runs/{run_id}`. The missing piece is a polished
+- **rimsky**: Cascade graph plus events log (event kinds are a typed
+  `OperationalKind` proto enum as of v0.8.0, queryable at
+  `GET /v1/events`). Structural lineage is the cascade graph. Content
+  lineage (what specific values produced this value) is present via
+  the lineage projection — `claim_terminal` records, queryable at
+  `GET /v1/lineage/claims/{claim_handle_id}` and
+  `GET /v1/lineage/runs/{run_id}`. The missing piece is a polished
   lineage-query UI, not the data.
 
 Rimsky has the structural lineage for free (cascade walks it) and the
@@ -422,7 +437,7 @@ batteries-included checks than mature dbt installations.
 - **rimsky**: First-class, shipped via the publisher/sensor protocol
   plus four bundled sensors (`sensor-cron`, `sensor-http`,
   `sensor-object-store`, `sensor-webhook`). A sensor publishes into the
-  unified `POST /instances/{id}/messages` endpoint with
+  unified `POST /v1/instances/{id}/messages` endpoint with
   `sender_kind: "publisher"`.
 
 ## Scope test heuristics

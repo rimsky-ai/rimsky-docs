@@ -16,7 +16,7 @@ How to implement a service that speaks one of rimsky's wire protocols. The guide
 - [ClaimProducer](protocols/claim-producer.md): implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
 - [Executor](protocols/executor.md): implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol.
 - [LifecycleSubscriber](protocols/lifecycle-subscriber.md): implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus `OnRunScopeTerminal`).
-- [Publisher](protocols/publisher.md): implement a publisher (Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via `POST /instances/{id}/messages`). Sensors (cron / http / object-store / webhook) are one kind of publisher.
+- [Publisher](protocols/publisher.md): implement a publisher (Capabilities / Subscribe / Unsubscribe / ListSubscriptions; emit via `POST /v1/instances/{id}/messages`). Sensors (cron / http / object-store / webhook) are one kind of publisher.
 - [Go packages](protocols/go-packages.md): the optional Go helper packages in the single `protocols` module (conveniences — not a required SDK).
 - [Runnable examples](examples/README.md): minimal, copyable Apache server skeletons — executor, claim-producer, atomic-staging-fs-producer, lifecycle-subscriber, publisher, validation, data-processing — vendored from rimsky-core's `examples/` module at the reconciled tag, each with the exact Go wiring and a pinned `go.mod`; plus the `examples/compose/` directory carrying a runnable `rimsky-compose.yml` manifest and two referenced `TemplateSpec` files (`template-a.yml`, `template-b.yml`) for the `rimsky compose up | plan | down` verbs.
 
@@ -60,7 +60,7 @@ Higher-altitude system shapes (with explicit shipped-vs-aspirational status).
 
 ## Errors
 
-- [Error catalog](agents/errors/README.md): one file per consumer-observable error — what it means, when it happens, what to do.
+- [Error catalog](agents/errors/README.md): one file per consumer-observable error class (or per mechanism family) — what it means, when it happens, what to do.
 
 ## Optional
 

@@ -25,7 +25,7 @@ implementing `ClaimProducer` over gRPC). The colloquial term **store** survives 
 the bundled-services layer for data-backed reference impls (filesystem store,
 postgres store, stub store).
 
-<!-- @source: ../../.ok-planner/design/concepts/claim-producer.md -->
+<!-- @source: .ok-planner/design/concepts/claim-producer.md -->
 
 ## What you implement
 
@@ -35,7 +35,7 @@ postgres store, stub store).
 | `Open(OpenRequest) → OpenResponse` | **Yes** | Acquire a claim inside rimsky's atomic acquisition transaction; return `Acquired` or `Unavailable`. |
 | `Commit(CommitRequest) → CommitResponse` | **Yes** | Terminal: the consumer of the claim succeeded. Idempotent in `claim_id`. |
 | `Abandon(AbandonRequest) → AbandonResponse` | **Yes** | Terminal: the consumer of the claim failed. Idempotent in `claim_id`. |
-| `Release(ReleaseRequest) → ReleaseResponse` | **Yes** | Tear down producer-side read state for a read claim. Idempotent in `claim_id`. |
+| `Release(ReleaseRequest) → ReleaseResponse` | **Yes** | Tear down producer-side state for a committed-durable claim at instance termination or explicit asset release. Idempotent in `claim_id`. |
 | `SplitScope(SplitScopeRequest) → SplitScopeResponse` | No — gated on `supports_split_scope` | Partition an already-`Open`'d parent scope into `SubScopeDescriptor` rows for fan-out. |
 | `ScopesConflict(ClaimScopesConflictRequest) → ScopesConflictResponse` | No — gated on `supports_scopes_conflict` | Decide whether two non-byte-equal `claim_scope` values serialize against each other. |
 
@@ -105,7 +105,7 @@ The producer does **NOT** own (rimsky's job):
 
 ## `Open` — acquire a claim
 
-<!-- @source: ../../.ok-planner/design/concepts/claim.md -->
+<!-- @source: .ok-planner/design/concepts/claim.md -->
 
 `Open` is invoked inside rimsky's atomic acquisition transaction. A claim is a
 node-declared assertion that the node will read or read-write a producer-defined
@@ -174,8 +174,8 @@ fields, both inert to rimsky:
 
 | Field | Meaning |
 | --- | --- |
-| `version_id` | Set by `DataProcessing`-capable producers; rimsky persists it in the `rimsky_claim_handles.version_id` column and the lineage record. Plain producers leave it empty. |
-| `producer_metadata` | Surfaced verbatim in the fan-out parent's writeback row. Plain producers leave it empty. |
+| `version_id` | Declared for `DataProcessing`-capable producers, but in v0.8.0 rimsky does **not** read it off the wire: the runtime's `Commit` client discards the response body, and the persisted `rimsky_claim_handles.version_id` is sourced from the `CommitCandidate` step instead. Setting it has no effect today; leave it empty. |
+| `producer_metadata` | Declared for a future fan-out writeback surface, but in v0.8.0 rimsky does **not** read it off the wire — the same discarded `Commit` response. Setting it has no effect today; leave it empty. |
 
 ## `Abandon` — consumer failed
 
@@ -187,16 +187,35 @@ for pick-policy claims, apply the configured abandon-default action; for `sync`
 `rw` claims it is degenerate — direct writes cannot be undone, so document this as
 an honest limitation in your producer's README.
 
-Not called for read-only claims (rimsky calls `Release` instead). Idempotent in
-`claim_id`. `AbandonResponse` has no fields.
+Fires for **every** non-held claim whose consumer failed, including `r`-intent
+(read-only) claims — the run-terminal path has no intent or write-semantics
+gating, only the success/failure binary
+(see [Verb firing at terminal](#verb-firing-at-terminal)). For a read claim the
+producer-side disposition is typically a no-op or read-state teardown. Idempotent
+in `claim_id`. `AbandonResponse` has no fields.
+<!-- @source: lib/runtime/terminal_decision.go::fireProducerVerb -->
 
-## `Release` — tear down read state
+## `Release` — release a committed-durable claim
 
-`ReleaseRequest` carries `claim_id`, `claim_scope`, `address`. Tear down
-producer-side read state (snapshot, MVCC transaction) for a read claim. Fires only
-when the producer registered such state (relevant for `staged_async`; not exercised
-by every reference producer). Idempotent in `claim_id`. `ReleaseResponse` has no
-fields.
+`ReleaseRequest` carries `claim_id`, `claim_scope`, `address`. `Release` is **not**
+a run-terminal verb — it never fires when a node run completes (that path fires
+`Commit` / `Abandon` only). It fires against committed-durable claim-handle rows
+(`state = 'committed'` AND `lifetime = 'durable'` — the asset surface) in exactly
+two places:
+
+- **Instance termination** — the runtime walks the instance's committed-durable
+  rows and calls `Release` on each, sequentially. A failed `Release` does not
+  block termination; the rimsky-side row is preserved for retry and the failure
+  is reported per-claim to the operator.
+  <!-- @source: lib/runtime/instance_termination.go::ReleaseHeldDurableClaims -->
+- **Explicit asset release** — the operator
+  `DELETE /v1/instances/{id}/assets/{alias}` handler.
+
+The rimsky-side row is deleted only on `Release` success. Producer disposition:
+tear down whatever state backs the durable claim (residual staging, snapshot,
+MVCC transaction). Idempotent in `claim_id`. `ReleaseResponse` has no fields.
+See [claim-lifetime](../concepts/claim-lifetime.md) for the durable-vs-subgraph
+lifecycle.
 
 ## `Capabilities` — startup handshake
 
@@ -208,7 +227,7 @@ cached for the process's lifetime. `CapabilitiesResponse` returns:
 | `write_semantics_allowed` | The set of `WriteSemantics` values this producer may return from `Open`. |
 | `supports_split_scope` / `supports_scopes_conflict` | The optional-RPC flags. Advertise `true` only when you implement the matching RPC. |
 | `protocols` | The mix-in service protocols this binary also speaks alongside `claim_producer` (e.g. `data_processing`, `validation`, `lifecycle_subscriber`). A binary that implements `LifecycleSubscriber` lists `lifecycle_subscriber` here. |
-| `validation_supported_roles` | When `validation` is in `protocols`, the role discriminators this service will validate. |
+| `validation_supported_roles` | When `validation` is in `protocols`, the role discriminators this service will validate (`executor` / `claim_producer` / `lifecycle_subscriber` / `sensor`). For a claim-producer peer advertising the `validation` mix-in, rimsky learns the **live** list by running a fresh `ClaimProducer.Capabilities` handshake at startup (the operator-declared YAML carries only the write-semantics envelope, never roles); a handshake failure fails rimsky startup. <!-- @source: lib/control/config/publishers.go --> |
 
 The valid `WriteSemantics` values are `sync`, `staged_async`, `blocking_async`, and
 `read_only` (the proto enum `WRITE_SEMANTICS_*`; `WRITE_SEMANTICS_UNKNOWN` is the
@@ -238,15 +257,28 @@ must consistently return the same one for any given canonical scope. The simples
 path is "one mode per producer process" (single-element envelope); supporting
 per-claim variation requires per-scope state.
 
-## Verb-firing matrix per claim shape
+## Verb firing at terminal
 
-| Claim shape | `write_semantics` | Verbs invoked at terminal |
-| --- | --- | --- |
-| Scoped-access `r` | `sync` / `blocking_async` | None — claim-handle deletion is sufficient |
-| Scoped-access `r` | `staged_async` | `Release(claim_id)` |
-| Scoped-access `rw` | `sync` | `Commit(claim_id)` (no-op) or `Abandon(claim_id)` (degenerate) |
-| Scoped-access `rw` | `staged_*` | `Commit(claim_id)` (atomic swap) or `Abandon(claim_id)` |
-| Pick-policy claim | (any) | `Commit(claim_id)` or `Abandon(claim_id)` |
+<!-- @source: lib/runtime/runner_terminal_release.go::releaseClaim -->
+<!-- @source: lib/runtime/terminal_decision.go::fireProducerVerb -->
+
+When a node run reaches terminal, rimsky fires exactly one producer verb per
+non-held claim: `Commit(claim_id)` on success, `Abandon(claim_id)` on failure.
+This holds for **every** claim shape — there is no intent or write-semantics
+gating, and no "no verb" branch. An `r`-intent `sync` claim gets the same
+`Commit` / `Abandon` pair as a `staged_async` `rw` claim; what differs is the
+producer-side disposition (often a no-op for read claims), which is per-producer
+config — rimsky carries only the success/failure binary. `Release` never fires
+on the run-terminal path; it is reserved for committed-durable rows (see
+[`Release`](#release--release-a-committed-durable-claim)).
+
+After the verb, rimsky promotes the claim-handle row's `state` column to
+`committed` / `abandoned` rather than deleting it ("Promote-not-delete"). The
+row is preserved past terminal for forensics and asset-presentation queries;
+the retention sweep reaps non-durable terminal rows at the configured trailing
+window, while committed-durable rows persist as the asset surface until
+`Release` ([claim-lifetime](../concepts/claim-lifetime.md)).
+<!-- @source: lib/runtime/terminal_decision.go::promoteHandleState -->
 
 For held claims, rimsky fires exactly one automatic resolution at holding-subgraph
 completion. Aggregate outcome — all-completed → `Commit`; any-failed → `Abandon` —
@@ -255,7 +287,7 @@ from a non-held terminal.
 
 ## Inertness
 
-<!-- @source: ../../.ok-planner/design/concepts/claim-handle.md -->
+<!-- @source: .ok-planner/design/concepts/claim-handle.md -->
 
 What rimsky won't do with claim content. The persistent claim-handle row asserts
 "holder H has acquired scope S for purpose P" — it carries the rimsky-generated

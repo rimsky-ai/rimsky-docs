@@ -8,6 +8,7 @@ instance every rimsky process already talks to).
 Stores blobs in `pg_largeobject` via the libpq `lo_*` API (pgx's
 `LargeObjects.Create / Open / Unlink`). Handles formatted as
 `pglo:<oid>`. Each LO operation runs in its own pgx transaction.
+<!-- @source: lib/foundation/persistence/postgres/blob_largeobject.go::PgLargeObjectBackend -->
 
 ## When to use
 

@@ -10,6 +10,7 @@ In-process `map[Handle][]byte` plus `sync.RWMutex`. Handles formatted
 as `mem:<n>`. Suitable for the unified-image dev/test setup and for
 unit tests that exercise the blob interface without spinning up a
 container.
+<!-- @source: lib/foundation/persistence/blob_memory.go::MemoryBackend -->
 
 ## When to use
 
@@ -26,6 +27,7 @@ container.
   cannot share state through an in-process map. The startup
   validator (`ValidateBlobConfig`) refuses to construct the backend
   unless `RIMSKY_PROCESS_ROLE=unified`.
+  <!-- @source: lib/foundation/persistence/blob_config.go::ValidateBlobConfig -->
 
 ## Configuration
 

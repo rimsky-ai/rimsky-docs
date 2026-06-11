@@ -7,15 +7,20 @@ It is **not** a skeleton template, not a copy-paste starting point. If you are w
 ## Two forms, two uses
 
 1. **In-process test double** — `test/support/executors/stub/` is a Go package, not a binary. The `stubtest/` wrapper is used by scenario tests under `test/scenarios/`: tests script per-`node_type` behavior on a shared `Stub` instance and assert on the `ExecuteRequest`s the supervisor wired through (attributes, store handles, callback URL) via `Observed()`.
-2. **Standalone test binary** — `lib/services/test/stubexecutor/` is a small gRPC `stubexecutor` binary that returns immediate-success (`StreamClose{Success}`, `changed=false`, no attribute writeback) for every dispatch. It binds to `EXECUTOR_STUB_BIND` (default `0.0.0.0:9300`) and is built into a Docker image consumed by rimsky's services test harness. It is a test fixture, not a deploy artifact.
+2. **Standalone test binary** — `lib/services/test/stubexecutor/` is a small gRPC `stubexecutor` binary that by default returns immediate-success (`StreamClose{Success}`, `changed=false`, no attribute writeback) for every dispatch. It binds to `EXECUTOR_STUB_BIND` (default `0.0.0.0:9300`) and is built into a Docker image consumed by rimsky's services test harness. It is a test fixture, not a deploy artifact.
+   <!-- @source: lib/services/test/stubexecutor/main.go -->
 
-   The standalone binary also registers an `ExecutorObservability` server and answers `Capabilities` with a permissive open expected-attributes schema (`{"type":"object"}`, no `properties` block — `graph/node.IsPermissiveExecutorSchema` reads this as "open shape"). It keeps no traces, so `GetTrace` / `StreamTrace` return `Unimplemented`. The open schema matters for dispatch: the dispatch-time attribute-surface gate (`runtime.resolveAttributes`) rejects an attribute-bearing node whose executor advertises *no* schema with `error_class: "executor_schema_unavailable"`. Because the standalone stub now advertises the open schema, a node carrying an `attributes:` block dispatched against it **dispatches and settles** rather than failing that gate.
+   **Forced-error mode:** setting `EXECUTOR_STUB_FORCE_ERROR=1` flips the binary from success-only to error-only — every dispatch emits a single terminal `StreamClose{Error}` with `error_class: "stub/forced_error"` (the `stub/` prefix follows the hierarchical signal-class convention, mirroring the in-process double's auto-prefixing). In this mode `Capabilities` also advertises `stub/forced_error` in `DeclaredErrorClasses`, so a template node can route the class through an `error_types:` policy without tripping the registration validator's vocabulary range-check. Unset (the default) keeps the success-only behavior; the harness uses forced-error mode to drive abandon-path scenarios.
+
+   The standalone binary also registers an `ExecutorObservability` server and answers `Capabilities` with a permissive open expected-attributes schema (`{"type":"object"}`, no `properties` block — `IsPermissiveExecutorSchema` in `lib/graph/node` reads this as "open shape"). It keeps no traces, so `GetTrace` / `StreamTrace` return `Unimplemented`. The open schema matters for dispatch: the dispatch-time attribute-surface gate (`resolveAttributes` in `lib/runtime/runner_dispatch.go`) rejects an attribute-bearing node whose executor advertises *no* schema with `error_class: "executor_schema_unavailable"`. Because the standalone stub now advertises the open schema, a node carrying an `attributes:` block dispatched against it **dispatches and settles** rather than failing that gate.
+   <!-- @source: lib/runtime/runner_dispatch.go::resolveAttributes -->
 
 For conformance, `rimsky conformance executor --require-stub-mode` runs the probe against a stub-mode target as a known-good baseline for protocol-shape checks. The probe rejects non-stubbed services, preventing accidental real-LLM calls during conformance.
 
 ## Scripting DSL surface
 
 `Stub.WhenType(type)` returns a builder producing one of the four terminal outcomes the protocol allows, each mapping onto a `StreamClose` oneof variant:
+<!-- @source: test/support/executors/stub/stub.go::WhenType -->
 
 | DSL method | Wire outcome |
 |---|---|

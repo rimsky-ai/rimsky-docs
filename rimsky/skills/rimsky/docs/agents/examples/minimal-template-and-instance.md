@@ -42,7 +42,7 @@ rimsky instance create sha256-abc...def
 ## 4. Observe completion
 
 ```sh
-curl http://localhost:8080/instances/01HZ.../nodes
+curl http://localhost:8080/v1/instances/01HZ.../nodes
 ```
 
 Expected output (after the stub executor returns):
@@ -60,10 +60,10 @@ Expected output (after the stub executor returns):
 
 ## Verification
 
-The `GET /instances/{id}` response carries no frame-state field — frame state (`queued | running | completed | failed`) lives on `rimsky_frames` rows, not the instance projection. The settlement signal is the node state: the stub's terminal drives `hello` back to `fresh` (it ran, settled, and is idle awaiting the next invalidate).
+The `GET /v1/instances/{idOrKey}` response carries no frame-state field — frame state (`queued | running | completed | failed`) lives on `rimsky_frames` rows, not the instance projection. The settlement signal is the node state: the stub's terminal drives `hello` back to `fresh` (it ran, settled, and is idle awaiting the next invalidate).
 
 ```sh
-curl -s http://localhost:8080/instances/01HZ.../nodes \
+curl -s http://localhost:8080/v1/instances/01HZ.../nodes \
   | jq '.nodes[] | select(.node_type == "hello") | .state'
 ```
 

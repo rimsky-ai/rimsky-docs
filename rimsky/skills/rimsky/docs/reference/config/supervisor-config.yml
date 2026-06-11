@@ -3,11 +3,17 @@
 # under RIMSKY_CONFIG; this file is loaded by RIMSKY_SUPERVISOR_CONFIG
 # and carries only supervisor-local knobs.
 
+# supervisor_id defaults to <hostname>-<pid>; set it only when you need a
+# stable identity across restarts.
+# supervisor_id: supervisor-1
+
 concurrency: 8
 heartbeat_interval_ms: 5000
 claim_poll_interval_ms: 1000
 callback:
   host: 0.0.0.0
+  # 9100 is also the reference store-filesystem gRPC port — pick a
+  # different port when both run on one host / network namespace.
   port: 9100
   # advertise_host is the peer-reachable hostname executors dial back to.
   # In a container deployment it should be the supervisor's service name; in k8s it is
@@ -19,3 +25,7 @@ callback:
   # syntax: ${VAR}, no bash ${VAR:-default} defaults), so the example below
   # expands to empty when CALLBACK_ADVERTISE_HOST is unset.
   advertise_host: ${CALLBACK_ADVERTISE_HOST}
+  # advertise_port overrides the port embedded in callback_url; 0 / omitted
+  # falls back to the bound listener port. Env
+  # RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT wins over this value.
+  # advertise_port: 9100

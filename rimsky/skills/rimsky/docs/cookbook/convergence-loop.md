@@ -90,7 +90,7 @@ rimsky template register loop.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 The loop's mechanism is the self-edge: each run that commits with
@@ -113,7 +113,7 @@ by — the `refine` node alternates between `running` (a frame in flight) and
 each cycle:
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"refine","state":"running"}   # iteration in flight
 # → {"node_type":"refine","state":"fresh"}      # between iterations
@@ -150,7 +150,7 @@ metric increments — a wedged retry loop surfaces instead of silently
 burning budget.
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state, current_error_class}'
 # → {"node_type":"refine","state":"failed",
 #    "current_error_class":"retry_loop_no_progress"}
@@ -165,7 +165,7 @@ iteration, then on the no-change run the `when: payload.changed` self-edge
 stops matching and the node settles `fresh`:
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"refine","state":"fresh"}
 ```

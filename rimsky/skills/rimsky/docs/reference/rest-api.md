@@ -10,144 +10,74 @@ Complete route table for rimsky's HTTP+JSON control API, generated from the cano
 
 66 routes across 45 actions.
 
-## /admin
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/admin/diagnostics/held-frames` | `diagnostics:read` | R | List frames held by holding-subgraph claims. |
-| `GET` | `/admin/diagnostics/parked-nodes` | `parked-node:read` | R | List nodes parked in the wait-set. |
-| `GET` | `/admin/diagnostics/wait-sets` | `waitset:read` | R | List wait-set entries (sender/receiver edges). |
-| `POST` | `/admin/instances/{instance}/nodes/{node_id}/invalidate` | `node:invalidate` | W | Invalidate a node (resumes if parked; otherwise marks stale + re-fires). |
-| `POST` | `/admin/lineage/prune` | `lineage:prune` | W | Prune lineage rows older than a cutoff. |
-
-## /audit
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/audit` | `audit:read` | R | Read the auth audit log. |
-
-## /auth
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/auth/keys` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
-| `POST` | `/auth/keys` | `auth:create` | W | Mint a new API key. Plaintext surfaced exactly once. |
-| `GET` | `/auth/keys/{nameOrID}` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
-| `DELETE` | `/auth/keys/{nameOrID}` | `auth:revoke` | W | Revoke an API key. Refuses to leave zero active keys without force flag. |
-| `POST` | `/auth/keys/{nameOrID}/rotate` | `auth:rotate` | W | Rotate an API key (mint a new plaintext with same identity; old key revoked at grace expiry). |
-| `GET` | `/auth/status` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
-
-## /backfills
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/backfills/{op_id}` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
-| `POST` | `/backfills/{op_id}/cancel` | `backfill:cancel` | W | Cancel a running backfill operation. |
-| `GET` | `/backfills/{op_id}/partitions` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
-
-## /diagnostics
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/diagnostics/parked` | `parked-node:read` | R | List nodes parked in the wait-set. |
-
-## /events
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/events` | `event:read` | R | Read the event log. |
-
-## /instances
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/instances` | `instance:read` | R | Read instances; list all or get one by id-or-key. |
-| `POST` | `/instances` | `instance:create` | W | Create a new instance from a template. |
-| `GET` | `/instances/{idOrKey}` | `instance:read` | R | Read instances; list all or get one by id-or-key. |
-| `DELETE` | `/instances/{idOrKey}` | `instance:terminate` | W | Terminate an instance. |
-| `GET` | `/instances/{idOrKey}/breakpoint-hits` | `breakpoint:read` | R | List active breakpoints installed on an instance, or read its pending breakpoint hits. |
-| `GET` | `/instances/{idOrKey}/breakpoints` | `breakpoint:read` | R | List active breakpoints installed on an instance, or read its pending breakpoint hits. |
-| `POST` | `/instances/{idOrKey}/breakpoints` | `breakpoint:create` | W | Install a runtime breakpoint on an instance. |
-| `DELETE` | `/instances/{idOrKey}/breakpoints/{breakpoint_id}` | `breakpoint:delete` | W | Delete a breakpoint; cascades to its hits. |
-| `POST` | `/instances/{idOrKey}/breakpoints/{breakpoint_id}/resume` | `breakpoint:resume` | W | Resume a paused breakpoint hit, optionally applying a one-shot attribute overlay. |
-| `GET` | `/instances/{idOrKey}/nodes` | `node:read` | R | Read nodes; list per instance or get by id. |
-| `POST` | `/instances/{idOrKey}/pause` | `instance:pause` | W | Soft-pause an instance; supervisor stops claiming new dispatches until resumed. |
-| `POST` | `/instances/{idOrKey}/resume` | `instance:resume` | W | Resume a paused instance; supervisor candidate-selection picks it up again. |
-| `POST` | `/instances/{idOrKey}/terminate` | `instance:kill` | W | Force-terminate an instance: mark it terminal and abandon in-flight node-runs. |
-| `GET` | `/instances/{id}/assets` | `asset:read` | R | Read assets on an instance. |
-| `GET` | `/instances/{id}/assets/{alias}` | `asset:read` | R | Read assets on an instance. |
-| `DELETE` | `/instances/{id}/assets/{alias}` | `asset:delete` | W | Delete an asset on an instance. |
-| `GET` | `/instances/{id}/assets/{alias}/materialization-history` | `asset:read` | R | Read assets on an instance. |
-| `POST` | `/instances/{id}/assets/{alias}/materialize` | `asset:materialize` | W | Materialize (re-compute) an asset version. |
-| `GET` | `/instances/{id}/assets/{alias}/versions` | `asset:read` | R | Read assets on an instance. |
-| `GET` | `/instances/{id}/backfills` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
-| `POST` | `/instances/{id}/backfills` | `backfill:create` | W | Start a backfill operation on an instance. |
-| `GET` | `/instances/{id}/messages` | `message:read` | R | Read messages on an instance or by id. |
-| `POST` | `/instances/{id}/messages` | `message:send` | W | Send a message into an instance's message bus. |
-
-## /lineage
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/lineage/by-producer/{executor_name}` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/by-source/{source_type}/{source_id}` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/claims/{claim_handle_id}` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/claims/{claim_handle_id}/ancestors` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/runs/{run_id}` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/runs/{run_id}/ancestors` | `lineage:read` | R | Read lineage graphs. |
-| `GET` | `/lineage/runs/{run_id}/descendants` | `lineage:read` | R | Read lineage graphs. |
-
-## /lock-holders
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/lock-holders/{claim_handle_id}/claim-holders` | `claim-holders:read` | R | List claim-holder rows for a claim handle. |
-
-## /mcp
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
-| `POST` | `/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
-
-## /messages
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/messages/{id}` | `message:read` | R | Read messages on an instance or by id. |
-
-## /nodes
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/nodes/{id}` | `node:read` | R | Read nodes; list per instance or get by id. |
-| `POST` | `/nodes/{id}/invalidate` | `node:invalidate` | W | Invalidate a node (resumes if parked; otherwise marks stale + re-fires). |
-| `POST` | `/nodes/{id}/reset` | `node:reset` | W | Reset a failed node back to stale so it can be re-attempted. |
-
-## /tags
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/tags` | `tag:read` | R | List template tags. |
-| `POST` | `/tags` | `tag:create` | W | Create a new template tag. |
-| `PUT` | `/tags/{tag}` | `tag:set` | W | Move a tag to point at a different template hash. |
-| `DELETE` | `/tags/{tag}` | `tag:delete` | W | Delete a template tag. |
-
-## /templates
-
-| Method | Path | Auth gate | R/W | Action |
-| --- | --- | --- | --- | --- |
-| `GET` | `/templates` | `template:read` | R | Read templates; list all or get one by id. |
-| `POST` | `/templates` | `template:register` | W | Register (compile + persist) a new template. |
-| `POST` | `/templates/validate` | `template:validate` | R | Validate a template spec without persisting; returns all validation findings. |
-| `GET` | `/templates/{id}` | `template:read` | R | Read templates; list all or get one by id. |
-| `DELETE` | `/templates/{id}` | `template:deregister` | W | Delete a template; refused while any instance references it. |
-| `POST` | `/templates/{id}/deploy` | `template:deploy` | W | Mark a template deployed; instances may use it. |
-| `POST` | `/templates/{id}/undeploy` | `template:undeploy` | W | Mark a template undeployed; new instances rejected. |
-
 ## /v1
 
 | Method | Path | Auth gate | R/W | Action |
 | --- | --- | --- | --- | --- |
+| `GET` | `/v1/admin/diagnostics/held-frames` | `diagnostics:read` | R | List frames held by holding-subgraph claims. |
+| `GET` | `/v1/admin/diagnostics/parked-nodes` | `parked-node:read` | R | List nodes parked in the wait-set. |
+| `GET` | `/v1/admin/diagnostics/wait-sets` | `waitset:read` | R | List wait-set entries (sender/receiver edges). |
+| `POST` | `/v1/admin/instances/{instance}/nodes/{node_id}/invalidate` | `node:invalidate` | W | Invalidate a node (resumes if parked; otherwise marks stale + re-fires). |
+| `POST` | `/v1/admin/lineage/prune` | `lineage:prune` | W | Prune lineage rows older than a cutoff. |
+| `GET` | `/v1/audit` | `audit:read` | R | Read the auth audit log. |
+| `GET` | `/v1/auth/keys` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
+| `POST` | `/v1/auth/keys` | `auth:create` | W | Mint a new API key. Plaintext surfaced exactly once. |
+| `GET` | `/v1/auth/keys/{nameOrID}` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
+| `DELETE` | `/v1/auth/keys/{nameOrID}` | `auth:revoke` | W | Revoke an API key. Refuses to leave zero active keys without force flag. |
+| `POST` | `/v1/auth/keys/{nameOrID}/rotate` | `auth:rotate` | W | Rotate an API key (mint a new plaintext with same identity; old key revoked at grace expiry). |
+| `GET` | `/v1/auth/status` | `auth:read` | R | Read API-key state and the auth mode (anonymous\|authenticated). |
+| `GET` | `/v1/backfills/{op_id}` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
+| `POST` | `/v1/backfills/{op_id}/cancel` | `backfill:cancel` | W | Cancel a running backfill operation. |
+| `GET` | `/v1/backfills/{op_id}/partitions` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
+| `GET` | `/v1/diagnostics/parked` | `parked-node:read` | R | List nodes parked in the wait-set. |
+| `GET` | `/v1/events` | `event:read` | R | Read the event log. |
+| `GET` | `/v1/instances` | `instance:read` | R | Read instances; list all or get one by id-or-key. |
+| `POST` | `/v1/instances` | `instance:create` | W | Create a new instance from a template. |
+| `GET` | `/v1/instances/{idOrKey}` | `instance:read` | R | Read instances; list all or get one by id-or-key. |
+| `DELETE` | `/v1/instances/{idOrKey}` | `instance:terminate` | W | Terminate an instance. |
+| `GET` | `/v1/instances/{idOrKey}/breakpoint-hits` | `breakpoint:read` | R | List active breakpoints installed on an instance, or read its pending breakpoint hits. |
+| `GET` | `/v1/instances/{idOrKey}/breakpoints` | `breakpoint:read` | R | List active breakpoints installed on an instance, or read its pending breakpoint hits. |
+| `POST` | `/v1/instances/{idOrKey}/breakpoints` | `breakpoint:create` | W | Install a runtime breakpoint on an instance. |
+| `DELETE` | `/v1/instances/{idOrKey}/breakpoints/{breakpoint_id}` | `breakpoint:delete` | W | Delete a breakpoint; cascades to its hits. |
+| `POST` | `/v1/instances/{idOrKey}/breakpoints/{breakpoint_id}/resume` | `breakpoint:resume` | W | Resume a paused breakpoint hit, optionally applying a one-shot attribute overlay. |
+| `GET` | `/v1/instances/{idOrKey}/nodes` | `node:read` | R | Read nodes; list per instance or get by id. |
+| `POST` | `/v1/instances/{idOrKey}/pause` | `instance:pause` | W | Soft-pause an instance; supervisor stops claiming new dispatches until resumed. |
+| `POST` | `/v1/instances/{idOrKey}/resume` | `instance:resume` | W | Resume a paused instance; supervisor candidate-selection picks it up again. |
+| `POST` | `/v1/instances/{idOrKey}/terminate` | `instance:kill` | W | Force-terminate an instance: mark it terminal and abandon in-flight node-runs. |
+| `GET` | `/v1/instances/{id}/assets` | `asset:read` | R | Read assets on an instance. |
+| `GET` | `/v1/instances/{id}/assets/{alias}` | `asset:read` | R | Read assets on an instance. |
+| `DELETE` | `/v1/instances/{id}/assets/{alias}` | `asset:delete` | W | Delete an asset on an instance. |
+| `GET` | `/v1/instances/{id}/assets/{alias}/materialization-history` | `asset:read` | R | Read assets on an instance. |
+| `POST` | `/v1/instances/{id}/assets/{alias}/materialize` | `asset:materialize` | W | Materialize (re-compute) an asset version. |
+| `GET` | `/v1/instances/{id}/assets/{alias}/versions` | `asset:read` | R | Read assets on an instance. |
+| `GET` | `/v1/instances/{id}/backfills` | `backfill:read` | R | Read backfills; list per instance or get by op_id. |
+| `POST` | `/v1/instances/{id}/backfills` | `backfill:create` | W | Start a backfill operation on an instance. |
+| `GET` | `/v1/instances/{id}/messages` | `message:read` | R | Read messages on an instance or by id. |
+| `POST` | `/v1/instances/{id}/messages` | `message:send` | W | Send a message into an instance's message bus. |
+| `GET` | `/v1/lineage/by-producer/{executor_name}` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/by-source/{source_type}/{source_id}` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/claims/{claim_handle_id}` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/claims/{claim_handle_id}/ancestors` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/runs/{run_id}` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/runs/{run_id}/ancestors` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lineage/runs/{run_id}/descendants` | `lineage:read` | R | Read lineage graphs. |
+| `GET` | `/v1/lock-holders/{claim_handle_id}/claim-holders` | `claim-holders:read` | R | List claim-holder rows for a claim handle. |
+| `GET` | `/v1/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
+| `POST` | `/v1/mcp` | `mcp:read` | R | Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call. |
+| `GET` | `/v1/messages/{id}` | `message:read` | R | Read messages on an instance or by id. |
+| `GET` | `/v1/nodes/{id}` | `node:read` | R | Read nodes; list per instance or get by id. |
+| `POST` | `/v1/nodes/{id}/invalidate` | `node:invalidate` | W | Invalidate a node (resumes if parked; otherwise marks stale + re-fires). |
+| `POST` | `/v1/nodes/{id}/reset` | `node:reset` | W | Reset a failed node back to stale so it can be re-attempted. |
 | `GET` | `/v1/observability/*` | `observability:read` | R | Read observability data via /v1/observability/*. |
+| `GET` | `/v1/tags` | `tag:read` | R | List template tags. |
+| `POST` | `/v1/tags` | `tag:create` | W | Create a new template tag. |
+| `PUT` | `/v1/tags/{tag}` | `tag:set` | W | Move a tag to point at a different template hash. |
+| `DELETE` | `/v1/tags/{tag}` | `tag:delete` | W | Delete a template tag. |
+| `GET` | `/v1/templates` | `template:read` | R | Read templates; list all or get one by id. |
+| `POST` | `/v1/templates` | `template:register` | W | Register (compile + persist) a new template. |
+| `POST` | `/v1/templates/validate` | `template:validate` | R | Validate a template spec without persisting; returns all validation findings. |
+| `GET` | `/v1/templates/{id}` | `template:read` | R | Read templates; list all or get one by id. |
+| `DELETE` | `/v1/templates/{id}` | `template:deregister` | W | Delete a template; refused while any instance references it. |
+| `POST` | `/v1/templates/{id}/deploy` | `template:deploy` | W | Mark a template deployed; instances may use it. |
+| `POST` | `/v1/templates/{id}/undeploy` | `template:undeploy` | W | Mark a template undeployed; new instances rejected. |
 

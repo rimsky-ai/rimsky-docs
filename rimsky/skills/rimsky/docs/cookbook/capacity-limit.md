@@ -1,13 +1,13 @@
 # Cap concurrency with a counting semaphore
 
-## The problem
+## Problem
 
 Many nodes (or many instances) share a hard downstream ceiling — an API
 that allows 50 in-flight calls, a model budget, a database that falls over
 past N concurrent writers — and must block when it is reached, without
 coordinating it by hand in every node.
 
-## The rimsky shape
+## Rimsky shape
 
 A [named lock](../concepts/named-lock.md) is a producer-independent
 capacity counter. The operator declares it once in `rimsky.yml` with a
@@ -28,9 +28,11 @@ Primitives: **named lock** (the counting semaphore), **claim-handle**
 (where the count lives), **node** (the holder for the duration of its
 run).
 
-## Walkthrough
+## Template
 
-Needs a rimsky deployment whose `rimsky.yml` declares the named lock:
+Needs a rimsky deployment with the `http-node` executor (stub mode,
+`RIMSKY_EXECUTOR_STUB_MODE=1`) and a `rimsky.yml` that declares the named
+lock:
 
 ```yaml
 named_locks:
@@ -52,12 +54,22 @@ version: "1.0"
 frame_resolution_mode: serial_queue
 nodes:
   - type: call-model
-    executor: claude-agent
+    executor: http-node
     locks:
       - { name: model-budget }
     attributes:
       schema:
         type: object
+        properties:
+          # stub_probe short-circuits the bundled http-node stub before its
+          # transport-config check; a schema `default:` flows into the
+          # dispatch bag verbatim (it is never substituted). The lock is
+          # executor-independent — swap in a real executor (e.g.
+          # claude-agent with a live API key) and the `locks:` line is
+          # unchanged.
+          stub_probe:
+            type: boolean
+            default: true
         additionalProperties: true
 ```
 
@@ -68,22 +80,34 @@ rimsky template register budgeted.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 The node acquires one of the 50 `model-budget` slots, runs, and releases
 it at terminal. With the limit at 50 a single instance never blocks; the
 cap bites when more than 50 holders are live at once.
 
-To observe capacity, watch the `rimsky_claim_acquisitions_total{producer,
-intent}` Prometheus counter on `GET /metrics`, or query the live holders
-directly — a held slot is a `named`-kind row in the
+To observe capacity, watch the [event log](../concepts/event-log.md):
+every named-lock acquisition appends a `lock_acquired` event whose
+payload carries `lock_kind: "named"`, `lock_name`, and `holder_id` (the
+claim-handle row id), and every release appends the matching
+`lock_released`:
+
+```sh
+curl -s "http://localhost:8080/v1/events?instance_id=<instance_id>&kind=lock_acquired" \
+  | jq '[.events[] | select(.payload.lock_name == "model-budget")] | length'
+```
+
+Saturation itself is visible as the *absence* of work: a node blocked on
+a saturated lock stays `stale` on the `/nodes` listing with no new
+`lock_acquired` event, and each held slot is a `named`-kind row in the
 [claim-handle ledger](../concepts/claim-handle.md). The admin
 diagnostics surfaces do **not** help here: `held-frames` reports only
 frames with a [parked](../concepts/parked-state.md) node, and a node
 blocked on a saturated named lock does not park — its per-candidate
 acquisition tx rolls back and it stays `stale` in the queue (see the
-gotcha below), so it never appears as a held frame.
+gotcha below), so it never appears as a held frame. Nor does Prometheus:
+the named-lock acquisition path increments no counter in v0.8.0.
 
 ## Gotchas
 

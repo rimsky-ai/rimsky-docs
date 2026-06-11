@@ -1,7 +1,13 @@
 # Per-store-service config for the `store-filesystem` reference service.
-# Mounted at /etc/store/config.yml inside the container.
+# Mounted at /etc/store/config.yml inside the container; the binary finds
+# it only via STORE_FILESYSTEM_CONFIG (no baked default — unset exits non-zero).
 root: /workspace/content
 host: 0.0.0.0
 grpc_port: 9100
 http_port: 9110
 http_bridge_url: "http://store-filesystem:9110"
+# Optional, defaults off/empty: admin_port (required when pick_policies
+# is non-empty) and pick_policies (per-policy keys: root, folder_pattern,
+# on_commit, on_give_up, visibility_timeout_seconds, sync_strategy).
+# sweep_interval_seconds is NOT default-off: omitted or 0 re-defaults to
+# 60; the sweep cannot be disabled.

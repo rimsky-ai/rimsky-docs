@@ -58,6 +58,7 @@ var verifiedInternalSymbols = []string{
 	"ExpandEnv", "FromDockerfile",
 	// external frameworks cited by comparison.md (LangGraph public API)
 	"StateGraph", "InMemorySaver", "SqliteSaver", "PostgresSaver", "StateSnapshot",
+	"SetBackend", // lib/services/sensors/sensor-object-store/sensor.go::SensorService.SetBackend
 }
 
 // runSymbolExistence verifies that every multi-word CamelCase symbol a
@@ -110,6 +111,16 @@ func runSymbolExistence(args []string) error {
 			if info.IsDir() {
 				// The generated references are the oracle, not guides to check.
 				if info.Name() == "reference" {
+					return filepath.SkipDir
+				}
+				// docs/examples/ (the corpus root's examples dir only — NOT
+				// agents/examples/, which is hand-written) is the vendored
+				// projection of rimsky-core's gate-tested examples module.
+				// Like reference/, it is mechanical: its symbols live in the
+				// examples module and test-support code, absent from the
+				// public oracle by design, and its fidelity is the vendoring
+				// binary's job, not this lint's.
+				if rel, relErr := filepath.Rel(root, path); relErr == nil && rel == "examples" {
 					return filepath.SkipDir
 				}
 				return nil

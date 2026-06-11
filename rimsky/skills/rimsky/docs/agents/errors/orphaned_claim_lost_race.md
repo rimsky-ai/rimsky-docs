@@ -1,6 +1,6 @@
 ---
 error: orphaned_claim_lost_race
-surfaced_to: executor
+surfaced_to: operator
 ---
 
 # `orphaned_claim_lost_race`

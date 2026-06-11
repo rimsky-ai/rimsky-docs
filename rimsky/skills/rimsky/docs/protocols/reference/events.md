@@ -16,6 +16,12 @@ See spec §9.8 of docs/history/2026-04-25-stores-redesign-design.md for the
 full event-kind catalogue. When new kinds are added to the log, they should
 be declared here.
 
+The wire `kind` field is `string` for backward compatibility on the wire
+(rimsky's typed-payload oneof is unchanged); the typed `OperationalKind`
+enum is what app logic consumes internally, with marshaling to/from the
+wire string happening at the persistence boundary. See
+decision:event-log-kind-enum.
+
 | Field | Type | # | Description |
 |-------|------|---|-------------|
 | `id` | `int64` | 1 |  |
@@ -284,4 +290,73 @@ failure reason for debugging.
 | `site` | `string` | 2 | Where the directive appeared: "attribute" \| "lock_name" \| "scope". |
 | `field` | `string` | 3 | For site="attribute": the attribute schema property name. |
 | `reason` | `string` | 4 |  |
+
+## Enums
+
+### OperationalKind
+
+OperationalKind enumerates the canonical set of operational event-log
+kind discriminators rimsky emits today. Signal-class kinds (the
+`terminal/...`, `transient/...`, `attribute/...`, `event/...`,
+`message/...` taxonomy validated at template registration) are NOT
+listed here — those carry the parsed signal type-path as the kind
+value and live in the signal taxonomy.
+
+See decision:event-log-kind-enum: rimsky's app logic consumes typed
+values exclusively (this enum for operational kinds; the parsed
+signal type-path for signal-class kinds), never raw strings. The
+persistence layer marshals typed → string at write and string →
+typed at read; an unknown string at the unmarshal boundary is a
+defensive error.
+
+Adding a new operational kind = adding a value here and regenerating
+Go bindings (no schema migration; the storage column stays TEXT).
+
+| Value | # | Description |
+|-------|---|-------------|
+| `OPERATIONAL_KIND_UNSPECIFIED` | 0 |  |
+| `OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED` | 1 | auth.* — auth-audit slice surfaced by GET /audit. |
+| `OPERATIONAL_KIND_AUTH_ACCESS_DENIED` | 2 |  |
+| `OPERATIONAL_KIND_AUTH_KEY_CREATED` | 3 |  |
+| `OPERATIONAL_KIND_AUTH_KEY_REVOKED` | 4 |  |
+| `OPERATIONAL_KIND_AUTH_KEY_ROTATED` | 5 |  |
+| `OPERATIONAL_KIND_STATE_TRANSITION` | 10 | Node-run lifecycle and supervisor decisions. |
+| `OPERATIONAL_KIND_WORK_STARTED` | 11 |  |
+| `OPERATIONAL_KIND_WORK_COMPLETED` | 12 |  |
+| `OPERATIONAL_KIND_WORK_REJECTED` | 13 |  |
+| `OPERATIONAL_KIND_HEARTBEAT_LOST` | 14 |  |
+| `OPERATIONAL_KIND_NO_OP_COMMIT` | 15 |  |
+| `OPERATIONAL_KIND_OPERATOR_OVERRIDE` | 16 |  |
+| `OPERATIONAL_KIND_UNRESOLVED_EXECUTOR` | 17 |  |
+| `OPERATIONAL_KIND_INSTANCE_TERMINATED` | 18 |  |
+| `OPERATIONAL_KIND_ERROR` | 19 |  |
+| `OPERATIONAL_KIND_LOCK_ACQUIRED` | 20 | Lock-holder lifecycle. |
+| `OPERATIONAL_KIND_LOCK_RELEASED` | 21 |  |
+| `OPERATIONAL_KIND_LOCK_ORPHAN_REAPED` | 22 |  |
+| `OPERATIONAL_KIND_CLAIM_ACQUIRED` | 30 | Claim lifecycle. |
+| `OPERATIONAL_KIND_CLAIM_HELD` | 31 |  |
+| `OPERATIONAL_KIND_CLAIM_RESOLVED` | 32 |  |
+| `OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED` | 33 |  |
+| `OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE` | 34 |  |
+| `OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT` | 35 |  |
+| `OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON` | 36 |  |
+| `OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED` | 40 | Attribute-substitution + validation. |
+| `OPERATIONAL_KIND_ATTRIBUTES_COMMITTED` | 41 |  |
+| `OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED` | 42 |  |
+| `OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED` | 43 |  |
+| `OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED` | 44 |  |
+| `OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED` | 45 |  |
+| `OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE` | 46 |  |
+| `OPERATIONAL_KIND_BREAKPOINT_HIT` | 50 | Breakpoint debugger. |
+| `OPERATIONAL_KIND_MESSAGE_EMITTED` | 60 | Message bus (operational-side audit of message activity, distinct from the signal-class `message/...` topology). |
+| `OPERATIONAL_KIND_MESSAGE_RECEIVED` | 61 |  |
+| `OPERATIONAL_KIND_FAN_OUT_DISPATCHED` | 70 | Fan-out + sub-claim + sub-graph dispatch. |
+| `OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED` | 71 |  |
+| `OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE` | 72 |  |
+| `OPERATIONAL_KIND_SUBCLAIM_ACQUIRED` | 73 |  |
+| `OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED` | 74 |  |
+| `OPERATIONAL_KIND_SUBGRAPH_DISPATCHED` | 75 |  |
+| `OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY` | 76 |  |
+| `OPERATIONAL_KIND_PARK_TIMEOUT` | 80 | Parked-node lifecycle. |
+| `OPERATIONAL_KIND_PARKED_RESUME_STARTED` | 81 |  |
 

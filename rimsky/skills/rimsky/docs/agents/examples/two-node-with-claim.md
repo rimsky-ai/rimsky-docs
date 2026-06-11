@@ -65,7 +65,7 @@ rimsky instance create sha256-... \
 ## 3. Observe both nodes settle
 
 ```sh
-curl http://localhost:8080/instances/<instance_id>/nodes
+curl http://localhost:8080/v1/instances/<instance_id>/nodes
 ```
 
 Expected output: both nodes in `fresh` state.
@@ -73,7 +73,7 @@ Expected output: both nodes in `fresh` state.
 ## Verification
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '[.nodes[] | {node_type, state}]'
 ```
 
@@ -86,13 +86,22 @@ Expected output:
 ]
 ```
 
-The acquirer's claim was committed at its terminal (success → `Commit`); the claim-holders listing for that handle is empty:
+The acquirer's claim was committed at its terminal (success → `Commit`); the claim-holders listing for that handle is empty.
+
+First obtain the claim handle id. The acquirer's claim acquisition appends a `lock_acquired` event to the instance's event log; its `payload.holder_id` is the claim handle id (the payload also carries `lock_kind: "scope"`, `producer_name`, `alias`, and `intent`, so a multi-claim node can be disambiguated by `alias`): <!-- @source: lib/runtime/runner_acquire_postcommit.go::emitLockAcquired -->
+
+```sh
+claim_handle_id=$(curl -s "http://localhost:8080/v1/events?instance_id=<instance_id>&kind=lock_acquired" \
+  | jq -r '.events[] | select(.payload.alias == "workspace") | .payload.holder_id')
+```
+
+Then list the holders:
 
 ```sh
 # This claim is NON-held: neither node declares `holds:`,
 # so no `rimsky_claim_holders` rows are ever inserted — that is why the
 # listing is empty, not because anything was deleted. (The handle row
 # itself is promoted to state='committed' at the terminal, not deleted.)
-curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders | jq '.holders | length'
+curl -s http://localhost:8080/v1/lock-holders/$claim_handle_id/claim-holders | jq '.holders | length'
 # Expected: 0
 ```

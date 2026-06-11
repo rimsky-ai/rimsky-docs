@@ -8,16 +8,20 @@ carries no copyleft and no commercial track. **Everything else
 rimsky ships is the dual-licensed orchestrator layer:** AGPL-3.0-or-later by
 default (no action required), OR a Fall Guy Consulting commercial license as an
 alternative over the same code. That layer is the `rimsky` CLI, the Go reference
-executors and stores, the sensors and subscribers, conformance, and the deploy
-artifacts (`dockerfiles/`). These are real, runnable artifacts — using them is
-using rimsky, and that use carries the AGPL's copyleft unless you hold the
-commercial license.
+executors and stores, the sensors and subscribers, and conformance. These are
+real, runnable artifacts — using them is using rimsky, and that use carries the
+AGPL's copyleft unless you hold the commercial license. Non-source ship
+artifacts outside the mechanical map — the `dockerfiles/` build files — fall
+under `COPYING.md`'s unqualified "everything else Rimsky ships" bullet
+(`COPYRIGHT`'s parallel orchestrator-layer notice scopes itself to *source
+files*), not under a `licensing.yml` entry.
 
-The boundary is mechanical, not prose: `licensing.yml` is the source of truth,
-and `make license-lint` verifies it on every CI run. `COPYRIGHT` carries the
-formal per-layer notice; `COPYING.md` is the plain-language compliance guide.
-Classification is longest-prefix-match, so a specific subdirectory can override
-its parent's bucket.
+The boundary is mechanical, not prose: `licensing.yml` is the source of truth
+for source files (the walker stamps and checks `.go`, `.ts`/`.tsx`, `.proto`,
+`.sql`, and `.sh`), and `make license-lint` verifies it on every CI run.
+`COPYRIGHT` carries the formal per-layer notice; `COPYING.md` is the
+plain-language compliance guide. Classification is longest-prefix-match, so a
+specific subdirectory can override its parent's bucket.
 
 ## The surface → license map
 
@@ -131,8 +135,10 @@ Yes. Executors, stores, and other services are independent processes that speak
 the wire protocol; the protocol is Apache-licensed. There is no license
 relationship between your service and the rimsky orchestrator beyond the wire.
 Build whatever you want against `lib/protocols/`; you owe nothing back.
-(Contributions back are welcomed under the CLA in `CLA.md`, but are not
-required.) Be aware that the reference executors and stores rimsky *ships* —
+(Contributions back are welcome — there is no separate CLA; each commit
+carries the `Rimsky-Cert` sign-off trailer defined in `CONTRIBUTING.md`, which
+folds the old DCO certification and CLA rights grant into one line. Not
+required to use the protocols.) Be aware that the reference executors and stores rimsky *ships* —
 `http-node`, the verifiers, `filesystem`, `postgres` — are AGPL; a closed-source
 implementation must be your own, talking over the wire, not a fork of those.
 

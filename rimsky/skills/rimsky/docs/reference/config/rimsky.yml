@@ -3,8 +3,9 @@
 # at startup via RIMSKY_CONFIG.
 #
 # 2026-05-12 nomenclature resolution:
-#   - block `stores:` retired (was renamed `claim_producers:` in
-#     Phase 4); the alias is no longer accepted.
+#   - block `stores:` retired (renamed `claim_producers:`); the alias
+#     is no longer accepted — the loader (lib/control/config/stores.go)
+#     rejects it with a pointer to the replacement.
 #   - per-service `protocols: [...]` list (defaults: [claim_producer] /
 #     [executor]; add `lifecycle_subscriber` for services that opt in).
 #   - per-producer `write_semantics_allowed: [...]` set (operator-
@@ -24,7 +25,8 @@ persistence:
   postgres:
     dsn: "postgres://rimsky:rimsky@db.internal:5432/rimsky?sslmode=disable"
   # Optional blob backend for spilling large attribute / event /
-  # parked-payload bytes (plan §D). Default backend "inline" writes
+  # parked-payload bytes (loader: lib/control/config/blob.go; see
+  # concepts/blob-backend.md). Default backend "inline" writes
   # everything inline; "pg-largeobject" / "filesystem" / "memory"
   # spill above spill_threshold_bytes.
   #
@@ -69,6 +71,12 @@ claim_producers:
     # protocol plus the Capabilities startup handshake.
     endpoint: "grpc://store-filesystem:9100"
     protocols: [claim_producer]
+    # Must be a non-empty subset of what the producer advertises on the
+    # Capabilities handshake. Both reference stores here advertise
+    # exactly [sync] because their own configs realize sync writes
+    # (store-postgres.yml sets `write_semantics: sync`; the filesystem
+    # store is sync-only). A mismatch fails startup with an error
+    # naming both sets.
     write_semantics_allowed: [sync]
   topics-ring:
     endpoint: "grpc://store-postgres:9101"
@@ -80,12 +88,16 @@ named_locks:
   model-budget:                    { limit: 50 }
 
 executors:
-  # For executors whose HTTP+JSON bridge runs on a different port from
-  # gRPC (every peer in this repo), the operator configures the peer
-  # with an `http_bridge_url` and the dashboard auto-discovers it
-  # through the observability handshake. Use `observability_endpoint:`
-  # only when an executor splits its gRPC observability service onto a
-  # different port from the dispatch service.
+  # The loader accepts only transport / endpoint / tls / protocols /
+  # observability_endpoint per executor — there is NO bridge-URL key
+  # here. For peers whose HTTP+JSON bridge runs on a different port
+  # from gRPC (every peer in this repo), the bridge URL is set in the
+  # PEER'S OWN config (`http_bridge_url` in the store-service YAML;
+  # RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL for claude-agent) and
+  # reaches rimsky through the observability handshake. Use
+  # `observability_endpoint:` only when an executor splits its gRPC
+  # observability service onto a different port from the dispatch
+  # service.
   claude-agent:
     transport: grpc
     endpoint: "claude-agent:9090"
@@ -98,10 +110,16 @@ executors:
     protocols: [executor]
 
 # Publishers are peer services that POST message envelopes into rimsky
-# via the generic /instances/{id}/messages endpoint with
-# sender_kind="publisher". Sensors are one kind of publisher; the four
-# bundled sensors below all implement the Publisher protocol per spec
-# .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md.
+# via the generic /v1/instances/{id}/messages endpoint with
+# sender_kind="publisher". The endpoint here is the OUTBOUND direction:
+# the control-api dials it to issue Subscribe / Unsubscribe at instance
+# create/terminate and to resync subscriptions at startup. Omitting a
+# publisher's entry means rimsky can never Subscribe to it — templates
+# referencing it get no messages, and the publisher's own POSTs are
+# refused (the emit gate requires an active subscription row). Sensors
+# are one kind of publisher; the four bundled sensors below all
+# implement the Publisher protocol (guide: protocols/publisher.md;
+# loader: lib/control/config/publishers.go).
 publishers:
   sensor-cron:
     endpoint: "sensor-cron:9081"
@@ -115,3 +133,19 @@ publishers:
   sensor-webhook:
     endpoint: "sensor-webhook:9084"
     protocols: [publisher]
+
+# Registration-time reference-validation strictness. Default `all` (every
+# template-referenced executor / claim-producer / named lock must be visible
+# at registration). Env RIMSKY_REF_VALIDATION_MODE overrides the YAML value.
+#
+# templates:
+#   ref_validation_mode: all               # all | available | none
+
+# Late-bind dispatch routing: protocol name -> proxy service name. Routes
+# dispatches against late-bound services (declared per-instance, not in this
+# file) through the named proxy peer — the host-agent-proxy architecture.
+# Omit for no late-bind behavior.
+#
+# late_bind_service_proxies:
+#   executor: host-agent-proxy
+#   claim_producer: host-agent-proxy

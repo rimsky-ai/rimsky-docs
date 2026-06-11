@@ -71,10 +71,17 @@ rimsky instance create sha256-... --params '{"snapshot_id":"snap-1"}'
 
 ## 3. Observe held-claim resolution
 
-While the co-holders are running, the acquirer's claim handle is in held state. List the holding-subgraph members for that handle:
+While the co-holders are running, the acquirer's claim handle is in held state. First obtain the claim handle id: the acquirer's claim acquisition appends a `lock_acquired` event to the instance's event log, and its `payload.holder_id` is the claim handle id (this event lands at acquire time, so the id is available while the run is still in flight; every holding-subgraph member references the same handle, hence the `unique`): <!-- @source: lib/runtime/runner_acquire_postcommit.go::emitLockAcquired -->
 
 ```sh
-curl http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders
+claim_handle_id=$(curl -s "http://localhost:8080/v1/events?instance_id=<instance_id>&kind=lock_acquired" \
+  | jq -r '[.events[].payload.holder_id] | unique | .[0]')
+```
+
+Then list the holding-subgraph members for that handle:
+
+```sh
+curl http://localhost:8080/v1/lock-holders/$claim_handle_id/claim-holders
 ```
 
 After both co-holders terminate, the held claim's automatic resolution computes the aggregate outcome (all completed → `Commit`) and fires `ClaimProducer.Commit`. Terminal does NOT delete the claim handle — it *promotes* it: every terminal flips `rimsky_claim_handles.state` and preserves the row past terminal, so an all-success commit promotes the handle to `state='committed'` (a later retention sweep reaps non-durable terminal rows). The holder rows are likewise preserved, each transitioned `active`→`completed` with `completed_at` set.
@@ -82,7 +89,7 @@ After both co-holders terminate, the held claim's automatic resolution computes 
 ## Verification
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '[.nodes[] | {node_type, state}]'
 ```
 
@@ -99,10 +106,11 @@ Expected output:
 Once the held claim has been resolved, the handle row is preserved (promoted to `state='committed'`, not deleted), and so are its holder rows — each transitioned to `state='completed'`. `ListByClaimHandleID` applies no state filter, so the listing returns ALL holders regardless of state. This holding subgraph has three members — the acquirer (its own holder row is inserted at acquire-time, gated on `IsHeld()`) plus coholder-a and coholder-b (each added via its `holds:` edge and inserting its own holder row at its own acquire) — so the listing returns three holders, all `completed` (the route returns `200 OK` with `{"holders": [...]}`; it does NOT return `404`):
 
 ```sh
-curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
+# $claim_handle_id from step 3 (the lock_acquired event's payload.holder_id)
+curl -s http://localhost:8080/v1/lock-holders/$claim_handle_id/claim-holders \
   | jq '.holders | length'
 # Expected: 3
-curl -s http://localhost:8080/lock-holders/<claim_handle_id>/claim-holders \
+curl -s http://localhost:8080/v1/lock-holders/$claim_handle_id/claim-holders \
   | jq '[.holders[] | .state]'
 # Expected: ["completed","completed","completed"]
 ```

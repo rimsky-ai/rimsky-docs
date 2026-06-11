@@ -182,6 +182,8 @@ Usage of run:
     	tag to attach to the registered template
   -template string
     	name of an already-registered template (mutually exclusive with <file>)
+  -terminate-after-run rimsky watch
+    	create the instance with terminate_after_run=true — it self-terminates once its nodes settle, so terminal-flag polling (e.g. rimsky watch) exits. Implied by --no-keep.
   -timeout duration
     	max wait for terminal state when --no-keep (0 = unbounded)
   -yes

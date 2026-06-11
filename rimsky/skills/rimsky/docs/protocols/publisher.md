@@ -8,7 +8,7 @@
 A **publisher** is a peer service that publishes messages into rimsky. It
 implements the `Publisher` protocol (four verbs: `Capabilities`, `Subscribe`,
 `Unsubscribe`, `ListSubscriptions`) and emits each message by POSTing a message
-envelope to the generic `POST /instances/{id}/messages` endpoint — there is no
+envelope to the generic `POST /v1/instances/{id}/messages` endpoint — there is no
 special observation-deposit route. **Sensors** (cron / http / object-store /
 webhook) are one kind of publisher.
 
@@ -26,7 +26,7 @@ contract works behind the proxy by construction with no proxy-specific code. See
 [`README.md`](README.md#host-agent-proxy-a-transparent-forwarder) for the
 implementor consequences.
 
-<!-- @source: ../../.ok-planner/design/concepts/publisher.md -->
+<!-- @source: .ok-planner/design/concepts/publisher.md -->
 
 ## What you implement
 
@@ -82,7 +82,7 @@ Probed once per service at startup; cached in rimsky's discovery cache. The
 | --- | --- | --- |
 | `supported_kinds` | `repeated PublisherKindCapability` | The kinds this binary supports. Each `PublisherKindCapability` carries a `kind` string and a `config_schema` (`bytes`) — the JSON Schema for the `resolved_config` accepted at `Subscribe` for that kind. `config_schema` is opaque to rimsky and surfaces to operator tooling. |
 | `protocols` | `repeated string` | Mix-in service protocols advertised (e.g. `"publisher"`, `"validation"`). The list must include `"publisher"`. |
-| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). |
+| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). **Caveat:** rimsky's startup validation-registry wiring does not yet read this field from publisher (or executor) peers — only claim-producer peers get the live `ClaimProducer.Capabilities` roles handshake; a publisher peer's supported-roles list is currently treated as empty. <!-- @source: lib/control/config/publishers.go --> |
 
 Full field reference: [`reference/publisher.md`](reference/publisher.md).
 
@@ -101,14 +101,16 @@ routing fields **inline** — there is no `on_change` / on-observation substruct
 | `kind` | `string` | Which supported kind to watch under. |
 | `resolved_config` | `bytes` | Per-instance config the publisher watches against (cron expression, HTTP URL, S3 bucket+prefix, …). Substituted by rimsky from the template `publishers:` block before dispatch. |
 | `target_node` | `string` | Receiver node alias on the instance side. The publisher copies it onto each envelope as `target`. |
-| `message_kind` | `string` | Wire-level message kind; default `"invalidate"` when empty. The publisher copies it onto each envelope as `kind`. |
+| `message_kind` | `string` | Wire-level message kind; default `"invalidate"` when empty. The publisher copies it onto each envelope as `kind`. **V1 restriction:** `POST /v1/instances/{id}/messages` rejects any `kind` other than `"invalidate"` with `400` — other kinds are V2, so `"invalidate"` is the only value that emits successfully in V1. <!-- @source: lib/control/controlapi/messages.go::handleCreateMessage --> |
 
 `SubscribeResponse` is empty. The publisher persists `target_node` and
 `message_kind` alongside its subscription state; at fire time it constructs
 `{kind: message_kind, target: target_node, ...}` envelopes from these inline fields.
 
-Rimsky retries `Subscribe` up to **3 times** with exponential backoff
-(200ms → ~560ms → ~1.6s, ±25% jitter) before flipping the publisher-subscription
+Rimsky calls `Subscribe` up to **3 attempts total** (the initial call plus 2
+retries) with exponential backoff: ~560ms before attempt 2 and ~1.6s before
+attempt 3 (200ms base × ~2.828 per attempt, ±25% jitter; the bare 200ms base is
+never slept) before flipping the publisher-subscription
 row to `state='failed'`. A `failed` row is operator-recoverable: the startup
 resync pass re-issues `Subscribe`, transitioning `failed → active` on success.
 
@@ -144,7 +146,7 @@ A publisher emits by POSTing a message envelope to the generic operator
 message-emit endpoint — there is no special observation-deposit route:
 
 ```
-POST /instances/{instance_id}/messages
+POST /v1/instances/{instance_id}/messages
 Idempotency-Key: <key>          # for at-most-once semantics
 Content-Type: application/json
 
@@ -159,7 +161,8 @@ Content-Type: application/json
 ```
 
 - `kind` and `target` are the persisted `message_kind` / `target_node` from
-  `Subscribe`.
+  `Subscribe`. In V1 the endpoint accepts only `kind: "invalidate"`; any other
+  kind is rejected with `400` (see the [`message_kind` field](#subscriberequest)).
 - `sender_kind` MUST be `"publisher"` and `publisher_subscription_id` MUST be the
   token from `Subscribe` — together they are the capability token rimsky checks.
 - The request's `sender` field is **ignored** — rimsky derives `sender` from the
@@ -178,11 +181,13 @@ or unknown capability is likewise rejected at this boundary, not at the publishe
 
 ## Retry & backoff on emit
 
-A publisher POSTing to `POST /instances/{id}/messages` should retry transient
+A publisher POSTing to `POST /v1/instances/{id}/messages` should retry transient
 failures: **5xx responses and transport/connection errors retry up to 3 attempts
-total** with exponential backoff (base 200ms, geometric multiplier 2.828, so
-attempt 3 lands at ~1.6s). A **4xx is terminal** — it means rimsky rejected the
-capability, the route is gone, or the body is invalid; retrying would not help, so
+total** with exponential backoff (base 200ms, geometric multiplier ~2.828:
+sleep 200ms after attempt 1 and ~566ms after attempt 2, so attempt 3 issues
+~766ms after the first attempt). A **4xx is terminal** — it means rimsky rejected the
+capability, the route is gone, or the body is invalid (including a non-`invalidate`
+`kind` in V1, which returns `400`); retrying would not help, so
 abandon immediately and log it at WARN under the `publisher.message.rejected` key
 so operators can spot capability-revocation / route-misconfiguration without
 digging through per-publisher log noise. `2xx` is success.
@@ -238,9 +243,24 @@ than copying AGPL service code:
 Each is single-replica per the [replica contract](#replica-contract) and carries
 its own README and config.
 
+The sensors also demonstrate the **DSN-gated state-persistence pattern** an
+implementor should copy: each owns a sensor-specific state schema behind a
+per-binary env var (`RIMSKY_SENSOR_CRON_STATE_DSN`,
+`RIMSKY_SENSOR_HTTP_STATE_DSN`, `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN`,
+`RIMSKY_SENSOR_WEBHOOK_STATE_DSN`; Postgres-only DSN). With the env unset the binary runs in-memory and relies on
+rimsky's startup resync (`ListSubscriptions` + `Subscribe` replay) to
+reconstruct subscriptions; setting it persists subscription rows + watermarks
+across sensor restarts. The state table shape is each sensor's own — it is
+deliberately not shared with rimsky's persistence layer.
+<!-- @source: lib/services/sensors/sensor-http/state_db.go -->
+
 `sensor-object-store` validates backends at startup and advertises (via
-`Capabilities`) **only** the registered set; the default bundled image registers
-only the `memory` backend. A `Subscribe` naming an unregistered backend
+`Capabilities`) **only** the registered set. The default bundled image always
+registers the `memory` backend and conditionally registers a `filesystem`
+backend (a directory lister) when `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` names a
+root directory — leaving the env unset omits `filesystem` from the advertised
+set. <!-- @source: lib/services/sensors/sensor-object-store/main.go --> A
+`Subscribe` naming an unregistered backend
 (`s3` / `gcs` / `azure`) is rejected at `Subscribe` time rather than silently
 no-op'ing at poll time. A deployment needing a cloud backend builds its own binary
 that registers the desired lister before serving, after which the sensor advertises

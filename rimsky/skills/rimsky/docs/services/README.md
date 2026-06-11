@@ -38,12 +38,16 @@ rather than wired into a default deployment. Two configuration styles appear:
   [`store-postgres.yml`](../reference/config/store-postgres.yml) show the
   shape. YAML values are `os.ExpandEnv`-expanded, so `${VAR}` references
   resolve at load time.
-- **Executors, sensors, and the subscriber** are configured entirely through
-  env vars (`RIMSKY_EXECUTOR_*`, `RIMSKY_SENSOR_*`, `RIMSKY_OPENLINEAGE_*`).
-  There is no config file.
+- **Executors, sensors, and the subscriber** take all their settings from
+  env vars (`RIMSKY_EXECUTOR_*`, `RIMSKY_SENSOR_*`, `RIMSKY_OPENLINEAGE_*`) and
+  have no service-level config file. One exception: the claude-agent executor's
+  optional MCP catalog is a YAML/JSON file whose path is named by
+  `RIMSKY_EXECUTOR_MCP_CATALOG` (see [claude-agent](#claude-agent)).
 
-Sensors and the subscriber are clients of rimsky's control-api: they read
-`RIMSKY_ENDPOINT` (sensors) or a Postgres DSN (subscriber) to reach it.
+Sensors are clients of rimsky's control-api: they read `RIMSKY_ENDPOINT` to
+reach it. The `openlineage` subscriber makes no control-api connection — it
+polls the `rimsky_lineage` Postgres projection directly via
+`RIMSKY_OPENLINEAGE_RIMSKY_DSN` (see [openlineage](#openlineage)).
 
 ---
 
@@ -106,8 +110,39 @@ filesystem path, a queue row) and enforce the claim lifecycle. See the
 - **Dockerfile:** `lib/services/stores/postgres/Dockerfile.postgres`.
 - **Note:** the items table the pick policy targets is **operator-owned**. The
   store verifies the table's schema at startup and exits if it is missing — a
-  deployment must create `topics_items` (a one-shot init step) before starting
-  the store.
+  deployment must create the configured `items_table` (`topics_items` in the
+  reference config) as a one-shot init step before starting the store.
+  The startup check (`verifyItemsTable`, `lib/services/stores/postgres/store/store.go`)
+  queries `information_schema.columns` in the connection's current schema and
+  requires these columns with exactly these `data_type` values (extra columns
+  are allowed):
+  | column | required type |
+  | --- | --- |
+  | `item_id` | `text` |
+  | `payload` | `jsonb` |
+  | `state` | `text` |
+  | `claim_token` | `text` |
+  | `claimed_at` | `timestamp with time zone` |
+  | `enqueued_at` | `timestamp with time zone` |
+  | `priority` | `integer` |
+  | `sequence` | `bigint` |
+  A working init DDL (the shape the store's own tests create — constraints,
+  defaults, and indexes are not verified at startup but match how the store
+  reads the table):
+  ```sql
+  CREATE TABLE topics_items (
+      item_id     TEXT PRIMARY KEY,
+      payload     JSONB NOT NULL,
+      state       TEXT NOT NULL DEFAULT 'available',
+      claim_token TEXT,
+      claimed_at  TIMESTAMPTZ,
+      enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      priority    INTEGER NOT NULL DEFAULT 0,
+      sequence    BIGSERIAL
+  );
+  CREATE INDEX topics_items_available_idx   ON topics_items (priority DESC, sequence) WHERE state = 'available';
+  CREATE INDEX topics_items_in_progress_idx ON topics_items (claim_token) WHERE state = 'in_progress';
+  ```
 
 ---
 
@@ -123,8 +158,10 @@ implementation guide](../protocols/executor.md).
 - **What it is:** the reference node executor for the `http.request@1` node
   type. Performs an outbound HTTP request driven by the dispatch attributes and
   emits the response as the terminal `Success.attributes_delta`.
-- **Protocol:** Executor (plus the read-only `ExecutorObservability` mix-in over
-  the HTTP bridge).
+- **Protocol:** Executor, plus the read-only `ExecutorObservability` mix-in. The
+  mix-in is registered on the gRPC server and additionally mirrored onto the
+  HTTP/JSON bridge listener under `/observability/v1/*` — both transports serve
+  it (`lib/services/executors/http-node/main.go`).
 - **Config** (env):
   | var | default | meaning |
   | --- | --- | --- |
@@ -146,7 +183,12 @@ implementation guide](../protocols/executor.md).
   callback URL, and relaying the subprocess's structured outcome back. Always
   uses the async-handoff pattern (`StreamClose{AwaitAsyncCallback}` then a later
   HTTP callback).
-- **Protocol:** Executor (with an HTTP/JSON bridge for HTTP-preferring callers).
+- **Protocol:** Executor, plus the full `ExecutorObservability` mix-in
+  (`Capabilities` + `GetTrace` + `StreamTrace`, backed by an in-process trace
+  ledger). Both
+  services are registered on the gRPC server and mirrored onto the HTTP/JSON
+  bridge listener — Executor as the bridge's dispatch routes, observability
+  under `/observability/v1/*` (`src/server.ts`, `src/http-bridge.ts`).
 - **Config** (env):
   | var | default | meaning |
   | --- | --- | --- |
@@ -156,13 +198,18 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_STUB_MODE` | unset | `1` short-circuits the agent runtime (canned success, no CLI spawn). |
   | `RIMSKY_EXECUTOR_SILENCE_MS` | `120000` | silence-detection timeout. |
   | `RIMSKY_EXECUTOR_CALLBACK_HOST` | `127.0.0.1` | host for the internal MCP callback URL. |
+  | `RIMSKY_EXECUTOR_CLAUDE_BINARY` | unset | path to the Claude CLI binary. Empty → bare `claude` PATH lookup. Read once at startup and injected into **both** transports (gRPC and HTTP) so the override applies uniformly. |
+  | `RIMSKY_OBS_IDLE_TIMEOUT_MS` | `300000` | idle-close timeout for an observability `StreamTrace` (gRPC) / trace-stream (HTTP) with no events — prevents a stream for an unknown `dispatch_id` from pinning server resources indefinitely. |
   | `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` | — | externally-reachable bridge URL (reference-config value). |
   | `RIMSKY_EXECUTOR_MCP_CATALOG` | unset | Path to a YAML/JSON catalog file (one parser handles both — YAML is a JSON superset) of named MCP servers a dispatch can reference by `{ ref: "<name>" }` in its `cli.mcp_servers` attribute. Each entry declares a `transport` (`http` / `stdio` / `module` / `http-loopback`). Parsed **once at startup** and shared by both transports; a malformed catalog fails startup loudly. |
   | `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` | `0` (deny) | per-deployment policy. When unset / falsy, inline `{ name, url }` MCP servers in `cli.mcp_servers` are rejected and only catalog `{ ref: "<name>" }` references are accepted — the catalog is the authoritative server source. Set to `1` / `true` / `yes` to opt back into inline servers. |
+  | `RIMSKY_DISPATCH_MAX_USD` | unset | deployment-wide spend cap, passed to the CLI as `--max-budget-usd`. The **fallback** when a dispatch carries no per-template `attributes.cli.max_budget_usd` — the per-template value wins when set. Unset → no cap. |
+  | `RIMSKY_EXECUTOR_DECLARED_EVENTS` | unset (empty list) | comma-separated names of events agents may emit via the `emit_named_event` MCP tool (whitespace trimmed, empty segments dropped). The resolved list is advertised as `Capabilities.declared_events` (so rimsky's registration-time `subscribes:` cross-check sees the names) and gates `emit_named_event` — an undeclared name is rejected. |
   | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | unset | one is required in non-stub mode (API key wins). |
 - **Ports:** gRPC `9090`, HTTP `9190` (Dockerfile `EXPOSE 9090 9190`).
 - **Dockerfile:** `lib/services/executors/claude-agent/Dockerfile` (Node 24 on a
-  Chainguard/Wolfi base; the runtime image installs the `claude` CLI globally).
+  digest-pinned Chainguard/Wolfi base; the runtime stage installs a
+  version-pinned `@anthropic-ai/claude-code` CLI globally).
 - **Note:** depends on the `@rimsky-ai/protocols` wire bindings, resolved in-tree
   via an npm `file:` link to `lib/protocols` (the Go workspace build, not the
   published npm tarball). The same `lib/protocols` is what gets published to npm
@@ -176,7 +223,22 @@ implementation guide](../protocols/executor.md).
 - **What it is:** a reference verifier executor that POSTs a payload to a URL and
   checks the response status — the executor half of the
   atomic-staging-with-verifier pattern.
-- **Protocol:** Executor.
+- **Protocol:** Executor, plus the minimum `ExecutorObservability` mix-in (a
+  `Capabilities` RPC advertising the error vocabulary and a permissive-open
+  attribute schema; no trace store — `supports_trace_get` /
+  `supports_trace_stream` are false).
+- **Attributes read:** `url` (**required**), `body` (sent as the POST body),
+  `expected_status` (default `[200]`), `timeout_ms`, `class_field` (default
+  `class`), `stub_probe`.
+- **Declared error classes** (advertised via
+  `ObservabilityCapabilities.DeclaredErrorClasses`):
+  | class | emitted when |
+  | --- | --- |
+  | `verifier/attribute_invalid` | the attribute bag is missing required keys, malformed, or non-JSON-serializable. |
+  | `verifier/network_error` | transport failure dialing the endpoint (DNS, refused, reset) that is not a timeout. |
+  | `verifier/timeout` | request deadline exceeded or transport timeout. |
+  | `verifier/check_failed` | the endpoint responded outside `expected_status` and its 4xx/5xx body carried no parseable `class_field` token — the stable fallback so `verifier/check_failed/*` policies still match taxonomy-less upstreams. |
+  | `verifier/check_failed/*` | typed leaves populated from the upstream's `class_field` JSON token (per-node `attributes.class_field`, default `class`); the suffix is the upstream's verbatim class string. Mirrors http-node's `http/request_invalid/*` discipline. |
 - **Config** (env):
   | var | default | meaning |
   | --- | --- | --- |
@@ -213,7 +275,7 @@ implementation guide](../protocols/executor.md).
 Sensors are [sensors](../concepts/sensor.md) that implement the
 [Publisher](../concepts/publisher.md) protocol: they observe an external signal
 and POST message envelopes to control-api's
-`POST /instances/{instance_id}/messages` endpoint with
+`POST /v1/instances/{id}/messages` endpoint with
 `sender_kind: "publisher"`. See the [Publisher implementation
 guide](../protocols/publisher.md). The v1 contract is single-replica per sensor
 binary. All sensors share two env vars:
@@ -228,15 +290,20 @@ binary. All sensors share two env vars:
 - **What it is:** a cron sensor — fires observations on a cron schedule. Replaces
   the retired internal scheduler cron-fire path.
 - **Protocol:** Publisher.
-- **Config** (env): `RIMSKY_ENDPOINT` (default `http://localhost:8080`),
-  `RIMSKY_SENSOR_CRON_HOST` (`0.0.0.0`), `RIMSKY_SENSOR_CRON_PORT` (`9081`),
-  and optional `RIMSKY_SENSOR_CRON_STATE_DSN` — a **Postgres** DSN for
-  persisting active cron subscriptions and `next_fire_at` watermarks across
-  restarts (the durability property: a restarted binary fires on the
-  originally-scheduled window rather than recomputing `sched.Next(restartTime)`
-  and skipping the in-flight window). When unset the sensor runs in-memory and
-  resyncs via `Publisher.Subscribe` replay at control-api startup. SQLite is
-  not supported (the state schema uses Postgres-only `now()` and `TIMESTAMPTZ`).
+- **Config** (env):
+  | var | default | meaning |
+  | --- | --- | --- |
+  | `RIMSKY_ENDPOINT` | `http://localhost:8080` | base URL of the rimsky control-api. |
+  | `RIMSKY_SENSOR_CRON_HOST` | `0.0.0.0` | gRPC bind host. |
+  | `RIMSKY_SENSOR_CRON_PORT` | `9081` | gRPC bind port. |
+  | `RIMSKY_SENSOR_CRON_STATE_DSN` | unset (in-memory) | optional **Postgres** DSN for persisting active cron subscriptions and `next_fire_at` watermarks across restarts. |
+
+  The `STATE_DSN` durability property: a restarted binary fires on the
+  originally-scheduled window rather than recomputing
+  `sched.Next(restartTime)` and skipping the in-flight window. When unset the
+  sensor runs in-memory and resyncs via `Publisher.Subscribe` replay at
+  control-api startup. SQLite is not supported (the state schema uses
+  Postgres-only `now()` and `TIMESTAMPTZ`).
 - **Ports:** gRPC `9081` (Dockerfile `EXPOSE 9081`).
 - **Dockerfile:** `lib/services/sensors/sensor-cron/Dockerfile.sensor-cron`.
 
@@ -245,11 +312,17 @@ binary. All sensors share two env vars:
 - **What it is:** an HTTP-poll sensor — polls a URL on an interval and emits an
   observation when the response body changes (body-hash watermark).
 - **Protocol:** Publisher.
-- **Config** (env): `RIMSKY_ENDPOINT`, `RIMSKY_SENSOR_HTTP_HOST` (`0.0.0.0`),
-  `RIMSKY_SENSOR_HTTP_PORT` (`9082`), and optional
-  `RIMSKY_SENSOR_HTTP_STATE_DSN` — a **Postgres** DSN for persisting
-  subscriptions and watermarks across restarts. When unset the sensor runs
-  in-memory and resyncs via `Publisher.Subscribe` replay at supervisor startup.
+- **Config** (env):
+  | var | default | meaning |
+  | --- | --- | --- |
+  | `RIMSKY_ENDPOINT` | `http://localhost:8080` | base URL of the rimsky control-api. |
+  | `RIMSKY_SENSOR_HTTP_HOST` | `0.0.0.0` | gRPC bind host. |
+  | `RIMSKY_SENSOR_HTTP_PORT` | `9082` | gRPC bind port. |
+  | `RIMSKY_SENSOR_HTTP_STATE_DSN` | unset (in-memory) | optional **Postgres** DSN for persisting subscriptions and body-hash watermarks across restarts. |
+
+  When `STATE_DSN` is unset the sensor runs in-memory and resyncs via
+  `Publisher.Subscribe` replay at control-api startup. SQLite is not
+  supported (the state schema uses Postgres-only `now()` and `TIMESTAMPTZ`).
 - **Ports:** gRPC `9082` (Dockerfile `EXPOSE 9082`).
 - **Dockerfile:** `lib/services/sensors/sensor-http/Dockerfile.sensor-http`.
 
@@ -261,16 +334,35 @@ binary. All sensors share two env vars:
 - **Backends:** the sensor advertises (via `Publisher.Capabilities`) and accepts
   (via `Publisher.Subscribe`) **exactly** the backends it has registered at
   startup — it does not advertise a backend it cannot serve. The default bundled
-  binary registers only the in-memory `memory` backend, so a subscription naming
+  binary registers two SDK-free backends: the in-memory `memory` backend
+  (always), and the `filesystem` backend (only when
+  `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` is set — unset omits it from
+  `Capabilities` and `Subscribe` rejects it). A subscription naming
   `s3` / `gcs` / `azure` is **rejected at `Subscribe`**, not silently no-op'd at
   poll time. S3/GCS/Azure are deliberately not built into this binary (keeps the
   cloud SDKs out of the default `go.mod`); a deployment that needs one builds its
-  own binary that constructs the desired object lister and registers it under a
-  backend name (e.g. `s3`) before the service starts, after which the sensor
-  advertises and accepts that backend automatically.
-- **Config** (env): `RIMSKY_ENDPOINT`, `RIMSKY_SENSOR_OBJECT_STORE_HOST`
-  (`0.0.0.0`), `RIMSKY_SENSOR_OBJECT_STORE_PORT` (`9083`), and optional
-  `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN` (Postgres) for persistent state.
+  own binary that constructs the desired object lister and registers it via
+  `SetBackend` under a backend name (e.g. `s3`) before the service starts, after
+  which the sensor advertises and accepts that backend automatically.
+- **Filesystem backend semantics:** the env var names a base directory treated
+  as the object-store root; buckets map to first-level subdirectories under it,
+  and every regular file under `<root>/<bucket>/` is one object (subdirectories
+  walked recursively, symlinks not followed). The object `Name` is the path
+  relative to the bucket root, forward-slash separated regardless of OS. The
+  ETag is an FNV-64a hash of the file contents, folded into the
+  rimsky-side idempotency key — so a file mutated in place (same name, new
+  contents) re-emits; whether a name-equal object counts as "new" is still the
+  subscription's `watermark_field` (`name` or `last_modified`) decision. A
+  missing bucket directory lists as empty (no error); other listing errors skip
+  the poll without advancing the watermark.
+- **Config** (env):
+  | var | default | meaning |
+  | --- | --- | --- |
+  | `RIMSKY_ENDPOINT` | `http://localhost:8080` | base URL of the rimsky control-api. |
+  | `RIMSKY_SENSOR_OBJECT_STORE_HOST` | `0.0.0.0` | gRPC bind host. |
+  | `RIMSKY_SENSOR_OBJECT_STORE_PORT` | `9083` | gRPC bind port. |
+  | `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` | unset (backend omitted) | optional — registers the `filesystem` backend rooted at the given directory (see backend semantics above). |
+  | `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN` | unset (in-memory) | optional **Postgres** DSN for persistent subscription/watermark state. |
 - **Ports:** gRPC `9083` (Dockerfile `EXPOSE 9083`).
 - **Dockerfile:** `lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store`.
 
@@ -282,10 +374,14 @@ binary. All sensors share two env vars:
   separate port from the gRPC port so it can be exposed publicly while the gRPC
   port stays private.
 - **Protocol:** Publisher.
-- **Config** (env): `RIMSKY_ENDPOINT`, `RIMSKY_SENSOR_WEBHOOK_HOST`
-  (`0.0.0.0`), `RIMSKY_SENSOR_WEBHOOK_PORT` (gRPC, `9084`),
-  `RIMSKY_SENSOR_WEBHOOK_HTTP_PORT` (inbound webhooks, `9184`), and optional
-  `RIMSKY_SENSOR_WEBHOOK_STATE_DSN` (Postgres) for persistent state.
+- **Config** (env):
+  | var | default | meaning |
+  | --- | --- | --- |
+  | `RIMSKY_ENDPOINT` | `http://localhost:8080` | base URL of the rimsky control-api. |
+  | `RIMSKY_SENSOR_WEBHOOK_HOST` | `0.0.0.0` | bind host. |
+  | `RIMSKY_SENSOR_WEBHOOK_PORT` | `9084` | gRPC bind port. |
+  | `RIMSKY_SENSOR_WEBHOOK_HTTP_PORT` | `9184` | inbound-webhook HTTP port (the publicly exposable surface; the gRPC port stays private). |
+  | `RIMSKY_SENSOR_WEBHOOK_STATE_DSN` | unset (in-memory) | optional **Postgres** DSN for persistent subscription state. |
 - **Ports:** gRPC `9084`, inbound-webhook HTTP `9184` (Dockerfile
   `EXPOSE 9084 9184`).
 - **Dockerfile:** `lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook`.

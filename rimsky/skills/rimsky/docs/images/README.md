@@ -18,8 +18,6 @@ A few facts hold for every image below:
   context, so the Go build can reach `lib/protocols`, `lib/services`, and
   `go.work` (the bundled services compile against the in-tree protocols module
   via the Go workspace — no published-tag pin).
-- **The dashboard is the one exception.** The `rimsky/dashboard` image builds
-  from the separate `rimsky-dashboard` sibling repository, not from rimsky-core.
 
 ### Image names
 
@@ -45,7 +43,7 @@ Built from `dockerfiles/` with the repo root as context.
 | Published name | Contains | Base image | Dockerfile |
 | --- | --- | --- | --- |
 | `rimsky` | All four role binaries (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`, `rimsky-migrate`) plus the `rimsky` CLI and `rimsky-entrypoint` PID-1, under one image; role selected by the container `command:` (see the entrypoint note below), persistence backend (postgres\|sqlite) by config. | `gcr.io/distroless/static-debian12:nonroot` | `dockerfiles/Dockerfile.rimsky` |
-| `rimsky-all-in-one` | The `rimsky` image with zero-config SQLite defaults baked in and run with no command, so `rimsky-entrypoint` migrates then spawns all three roles (scheduler + supervisor + control-api). **Development only.** | `rimsky:latest` (the image above, via the `RIMSKY_BASE` arg) | `dockerfiles/Dockerfile.all-in-one` |
+| `rimsky-all-in-one` | The `rimsky` image with zero-config SQLite defaults baked in and run with no command, so `rimsky-entrypoint` migrates then spawns all three roles (scheduler + supervisor + control-api). **Development only.** | `rimsky:<version>` (the image above — `make core-images` pins the same-release tag via the `RIMSKY_BASE` build arg; the Dockerfile's arg default is `rimsky:latest`) | `dockerfiles/Dockerfile.all-in-one` |
 | `rimsky-host-agent-proxy` | The late-bound host-agent proxy service (a single binary built via the `BINARY` arg). | `gcr.io/distroless/static:nonroot` | `dockerfiles/Dockerfile.go-base` (`--build-arg BINARY=rimsky-host-agent-proxy`) |
 | `rimsky-conformance` | Every protocol conformance runner in one image; pick one via `rimsky conformance <protocol>`. Probes an external impl against the rimsky protocol. | `gcr.io/distroless/static-debian12:nonroot` | `dockerfiles/Dockerfile.conformance` |
 
@@ -97,16 +95,12 @@ claude-agent (Node on Wolfi).
 | `rimsky-executor-http-node` | the `http-node` Executor service | `gcr.io/distroless/static:nonroot` | `lib/services/executors/http-node/Dockerfile.http-node` |
 | `rimsky-executor-verifier-http` | the `verifier-http` Executor service | `gcr.io/distroless/static:nonroot` | `lib/services/executors/verifier-http/Dockerfile.verifier-http` |
 | `rimsky-executor-verifier-shape-checks` | the `verifier-shape-checks` Executor service | `gcr.io/distroless/static:nonroot` | `lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks` |
-| `rimsky-executor-claude-agent` | the TypeScript `claude-agent` Executor service (Node 24; runtime installs the `claude` CLI globally) | `cgr.dev/chainguard/wolfi-base` (digest-pinned) | `lib/services/executors/claude-agent/Dockerfile` |
+| `rimsky-executor-claude-agent` | the TypeScript `claude-agent` Executor service (Node 24; the runtime stage installs a version-pinned `@anthropic-ai/claude-code` CLI globally) | `cgr.dev/chainguard/wolfi-base` (digest-pinned) | `lib/services/executors/claude-agent/Dockerfile` |
 
 ---
 
 ## Other build targets
 
-- **Dashboard** — the reference dashboard image builds from the separate
-  `rimsky-dashboard` sibling repository (build context
-  `${RIMSKY_DASHBOARD_REPO}`), the only image not built from rimsky-core. It is
-  not part of the published release set.
 - **Standalone role binaries** — `Dockerfile.go-base` can build any single role
   binary (`rimsky-migrate`, `rimsky-scheduler`, `rimsky-supervisor`,
   `rimsky-control-api`) as its own image; the release ships these four inside

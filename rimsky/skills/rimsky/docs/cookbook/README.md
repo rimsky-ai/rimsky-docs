@@ -4,10 +4,12 @@ Each recipe is a problem you recognize, the rimsky shape that solves it, a
 copyable template you run against a rimsky deployment, and a "without
 rimsky" baseline so the trade is legible. Every recipe has the same slots:
 
-1. **The problem** — what you're trying to build, in plain terms.
-2. **The rimsky shape** — which primitives it uses and why.
-3. **A walkthrough** — a copyable template plus the register / deploy / instantiate steps.
-4. **Without rimsky** — what you'd hand-roll otherwise, for contrast.
+1. **Problem** — what you're trying to build, in plain terms.
+2. **Rimsky shape** — which primitives it uses and why.
+3. **Template** — a copyable template plus the register / deploy /
+   instantiate walkthrough.
+4. **Gotchas** — the sharp edges of the shape.
+5. **Without rimsky** — what you'd hand-roll otherwise, for contrast.
 
 This is a *spanning* set, not an exhaustive one: each recipe teaches a
 distinct lesson about what the primitives can do, and near-duplicates are
@@ -19,16 +21,25 @@ graph behind a capacity limit is two recipes composed.
 
 All recipes run against a rimsky deployment — stand one up from the published images (see the [operator guide](../operator-guide.md)).
 
+The `rimsky` CLI has **no built-in default endpoint**. Every verb resolves
+the control-API endpoint as `--endpoint` flag > `RIMSKY_CONTROL_API` env >
+the active context (`RIMSKY_CONTEXT`, then the config's `current_context`
+set by `rimsky ctx use <name>`); with none set, the CLI errors
+`no endpoint configured`. The recipes assume you have set
+`RIMSKY_CONTROL_API` (or an active context) pointing at the deployment's
+control API — `http://localhost:8080` in the reference deploy.
+
 - **[A single-node queue worker](queue-worker.md)** — a claim producer as
   a work queue (the postgres `@review-queue` pick policy) drained by a
   self-subscribing node.
 - **[Recompute dependents when something upstream changes](reactive-recompute.md)**
   — subscriber-driven cascade: a downstream node auto-subscribes to an
   upstream attribute and recomputes only the affected nodes on change.
-- **[Fire a node only after all its upstreams settle](fan-in.md)** — a
-  node subscribing to N `terminal/success` signals fires once when all
-  N are stale in the same cascade wave; the serial-chain anti-pattern
-  fires N times instead.
+- **[Fire a node only after all its upstreams settle](fan-in.md)** —
+  serialize the upstreams and subscribe to the last link's terminal
+  (or use fan-out for homogeneous units); subscribing one node to N
+  parallel siblings is **not** a barrier — it fires once per frame, as
+  soon as the first sibling settles.
 - **[Cap concurrency with a counting semaphore](capacity-limit.md)** — a
   named lock as a deployment-wide capacity counter (`model-budget`,
   limit 50).
@@ -56,20 +67,28 @@ All recipes run against a rimsky deployment — stand one up from the published 
 Every recipe here creates an [instance](../concepts/instance.md), and the
 same lifecycle rule applies to all of them: **an instance is durable by
 default and never terminates on its own.** There is no auto-terminate on
-drain — a queue worker that runs out of items, a loop that converges, an
-event-driven node that has handled its last event all settle `fresh` and
-keep living. Nothing the *graph* does ends the instance.
+drain — a loop that converges and an event-driven node that has handled
+its last event settle `fresh` and keep living; a queue worker that runs
+out of items settles **`failed`**: the empty queue surfaces as the
+postgres store's producer-declared error class
+(`pg/claim_unavailable`), which cannot be declared under an `http-node`
+worker's `error_types:` (registration range-checks the keys against the
+executor's declared classes), so the fail-fast `give_up` default
+applies — see the [queue-worker recipe](queue-worker.md)'s gotchas.
+Either way, nothing the *graph* does ends the instance.
 
 The single self-termination path is the create-time opt-in
 `terminate_after_run: true` flag. It terminates the instance after its
 **next** frame ends — strict "run at most once more", never while a
 node-run is parked — so it expresses the ephemeral run-once shape, not
-"finish all queued work then stop". The flag is **request-body-only**: the
-CLI `rimsky instance create` does not expose it, so set it by POSTing the
-create request directly:
+"finish all queued work then stop". Three ways to set it:
+`rimsky run --terminate-after-run` (and `rimsky run --no-keep`, which
+implies it), or the create request body. The CLI `rimsky instance create`
+has no flag for it, so when creating through that verb set it by POSTing
+the create request directly:
 
 ```sh
-curl -s -X POST http://localhost:8080/instances \
+curl -s -X POST http://localhost:8080/v1/instances \
   -H 'Content-Type: application/json' \
   -d '{"template":"sha256-...","terminate_after_run":true}'
 ```

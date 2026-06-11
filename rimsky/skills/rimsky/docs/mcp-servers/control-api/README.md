@@ -1,6 +1,6 @@
 # Control-API MCP surface
 
-The rimsky control-API exposes its operational surface as an MCP (Model Context Protocol) tool catalog. This is **not** a standalone sidecar binary — it is a JSON-RPC protocol skin mounted directly inside the control-API process at `POST /mcp` (wired in `lib/control/controlapi/mcp_route.go`; the catalog and JSON-RPC envelope live in `lib/control/controlapi/mcp/`). An agentic client speaks MCP to the same process and port that serves the HTTP API, and every tool re-enters the control-API's own routing and auth pipeline.
+The rimsky control-API exposes its operational surface as an MCP (Model Context Protocol) tool catalog. This is **not** a standalone sidecar binary — it is a JSON-RPC protocol skin mounted directly inside the control-API process at `POST /v1/mcp` (wired in `lib/control/controlapi/mcp_route.go`; the catalog and JSON-RPC envelope live in `lib/control/controlapi/mcp/`). An agentic client speaks MCP to the same process and port that serves the HTTP API, and every tool re-enters the control-API's own routing and auth pipeline.
 
 ## When to use it
 
@@ -9,7 +9,7 @@ The rimsky control-API exposes its operational surface as an MCP (Model Context 
 
 ## How it is mounted
 
-`POST /mcp` is gated by the `mcp:read` umbrella action, which the bundled `read-only` role covers via wildcard `*:read` (the `debug-operator` and `agent-supervisor` bundled roles also carry `*:read`). `initialize` and `tools/list` run inside the MCP server and never reach a tool. A `tools/call` re-enters the chi router through the catalog, so the call picks up the **per-tool action gate** there — a mutating tool still requires the matching write permission (e.g. `instance_create` requires `instance:create`).
+`POST /v1/mcp` is gated by the `mcp:read` umbrella action, which the bundled `read-only` role covers via wildcard `*:read` (the `debug-operator` and `agent-supervisor` bundled roles also carry `*:read`). `initialize` and `tools/list` run inside the MCP server and never reach a tool. A `tools/call` re-enters the chi router through the catalog, so the call picks up the **per-tool action gate** there — a mutating tool still requires the matching write permission (e.g. `instance_create` requires `instance:create`).
 
 There is no separate MCP config block, no `CONTROL_API_URL` / `CONTROL_API_TOKEN` / `BIND_ADDR` / `PORT` environment surface, and no second process to deploy. The MCP surface inherits the control-API's bind address, TLS, and auth.
 
@@ -22,37 +22,43 @@ Same model as the HTTP API. A request carries `Authorization: Bearer <plaintext 
 
 ## Wire protocol
 
-MCP **Streamable HTTP** transport over `GET`+`POST /mcp`, advertising `protocolVersion` `2025-06-18` and `serverInfo` `{name: "rimsky-control-api", version: "v1"}`. This is the transport the default MCP `type: http` client speaks; the server implements just enough of it to **connect and control** (server-initiated push is V2 — see [Streaming](#streaming)).
+MCP **Streamable HTTP** transport over `GET`+`POST /v1/mcp`, advertising `protocolVersion` `2025-06-18` and `serverInfo` `{name: "rimsky-control-api", version: "v1"}`. This is the transport the default MCP `type: http` client speaks; the server implements just enough of it to **connect and control** (server-initiated push is V2 — see [Streaming](#streaming)).
+<!-- @source: lib/control/controlapi/mcp/server.go -->
 
-`POST /mcp` carries one JSON-RPC 2.0 message per request. Five methods:
+`POST /v1/mcp` carries one JSON-RPC 2.0 message per request. Five methods:
 
 - `initialize` — returns `protocolVersion`, `capabilities` (`tools: {}`, `resources: {subscribe: false, listChanged: false}`), and `serverInfo`. The response also sets a fresh `Mcp-Session-Id` header; the client echoes it on subsequent requests and binds its `GET` stream to it. v1 holds no per-session state — the id is opaque and unvalidated beyond connect.
 - `tools/list` — the per-key-filtered tool catalog.
 - `tools/call` — dispatches by tool name; arguments are JSON-Schema validated; the result is returned as an MCP `content` text block wrapping the control-API JSON response.
-- `resources/list` / `resources/read` — the read-only resource catalog (empty on tools-only deployments).
+- `resources/list` / `resources/read` — the read-only resource catalog. The control-API always wires one resource family in v1: **breakpoint hits**, at `rimsky://instances/{id}/breakpoint-hits` and `rimsky://breakpoints/{bp_id}/hits` (both accept `?since=<seq>&limit=<n>`; `limit` defaults to 100, capped at 500; MIME type `application/x-rimsky-breakpoint-hits+json`). Both URI families are gated by `breakpoint:read`. `resources/list` enumerates one instance-scoped URI per active instance the key can read (a key without `breakpoint:read` gets an empty list); the breakpoint-scoped URI is constructed by the agent from a `breakpoint_id` and is not enumerated. `resources/read` returns `{hits, next_since, truncated}` for cursor polling.
+  <!-- @source: lib/control/controlapi/mcp_resources.go -->
+  <!-- @source: lib/control/controlapi/mcp_route.go -->
 
 A JSON-RPC **notification** (an id-less message, e.g. `notifications/initialized`, the post-`initialize` handshake step) is consumed with `202 Accepted` and an empty body — never a JSON-RPC reply. Replying to a notification is a JSON-RPC 2.0 violation, and the `type: http` client treats a spurious reply as a handshake failure. Any unknown method on an `id`-bearing request returns `-32601`.
+<!-- @source: lib/control/controlapi/mcp/server.go -->
 
 Error codes follow JSON-RPC: `-32700` parse error, `-32600` invalid request, `-32601` method/tool not found, `-32602` invalid params, `-32603` internal error.
 
 ## Streaming
 
-`GET /mcp` opens the MCP Streamable HTTP **server-to-client stream** — a `text/event-stream` (SSE) the default `type: http` client probes on connect. In v1 the stream is **idle**: it flushes `200` + the SSE headers immediately so the probe succeeds, then emits only periodic keep-alive comments (`: keep-alive`, ~25s) to hold the connection open. It pushes **no** MCP messages. (An earlier build answered this probe with `405`, failing the client's connect; the idle stream replaces that.)
+`GET /v1/mcp` opens the MCP Streamable HTTP **server-to-client stream** — a `text/event-stream` (SSE) the default `type: http` client probes on connect. In v1 the stream is **idle**: it flushes `200` + the SSE headers immediately so the probe succeeds, then emits only periodic keep-alive comments (`: keep-alive`, every 25s) to hold the connection open. It pushes **no** MCP messages. (An earlier build answered this probe with `405`, failing the client's connect; the idle stream replaces that.)
+<!-- @source: lib/control/controlapi/mcp/server.go::streamKeepAlive -->
 
 Server-initiated push — `resources/subscribe` + `notifications/resources/updated`, live event streaming — is **out of v1 scope**: connect-and-control only, live push is V2. The `GET` stream exists to satisfy the transport probe, not to deliver data. If a request carries an `Mcp-Session-Id` header the stream echoes it back; otherwise the stream is unbound. Any HTTP method other than `GET`/`POST` returns `405` with `Allow: GET, POST`.
 
 ## Tool catalog
 
 Tools are declared in the canonical action registry (`lib/control/controlapi/actions.go`); each maps to one control-API action and its HTTP route(s). The catalog is the source of truth — the list below is grouped for orientation, not hand-maintained field-by-field.
+<!-- @source: lib/control/controlapi/actions.go -->
 
-- **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate` (graceful, `DELETE /instances/{idOrKey}`), `instance_kill` (force-terminate — mark terminal and abandon in-flight node-runs, `POST /instances/{idOrKey}/terminate`), `instance_pause`, `instance_resume`.
+- **Instances:** `instance_list`, `instance_get`, `instance_create`, `instance_terminate` (graceful, `DELETE /v1/instances/{idOrKey}`), `instance_kill` (force-terminate — mark terminal and abandon in-flight node-runs, `POST /v1/instances/{idOrKey}/terminate`), `instance_pause`, `instance_resume`.
 - **Breakpoints:** `breakpoint_list`, `breakpoint_create`, `breakpoint_resume_hit`, `breakpoint_delete`.
-- **Templates:** `template_list`, `template_get`, `template_validate` (read action; `POST /templates/validate`, gated by `template:validate`), `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
+- **Templates:** `template_list`, `template_get`, `template_validate` (read action; `POST /v1/templates/validate`, gated by `template:validate`), `template_register`, `template_deploy`, `template_undeploy`, `template_deregister`.
 - **Tags:** `tag_list`, `tag_create`, `tag_set`, `tag_delete`.
-- **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `POST /nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
+- **Nodes:** `node_list`, `node_get`, `node_invalidate` (resumes a parked node or marks a node stale and re-fires; backed by `POST /v1/nodes/{id}/invalidate` and the admin route), `node_reset` (reset a failed node back to stale).
 - **Messages:** `message_send`, `message_list`, `message_get`.
 - **Events:** `event_list`.
-- **Audit:** `audit_list` — read the auth audit log (`GET /audit`). Gated by `audit:read`, granted separately from `event:read` because actor identity / IP / user-agent / action are sensitive.
+- **Audit:** `audit_list` — read the auth audit log (`GET /v1/audit`). Gated by `audit:read`, granted separately from `event:read` because actor identity / IP / user-agent / action are sensitive.
 - **Lineage:** `lineage_get`, `lineage_prune`.
 - **Backfills:** `backfill_create`, `backfill_list`, `backfill_get`, `backfill_partitions`, `backfill_cancel`.
 - **Assets:** `asset_list`, `asset_get`, `asset_versions`, `asset_materialization_history`, `asset_materialize`, `asset_delete`.
@@ -65,7 +71,7 @@ Tools are declared in the canonical action registry (`lib/control/controlapi/act
 
 Dry-run is a per-request modifier, not a separate tool or grant: the auth middleware reads a `?dry_run=true` query flag and tags the request as `dry_run` mode. A mutating handler in that mode runs full validation, returns a synthetic `{ dry_run: true, would_have_X: ... }` envelope, and skips the state mutation. Reads run normally (there is nothing to skip). Because a `tools/call` re-enters the chi router, an MCP tool inherits the same behavior when its forwarded request carries the flag — the call still requires the matching write grant, it just doesn't commit.
 
-Every request (including dry-run) is recorded in the durable audit log, which captures actor identity, IP, user-agent, the action, the resolved mode, and the protocol skin (`mcp` for tool calls vs the HTTP API otherwise). Read the audit log with the `audit_list` tool (`GET /audit`, gated by `audit:read`).
+Every request (including dry-run) is recorded in the durable audit log, which captures actor identity, IP, user-agent, the action, the resolved mode, and the protocol skin (`mcp` for tool calls vs the HTTP API otherwise). Read the audit log with the `audit_list` tool (`GET /v1/audit`, gated by `audit:read`).
 
 ## Security
 

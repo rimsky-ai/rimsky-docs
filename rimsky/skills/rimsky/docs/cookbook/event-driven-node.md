@@ -55,7 +55,7 @@ nodes:
   - type: react
     executor: http-node
     subscribes:
-      - { node: react, type: "message/invalidate/operator/react", frame: next }
+      - { instance: true, type: "message/invalidate/operator/react", frame: next }
     attributes:
       schema:
         type: object
@@ -74,6 +74,10 @@ nodes:
 The subscription `type:` is a [signal](../concepts/signal.md) type-path:
 `message/<kind>/<sender_kind>/<target>`. Here it matches an
 `invalidate`-kind message from an `operator` targeting the `react` node.
+The subscription MUST be the cross-cutting `instance: true` form: a
+message carries no sender *node*, so message delivery matches only
+cross-cutting edges — a per-node entry (`node: <type>`) is never
+consulted for message signals and would silently never fire.
 The substitution falls back to `"no-note"` when no payload field is
 present (the `<directive> | <literal>` fallback grammar; the literal must
 be a double-quoted JSON string, so the YAML scalar is single-quoted to
@@ -86,18 +90,20 @@ rimsky template register event-driven.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
-`react` has no upstream subscription (its only `subscribes:` entry names
-itself) and no upstream-node attribute reference, so rimsky treats it as a
+`react` has no upstream subscription (its only `subscribes:` entry is the
+cross-cutting `instance: true` form, which does not disqualify a root —
+cross-cutting edges fire on cascade walks, not at instance creation) and
+no upstream-node attribute reference, so rimsky treats it as a
 **root** and dispatches it once at instance creation. With no trigger
 message bound to that first frame, `{{trigger.message.payload.note}}` is
 absent and the `| "no-note"` fallback fires — the node runs once and
 settles `fresh` with `received: "no-note"`, then waits for an event:
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"react","state":"fresh"}
 ```
@@ -111,7 +117,7 @@ key replayed returns the original `message_id` with `200 OK`; a fresh key
 returns `201 Created`:
 
 ```sh
-curl -s -X POST http://localhost:8080/instances/<instance_id>/messages \
+curl -s -X POST http://localhost:8080/v1/instances/<instance_id>/messages \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"kind":"invalidate","target":"react","payload":{"note":"file-landed"}}'
@@ -119,14 +125,16 @@ curl -s -X POST http://localhost:8080/instances/<instance_id>/messages \
 ```
 
 The message lands in the message ledger, is delivered at the next frame
-boundary, matches `react`'s subscription, and dispatches the node — which
+boundary, matches `react`'s cross-cutting subscription (the envelope's
+`kind`/`sender_kind`/`target` assemble into the
+`message/invalidate/operator/react` type-path), and dispatches the node — which
 pulls `"file-landed"` into its `received` attribute. Confirm: `react`
 settles back to `fresh` once the delivery frame resolves (it reads `stale`
 or `running` while the frame is in flight):
 
 ```sh
 rimsky messages tail --instance <instance_id>
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"react","state":"fresh"}
 ```

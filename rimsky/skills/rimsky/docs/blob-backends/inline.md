@@ -6,8 +6,10 @@
 
 The degenerate `BlobBackend`: never produces handles, all writes go
 inline to the existing `data` / `parked_payload_inline` /
-`payload_inline` columns. The attribute write path checks
-`backend.Name() == "inline"` and short-circuits the spill check.
+`payload_inline` columns. The spill check treats
+`backend.Name() == "inline"` as "spill disabled" and short-circuits.
+<!-- @source: lib/foundation/persistence/blob_inline.go::InlineBackend -->
+<!-- @source: lib/foundation/persistence/blob_spill.go::ShouldSpillBlob -->
 
 ## When to use
 

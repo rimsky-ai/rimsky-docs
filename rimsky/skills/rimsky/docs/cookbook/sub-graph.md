@@ -1,6 +1,6 @@
 # Call a reusable sub-graph like a function
 
-## The problem
+## Problem
 
 A multi-step routine — fetch, validate, transform — recurs in several
 places in a graph, or you want to package an internal DAG behind one node
@@ -9,7 +9,7 @@ you call a function: one site names it, the routine runs its own steps, and
 one result flows back. Duplicating the steps inline at each call site is
 the thing to avoid.
 
-## The rimsky shape
+## Rimsky shape
 
 A [sub-graph](../concepts/sub-graph.md) is a named graph with declared
 `entry:` and `exit:` nodes; a node in another graph invokes it by carrying
@@ -44,7 +44,7 @@ Primitives: **sub-graph** (`graphs:` + `entry:` / `exit:`), **delegation**
 (`delegate:` — entry absorption + exit carry-rule), **node-subscription**
 (internal chaining), **run-scope** (the per-invocation sub-graph scope).
 
-## Walkthrough
+## Template
 
 Needs a rimsky deployment with the `http-node` executor (stub mode,
 `RIMSKY_EXECUTOR_STUB_MODE=1`). Stand rimsky up from the published images
@@ -135,7 +135,7 @@ rimsky template register subgraph.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 At instance creation `run-pipeline` dispatches as the absorbed `prepare`
@@ -150,7 +150,7 @@ child). The absorbed entry's row exists but never dispatches on its own —
 its work is the calling node's executor invocation:
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '[.nodes[] | {node_type, state}]'
 # → [{"node_type":"run-pipeline","state":"fresh"},  # caller; dispatches (absorbs prepare)
 #    {"node_type":"prepare","state":"fresh"},       # entry row; never dispatches standalone

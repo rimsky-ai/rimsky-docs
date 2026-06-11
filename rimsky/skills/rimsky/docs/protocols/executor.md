@@ -21,15 +21,17 @@ helper: there is no dispatch handler, no async-callback POST client, and no
 incremental-attribute-write helper in it (its HTTP+JSON bridges cover the
 claim-producer / lifecycle-subscriber surfaces, not the executor). The dispatch
 handler, the async-callback POST, and incremental attribute writes are yours to
-write straight against the wire contract — the in-tree `http-node` executor does
-exactly that with `genv1.RegisterExecutorServer` plus a plain `http.Client`. Wire
+write straight against the wire contract — the in-tree `http-node` executor stands
+up the dispatch handler exactly that way (`genv1.RegisterExecutorServer`; its
+`http.Client` runs the node's HTTP workload, not callbacks), and the in-tree
+`claude-agent` executor (TypeScript) implements the async-callback POST. Wire
 contracts: `lib/protocols/proto/v1/executor.proto` (dispatch, required) and
 `lib/protocols/proto/v1/executor_observability.proto` (observability, optional);
 generated field/message/RPC references at
 [`reference/executor.md`](reference/executor.md) and
 [`reference/executor-observability.md`](reference/executor-observability.md).
 
-<!-- @source: ../../.ok-planner/design/concepts/executor.md -->
+<!-- @source: .ok-planner/design/concepts/executor.md -->
 
 ## What you implement
 
@@ -106,7 +108,7 @@ Full field reference: [`reference/executor.md`](reference/executor.md).
 | `Success` | `bool changed`, `string change_summary`, `Struct attributes_delta` | Terminal success. `changed = false` halts cascade propagation at this node. `change_summary` is audit-only (rimsky does not parse it). `attributes_delta` is the terminal write-back (validated against the node's attributes schema); may be empty if the incremental-callback path was used during the run. |
 | `Error` | `string error_class`, `Struct payload` | Terminal application-level error. `error_class` is executor-defined; `payload` is opaque. The **supervisor**, not the executor, maps it to a resolution (see [Boundaries](#boundaries)). Use `error_class: "executor_blocked"` for "I produced output but explicitly declined to claim success" — low-confidence outputs routed to human review. |
 | `Park` | `ParkReason reason`, `bytes payload`, `Timestamp resume_at?`, `string session_token?`, `reason_note` / `reason_label?` | Pause this run until resumed. `reason` ∈ `PARK_REASON_AWAIT_CALLBACK` (the zero value; will not auto-resume) / `PARK_REASON_SNOOZE`. `payload` and `session_token` are echoed back in `ResumeContext`. `resume_at` absent ⇒ signal-based resume only. See [parked-state](../concepts/parked-state.md). |
-| `AwaitAsyncCallback` | `string async_ack_id`, `int expected_completion_ms?` | Terminal handoff: the outcome arrives later via HTTP callback (see [Async callback](#async-callback)). Echo `async_ack_id` on the callback. |
+| `AwaitAsyncCallback` | `string async_ack_id`, `int64 expected_completion_ms?` | Terminal handoff: the outcome arrives later via HTTP callback (see [Async callback](#async-callback)). Echo `async_ack_id` on the callback. |
 
 `AwaitAsyncCallback` vs `Park{PARK_REASON_AWAIT_CALLBACK}`: with `AwaitAsyncCallback`
 the **executor** finishes the run by POSTing the outcome (see
@@ -116,7 +118,7 @@ invalidate — after which the supervisor re-dispatches it with `resume_context`
 
 ## The attribute surface
 
-<!-- @source: ../../.ok-planner/design/concepts/attribute.md -->
+<!-- @source: .ok-planner/design/concepts/attribute.md -->
 
 `attributes` is the single template-author-supplied input to a dispatch. There is
 no peer "opaque" surface — the historical `userdata` field was collapsed into it.
@@ -181,8 +183,11 @@ Wire details that bite:
   on incremental attribute writes).
 
 There is no Go helper for this POST — a Go executor marshals `AsyncCallbackBody`
-and POSTs it with a plain `http.Client` (the in-tree `http-node` executor does
-exactly that), the same as a non-Go executor marshalling the shape directly.
+and POSTs it with a plain `http.Client`, the same as a non-Go executor marshalling
+the shape directly. The in-tree demonstration of this path is the TypeScript
+`claude-agent` executor (`lib/services/executors/claude-agent/`), which closes
+every `Execute` with `AwaitAsyncCallback` and POSTs the outcome when the agent run
+finishes.
 
 **Incremental attribute writes.** An executor may also write attributes *mid-run*,
 before the terminal, against the same `callback_url` base with the `cancel_token`

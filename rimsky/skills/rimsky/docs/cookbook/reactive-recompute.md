@@ -89,7 +89,7 @@ rimsky template register recompute.yml
 # → template_hash=sha256-...
 rimsky template deploy sha256-...
 rimsky instance create sha256-...
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 Both nodes settle `fresh` on the first frame — `fetch` runs, then
@@ -97,7 +97,7 @@ Both nodes settle `fresh` on the first frame — `fetch` runs, then
 attribute at dispatch (lenient `?`, so the absent value resolves to null):
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '[.nodes[] | {node_type, state}]'
 # → [{"node_type":"fetch","state":"fresh"},
 #    {"node_type":"classify","state":"fresh"}]
@@ -126,7 +126,7 @@ on a successful run; it is `stale` or `running` while a frame is in
 flight):
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '[.nodes[] | {node_type, state}]'
 # → [{"node_type":"fetch","state":"fresh"},
 #    {"node_type":"classify","state":"fresh"}]

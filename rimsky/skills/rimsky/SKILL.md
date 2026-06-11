@@ -52,21 +52,18 @@ Read `docs/comparison.md` (rimsky vs. queues, workflow engines, build systems) a
 `docs/concepts/rimsky.md`. Good fit signals: reactive recomputation over a
 dependency graph, fan-out over partitions, exclusive/leased work, event-driven
 recompute, convergence loops. Poor fit: a plain linear job or a stateless request.
+If licensing affects the decision, `docs/licensing.md` states the Apache-island /
+dual-licensed-orchestrator posture.
 
 ### 2. Designing — modeling your problem as a graph
 
 Start with the core nouns (next section), then **match your problem against a
-cookbook recipe** — these map the primitives onto real shapes:
-
-- `docs/cookbook/queue-worker.md` — claim-as-queue, one node draining work
-- `docs/cookbook/reactive-recompute.md` — cascade-driven stale-marking
-- `docs/cookbook/event-driven-node.md` — a node triggered by an external signal
-- `docs/cookbook/convergence-loop.md` — retry/recompute until a payload settles
-- `docs/cookbook/capacity-limit.md` — bounding concurrency with claims/locks
-- `docs/cookbook/claim-handoff.md` — passing a held claim down a node chain
-- `docs/cookbook/sub-graph.md` — calling a reusable sub-graph via `delegate:`
-- `docs/cookbook/local-binary-executor.md` — host-agent proxy + per-instance
-  service binding to run an executor on your dev machine
+cookbook recipe** — these map the primitives onto real shapes. Start at
+`docs/cookbook/README.md`: it lists every recipe with a one-line problem
+statement (queue worker, reactive recompute, fan-in, convergence loop,
+capacity limit, event-driven node, claim handoff, sub-graph,
+local-binary executor) and names the shapes the bundled services *cannot*
+yet run — open the one recipe whose problem statement matches yours.
 
 For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
 `operational-health.md`). Working templates to copy live in `docs/agents/examples/`
@@ -93,15 +90,21 @@ For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
   pinned `go.mod` — live under `docs/examples/` (see `docs/examples/README.md`).
   These are not test doubles and not deployable — copy a directory, rename the
   module, replace the body.
-- **Picking bundled building blocks:** `docs/stores/`, `docs/executors/`,
-  `docs/blob-backends/`, `docs/mcp-servers/`.
+- **Picking bundled building blocks:** `docs/services/` — the bundled-services
+  catalog (per service: which protocol it implements, configuration, ports,
+  image) — plus `docs/images/` (the official Docker images those services ship
+  as), `docs/blob-backends/` (the four reference blob backends), and
+  `docs/mcp-servers/control-api/` (the control-API's MCP tool surface).
+  `docs/stores/stub/` and `docs/executors/stub/` document **test doubles** used
+  by conformance and scenario tests — they are not production building blocks.
 
 ### 4. Deploying — running it
 
 `docs/operator-guide.md` for the operational story; `docs/services/` (the bundled
 services: protocol, config, ports, image) and `docs/images/` (the official Docker
 images); `docs/reference/rest-api.md` (the control-API routes + auth) and
-`docs/reference/cli.md` (the `rimsky` CLI command tree).
+`docs/reference/cli.md` (the `rimsky` CLI command tree). Copyable worked configs
+(unified, all-in-one, store, supervisor) live in `docs/reference/config/`.
 
 ### 5. Diagnosing — when something breaks
 
@@ -136,6 +139,7 @@ Then pull in only what your problem touches:
 
 ## Other indices
 
+- `docs/README.md` — corpus orientation: how the doc surfaces fit together.
 - `docs/agents/llms.txt` — a compact llms.txt-style index over the same corpus, for
   tooling that prefers it (this `SKILL.md` is the primary entry point for Claude
   Code; `llms.txt` is the entry point for other agents).

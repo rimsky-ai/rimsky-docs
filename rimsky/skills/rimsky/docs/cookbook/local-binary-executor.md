@@ -1,6 +1,6 @@
 # Run an executor on your dev machine
 
-## The problem
+## Problem
 
 A node has to run code that lives only on your laptop — touch the local
 filesystem, hit a service behind your VPN, exercise an unfinished
@@ -10,7 +10,7 @@ treat your local binary as the executor for one specific instance,
 without static deployment config and without redeploying anything when
 the binary changes.
 
-## The rimsky shape
+## Rimsky shape
 
 The **[host-agent proxy](../concepts/host-agent-proxy.md)** is a rimsky
 service that fronts every supervisor-facing protocol
@@ -41,7 +41,7 @@ holder), **service binding** (the per-instance `{ name → binary path }`
 map), `late_bind_services` (the template's "this name resolves at
 instance creation" declaration).
 
-## Walkthrough
+## Template
 
 Needs a rimsky deployment plus the `rimsky-host-agent-proxy` image
 running alongside it (one of the four core images; see the
@@ -58,7 +58,16 @@ executors:
     transport: grpc
     endpoint: "rimsky-host-agent-proxy:9090"
     tls: off
-    protocols: [executor]
+    # lifecycle_subscriber is load-bearing: the proxy fills its
+    # per-instance binding cache from the OnInstanceCreated lifecycle
+    # hook, and rimsky dials lifecycle hooks only at peers whose
+    # protocols list declares lifecycle_subscriber. Without it the
+    # proxy is silently skipped from the fan-out and every dispatch
+    # fails with binding_not_found ("instance ... not found" — the
+    # cache never learned the instance). (Alternative:
+    # set RIMSKY_CONTROL_API_URL on the proxy so it fetches bindings
+    # from the control API instead.)
+    protocols: [executor, lifecycle_subscriber]
 ```
 
 You also need an api-key the agent will authenticate with. Mint one
@@ -101,7 +110,7 @@ pid-file is not live, then submits the create with the binding embedded:
 # executor binary.
 rimsky run local-codegen.yml --service codegen=$(which my-local-executor)
 # → rimsky agent started (pid 12345)
-# → instance_id=01H...
+# → instance_id=6b1f0c9a-4e2d-4f7b-9a3c-d5e8f1a2b3c4
 ```
 
 The first `--service` flag triggers the auto-start check — a pid-file
@@ -112,7 +121,7 @@ the supervisor dispatch resolves `codegen` through the proxy → agent →
 binary chain. Watch the worker reach `fresh`:
 
 ```sh
-curl -s http://localhost:8080/instances/<instance_id>/nodes \
+curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
   | jq '.nodes[] | {node_type, state}'
 # → {"node_type":"worker","state":"fresh"}
 ```
@@ -133,7 +142,7 @@ a fresh spawn). When you are done, stop the agent (`rimsky agent stop`).
   one binary on one gRPC port; if you want it to front *both* the
   executor and claim-producer protocols for late-bound services, declare
   it twice in `rimsky.yml` (once under `executors:`, once under
-  `claim_producers:`) with the same endpoint. In v0.7.0 the proxy
+  `claim_producers:`) with the same endpoint. In v0.8.0 the proxy
   fronts all five supervisor-facing protocols — executor,
   claim-producer, publisher, validation, data-processing — by one
   uniform spawn/forward mechanism; none ships as a registered-but-
@@ -155,10 +164,13 @@ a fresh spawn). When you are done, stop the agent (`rimsky agent stop`).
   by default; there is no auto-terminate on drain). To tear it down,
   force-terminate then delete (`rimsky instance kill <id> --force`
   followed by `rimsky instance delete <id>`). For a one-shot iteration
-  loop, `rimsky run --no-keep` polls until terminal and cleans up; pair
-  it with `terminate_after_run: true` in the create body if you want the
-  instance to self-terminate after its next frame (see the
-  [README](README.md#instances-are-durable-by-default)).
+  loop, `rimsky run --no-keep` is the whole story: it *implies*
+  `terminate_after_run: true` on the create (so the instance
+  self-terminates once its nodes settle), polls until terminal, and
+  deletes the instance + template — no extra flag or body field needed.
+  (`rimsky run --terminate-after-run` sets the flag without the
+  poll-and-delete cleanup.) See the
+  [README](README.md#instances-are-durable-by-default).
 
 ## Without rimsky
 
