@@ -34,45 +34,47 @@ Rimsky is a **reactive node-graph orchestrator** with:
   control-api) that communicate only through Postgres.
 
 The shape it's most directly comparable to: **Airflow / Dagster /
-Prefect / Temporal**. Streaming engines (Beam, Flink, Spark) and pure
-transformation frameworks (dbt) overlap on adjacent concerns but
-aren't drop-in alternatives.
+Prefect / Temporal**. Streaming engines (Beam, Flink, Spark), pure
+transformation frameworks (dbt), and agent-orchestration frameworks
+(LangGraph, Apache Burr) overlap on adjacent concerns but aren't
+drop-in alternatives.
 
 ## At-a-glance matrix
 
 Where rimsky lands today, across the dimensions that distinguish
 mature orchestrators. ✅ = first-class, 🟡 = workable pattern but not
-first-class, ❌ = not in scope or not present, ⏳ = planned, n/a =
-dimension does not apply to that platform.
+first-class, ❌ = not in scope or not present, n/a = dimension does
+not apply to that platform.
 
-|                                      | Airflow | Dagster | Prefect | Temporal | dbt | rimsky |
-| ------------------------------------ | :-----: | :-----: | :-----: | :------: | :-: | :----: |
-| Graph / workflow primitive           |   ✅    |   ✅    |   ✅    |    ✅    | ✅  |   ✅   |
-| Scheduled runs (cron)                |   ✅    |   ✅    |   ✅    |    🟡    | 🟡  |   ✅   |
-| Ad-hoc / triggered runs              |   ✅    |   ✅    |   ✅    |    ✅    | ✅  |   ✅   |
-| Sensors / external triggers          |   ✅    |   ✅    |   ✅    |    ✅    | ❌  |   ✅   |
-| Partitions as first-class            |   🟡    |   ✅    |   🟡    |    ❌    | 🟡  |   ⏳   |
-| Asset / lineage as the model         |   ❌    |   ✅    |   ❌    |    ❌    | ✅  |   🟡   |
-| Materialization strategies           |   ❌    |   🟡    |   ❌    |    ❌    | ✅  |   ⏳   |
-| Data quality tests                   |   🟡    |   ✅    |   ❌    |    ❌    | ✅  |   ✅   |
-| Backfills as a parametrized op       |   ✅    |   ✅    |   ✅    |    ❌    | 🟡  |   ✅   |
-| Durable workflow state               |   🟡    |   🟡    |   🟡    |    ✅    | ❌  |   ✅   |
-| Concurrency gating / claims          |   🟡    |   ❌    |   🟡    |    🟡    | ❌  |   ✅   |
-| Held-subgraph stage-then-promote     |   ❌    |   ❌    |   ❌    |    ❌    | ❌  |   ✅   |
-| Out-of-process workers               |   ✅    |   ✅    |   ✅    |    ✅    | ❌  |   ✅   |
-| Content-addressed graph definitions  |   ❌    |   🟡    |   ❌    |    🟡    | ❌  |   ✅   |
-| Cron-style schedule advances on row  |   ❌    |   ❌    |   ❌    |    n/a   | n/a |   ✅   |
-| Stream / window / watermark          |   ❌    |   ❌    |   ❌    |    ❌    | ❌  |   ❌   |
+|                                      | Airflow | Dagster | Prefect | Temporal | LangGraph | Burr | dbt | rimsky |
+| ------------------------------------ | :-----: | :-----: | :-----: | :------: | :-------: | :--: | :-: | :----: |
+| Graph / workflow primitive           |   ✅    |   ✅    |   ✅    |    ✅    |    ✅     |  ✅  | ✅  |   ✅   |
+| Scheduled runs (cron)                |   ✅    |   ✅    |   ✅    |    🟡    |    🟡     |  ❌  | 🟡  |   ✅   |
+| Ad-hoc / triggered runs              |   ✅    |   ✅    |   ✅    |    ✅    |    ✅     |  ✅  | ✅  |   ✅   |
+| Sensors / external triggers          |   ✅    |   ✅    |   ✅    |    ✅    |    ❌     |  ❌  | ❌  |   ✅   |
+| Partitions as first-class            |   🟡    |   ✅    |   🟡    |    ❌    |    ❌     |  ❌  | 🟡  |   🟡   |
+| Asset / lineage as the model         |   ❌    |   ✅    |   ❌    |    ❌    |    ❌     |  ❌  | ✅  |   🟡   |
+| Materialization strategies           |   ❌    |   🟡    |   ❌    |    ❌    |    ❌     |  ❌  | ✅  |   🟡   |
+| Data quality tests                   |   🟡    |   ✅    |   ❌    |    ❌    |    ❌     |  ❌  | ✅  |   ✅   |
+| Backfills as a parametrized op       |   ✅    |   ✅    |   ✅    |    ❌    |    ❌     |  ❌  | 🟡  |   ✅   |
+| Durable workflow state               |   🟡    |   🟡    |   🟡    |    ✅    |    ✅     |  ✅  | ❌  |   ✅   |
+| Concurrency gating / claims          |   🟡    |   ❌    |   🟡    |    🟡    |    🟡     |  ❌  | ❌  |   ✅   |
+| Held-subgraph stage-then-promote     |   ❌    |   ❌    |   ❌    |    ❌    |    ❌     |  ❌  | ❌  |   ✅   |
+| Out-of-process workers               |   ✅    |   ✅    |   ✅    |    ✅    |    ✅     |  ❌  | ❌  |   ✅   |
+| Content-addressed graph definitions  |   ❌    |   🟡    |   ❌    |    🟡    |    ❌     |  ❌  | ❌  |   ✅   |
+| Cron-style schedule advances on row  |   ❌    |   ❌    |   ❌    |    n/a   |    n/a    | n/a  | n/a |   ✅   |
+| Stream / window / watermark          |   ❌    |   ❌    |   ❌    |    ❌    |    ❌     |  ❌  | ❌  |   ❌   |
 
 The two rows where rimsky is distinctively ahead are
 **held-subgraph aggregate-outcome resolution** and
 **content-addressed graph definitions**. The data-platform cycle
 already shipped — sensors, backfills, verifier-executor data-quality
 checks, blessed typed attributes, assets, and content lineage are all
-present — so the rows where rimsky is still distinctively behind narrow
-to **partitions as first-class**, **asset thinking** as the primary
-model, and **materialization strategies**. The partitions work on the
-roadmap closes most of what remains.
+present — so the row where rimsky is still distinctively behind is
+**asset thinking** as the primary model. Partitions and materialization
+strategies are workable today — fan-out for partition-range work,
+candidate-commit for staged writes — but lack the declarative spec /
+declared strategy vocabulary that Dagster and dbt make first-class.
 
 ## Per-framework treatment
 
@@ -118,10 +120,9 @@ graph as the lineage graph.
 
 Where rimsky diverges: rimsky's public surface is task-shaped (nodes
 and their attributes) where Dagster's is asset-shaped (named outputs
-and their materializations). Rimsky lacks partitions as first-class
-(planned) and the rich observability surface Dagster ships out of the
-box. Asset-thinking is on the roadmap as a presentation layer, not a
-primitive change.
+and their materializations). Rimsky lacks the declarative partition-spec
+primitive Dagster attaches to assets, and the rich observability surface
+Dagster ships out of the box.
 
 ### Prefect
 
@@ -169,6 +170,69 @@ or held-subgraph resolution. Rimsky has no equivalent of Temporal's
 mid-flight patch-based migration (and explicitly chooses not to —
 the content-hash-plus-tag pattern is the rimsky-native answer).
 
+### LangGraph
+
+The orchestration framework from LangChain, oriented at LLM-agent
+workflows. Load-bearing primitives: **`StateGraph`** (typed graph with
+channels and reducers), **nodes** (functions over shared `State`),
+**edges** (`add_edge`, `add_conditional_edges`, plus the `Send`
+primitive for dynamic fan-out), **`Command`** for inline control flow,
+**checkpointers** (`InMemorySaver` / `SqliteSaver` / `PostgresSaver`)
+that snapshot state at every super-step keyed by `thread_id`,
+**`interrupt`** for human-in-the-loop, and **subgraphs** for
+composition. LangGraph Platform adds **Assistants**, **Threads**,
+**Runs**, a programmatic **`Crons`** SDK, and a server + worker fleet.
+
+Where rimsky overlaps: durable workflow state on a Postgres backplane,
+out-of-process workers, graph as the central primitive.
+
+Where rimsky diverges: LangGraph models **agent control flow** over
+shared in-memory channels; rimsky models **orchestration of
+out-of-process work** over typed claims on external substrates.
+LangGraph has no sensor / claim-producer / data-processing / asset
+surface — it isn't trying to be a data orchestrator. Conversely,
+rimsky has no inline human-in-the-loop interrupt primitive; the analog
+is the parked-state + breakpoint surface, aimed at operator decisions
+across long-lived instances rather than mid-graph LLM-tool approvals.
+
+### Apache Burr
+
+An Apache **incubating** project (v0.42.0-incubating at evaluation;
+incubation status means it is not yet a fully endorsed ASF top-level
+project). A Python framework for building decision-making applications
+— agents, chatbots, simulations — as explicit **state machines**.
+Load-bearing primitives: **actions** (Python functions under the
+`@action` decorator, declaring the state keys they read and write),
+**state** (an immutable structure flowing between actions),
+**transitions** (directed edges between actions, with conditions),
+**applications** (the compiled state machine), **persisters**
+(pluggable state-persistence backends with resume-from-checkpoint),
+**hooks** (lifecycle integration points), streaming actions, sync and
+async parallelism, **recursive applications** (sub-applications nested
+inside actions), and a built-in open-source **tracking UI** (telemetry
+server with execution tracing, historical-run replay, and
+OpenTelemetry integration).
+
+Where rimsky overlaps: graph-shaped control flow as the central
+primitive, and durable resumable state — Burr's persisters checkpoint
+application state for resume the way rimsky instances persist their
+execution trace in Postgres.
+
+Where rimsky diverges: Burr is an **in-process Python library** — the
+application, its actions, and its state machine run inside the host
+process; rimsky orchestrates **out-of-process work** over gRPC service
+protocols. Burr has no scheduler, no sensors, no concurrency-gating
+primitive, and no data-engineering surface (partitions, backfills,
+data-quality tests) — like LangGraph, it isn't trying to be a data
+orchestrator. Its human-in-the-loop pause is mid-graph and
+application-level; rimsky's analog is the parked-state + breakpoint
+surface for operator decisions. One place Burr is ahead of rimsky:
+it ships a polished open-source tracking/monitoring UI out of the box,
+which rimsky does not yet have. Relative to LangGraph (its nearest
+neighbor here): same agent-control-flow niche, but framed as a general
+state-machine framework rather than an LLM-specific one, with the UI
+bundled rather than offered as a hosted service.
+
 ### dbt
 
 A transformation framework, not an orchestrator. Load-bearing
@@ -186,10 +250,13 @@ blessed typed-attribute work makes nodes-that-produce-tables a
 first-class shape comparable to dbt models.
 
 Where rimsky diverges: dbt is SQL-warehouse-native; rimsky is
-data-store-agnostic. dbt's incremental materializations are richer
-than anything rimsky has today (planned for after partitions). dbt's
-semantic layer is application-level — out of rimsky's scope. dbt's
-snapshots have no direct rimsky analog.
+data-store-agnostic. dbt's materializations are a first-class strategy
+vocabulary at the framework level. Rimsky's analog is the candidate-commit
+lifecycle on the data-processing protocol (`BeginCandidate` /
+`CommitCandidate` / `AbandonCandidate`) with the aggregator declared
+producer-opaque in the claim's `data:` block — a workable pattern, not
+declared strategies. dbt's semantic layer is application-level — out of
+rimsky's scope. dbt's snapshots have no direct rimsky analog.
 
 The two often complement each other: rimsky orchestrates the broader
 graph (extract, load, dbt-run, downstream-publish); dbt runs the SQL
@@ -232,6 +299,11 @@ Per primitive, where each platform lands. Helpful when evaluating
 - **Prefect**: Python flow code with deployments binding flow +
   parameters + triggers.
 - **Temporal**: Workflow and activity code as the source of truth.
+- **LangGraph**: Python `StateGraph` code; channels + reducers + edges
+  compiled at runtime, identified by `graph_id`.
+- **Burr**: Python `@action` functions plus a transition list, compiled
+  into an application object at runtime. Imperative code; no content
+  addressing.
 - **dbt**: SQL files plus YAML schema.
 - **rimsky**: Declarative template YAML, content-hashed, registered
   via control-api. Hashes pin behavior; tags move.
@@ -250,6 +322,11 @@ runtime), at the cost of less code-shaped expressiveness.
 - **Prefect**: Concurrency limits as block-style configuration.
 - **Temporal**: Workflow-level signals are the closest equivalent;
   not a gating primitive.
+- **LangGraph**: Per-thread double-texting strategies (enqueue /
+  reject / interrupt / rollback) serialize concurrent runs on a
+  thread; no resource-scoped locks.
+- **Burr**: Parallelism APIs run actions concurrently within a single
+  application run; no resource-scoped gating across runs.
 - **dbt**: Not applicable (dbt doesn't dispatch; the warehouse
   handles concurrency).
 - **rimsky**: Claims plus claim producers. A node declares the
@@ -269,6 +346,14 @@ primitive. None of the comparators have a direct equivalent.
 - **Prefect**: Run state UI; less lineage-centric than Dagster.
 - **Temporal**: Workflow event history (the durable execution log
   IS the lineage).
+- **LangGraph**: Per-thread `StateSnapshot` history via the
+  checkpointer (`get_state`, `get_state_history`) — control-flow
+  history, not structural data lineage. LangSmith adds trace
+  observability over runs.
+- **Burr**: Built-in open-source tracking server + UI — execution
+  traces, state-transition history, historical-run replay,
+  OpenTelemetry integration. Control-flow history, not structural
+  data lineage.
 - **dbt**: Lineage graph from model dependencies; `dbt docs`
   generates a queryable view.
 - **rimsky**: Cascade graph plus events log. Structural lineage is
@@ -288,6 +373,10 @@ observability UI and dbt's auto-generated lineage docs.
 - **Dagster**: Asset checks plus IOManager-level expectations.
 - **Prefect**: Notification-shaped patterns; no first-class testing.
 - **Temporal**: Not in scope.
+- **LangGraph**: Not first-class in the framework; eval and testing
+  are external (LangSmith evaluators, pytest harnesses).
+- **Burr**: Replay of past executions and unit-testable actions
+  support software testing; no declarative data-quality surface.
 - **dbt**: Declarative tests (unique, not_null, accepted_values,
   relationships) plus generic tests.
 - **rimsky**: Verifier executors (`verifier-http`,
@@ -307,13 +396,14 @@ batteries-included checks than mature dbt installations.
   backfills target partition ranges; UI displays per-partition state.
 - **Prefect**: Param-driven; awkward.
 - **Temporal**: Not applicable.
+- **LangGraph**: No partition concept in `StateGraph`.
+- **Burr**: No partition concept.
 - **dbt**: Materialization-config level (e.g. `partition_by` for
   BigQuery models); first-class for the warehouses that support it.
-- **rimsky**: Not present; on the roadmap as the single largest
-  pending extension.
-
-Partitions are the clearest gap. Closing it is roadmap work, and
-rimsky's eventual shape will most resemble Dagster's.
+- **rimsky**: No declarative partition-spec primitive at the template
+  level. Partition-range backfills and per-partition state ship today —
+  dispatched via fan-out with a substituted `partition_request`,
+  observed via the backfill API.
 
 ### External triggers
 
@@ -322,6 +412,12 @@ rimsky's eventual shape will most resemble Dagster's.
 - **Dagster**: Sensors as first-class.
 - **Prefect**: Sensors plus webhook deployments.
 - **Temporal**: External signals into workflows.
+- **LangGraph**: No sensor abstraction; external systems POST to the
+  `runs.create` API, and the only built-in event surface is *outbound*
+  completion webhooks.
+- **Burr**: No sensor abstraction and no scheduler; the host
+  application invokes the Burr application (e.g., mounted in a
+  FastAPI service).
 - **dbt**: Out of scope; relies on external orchestration.
 - **rimsky**: First-class, shipped via the publisher/sensor protocol
   plus four bundled sensors (`sensor-cron`, `sensor-http`,
@@ -414,7 +510,7 @@ When in doubt, open-optionality moves are cheaper to revisit.
 ## Summary positioning
 
 Rimsky sits in the same neighborhood as Airflow, Dagster, Prefect,
-and Temporal. Its distinctive primitives are:
+Temporal, LangGraph, and Apache Burr. Its distinctive primitives are:
 
 - **Cascade as reactive recomputation** (closer to a build system
   than a workflow engine).
@@ -432,8 +528,7 @@ materialization strategies, asset thinking as the primary model, and a
 thinner set of batteries-included data-quality checks than dbt) and in
 the observability *frontend* (no dashboard SPA and no polished
 lineage-query UI yet — though the observability backplane and the
-lineage projection have shipped). Most of those gaps are on the
-roadmap.
+lineage projection have shipped).
 
 Rimsky is the right fit if you want:
 
@@ -443,13 +538,3 @@ Rimsky is the right fit if you want:
 - Content-addressed graph definitions.
 - A platform you self-host as Docker images, Go modules, or a git
   submodule.
-
-Rimsky is not the right fit (today) if you want:
-
-- A polished asset-and-lineage UI out of the box.
-- Streaming data-plane semantics.
-- Mature partitioned-table primitives for petabyte-scale analytics.
-- A managed hosted offering.
-
-The roadmap addresses several of the "not today" items. The
-non-goals list above commits to the "not ever" items.

@@ -56,6 +56,8 @@ var verifiedInternalSymbols = []string{
 	"EnableDataProcessing", "EnableLifecycle",
 	// stdlib / external
 	"ExpandEnv", "FromDockerfile",
+	// external frameworks cited by comparison.md (LangGraph public API)
+	"StateGraph", "InMemorySaver", "SqliteSaver", "PostgresSaver", "StateSnapshot",
 }
 
 // runSymbolExistence verifies that every multi-word CamelCase symbol a
