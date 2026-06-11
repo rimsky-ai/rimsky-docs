@@ -15,9 +15,8 @@ deprecated_terms: []
 > `/admin/diagnostics/*` JSON endpoints, the admin-invalidate route, the
 > Prometheus `/metrics` surface, and the `sensor-cron` publisher all ship and
 > are exercised by the bundled stack. A polished dashboard / lineage-query UI
-> is not yet shipped (the observability backplane is in place; the SPA is on
-> the roadmap) — operators compose Prometheus + their own dashboards over the
-> JSON and metrics surfaces.
+> is not yet shipped (the observability backplane is in place) — operators
+> compose Prometheus + their own dashboards over the JSON and metrics surfaces.
 
 Rimsky exposes operator health signals as JSON over HTTP plus Prometheus metrics.
 This page maps those surfaces — lifecycle subscribers, watchdog graphs,

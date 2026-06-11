@@ -25,6 +25,10 @@ All recipes run against a rimsky deployment — stand one up from the published 
 - **[Recompute dependents when something upstream changes](reactive-recompute.md)**
   — subscriber-driven cascade: a downstream node auto-subscribes to an
   upstream attribute and recomputes only the affected nodes on change.
+- **[Fire a node only after all its upstreams settle](fan-in.md)** — a
+  node subscribing to N `terminal/success` signals fires once when all
+  N are stale in the same cascade wave; the serial-chain anti-pattern
+  fires N times instead.
 - **[Cap concurrency with a counting semaphore](capacity-limit.md)** — a
   named lock as a deployment-wide capacity counter (`model-budget`,
   limit 50).

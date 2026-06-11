@@ -31,7 +31,7 @@ The definitive specifics an agent reads to build a template or deployment plan.
 
 ## Cookbook
 
-- [Cookbook](cookbook/README.md): the canonical patterns rimsky's primitives span — queue worker, reactive recompute, capacity limit, convergence loop, event-driven node, claim handoff, sub-graph, local-binary executor (dev-loop dispatch through the host-agent proxy). Each is problem → rimsky shape → copyable template → gotchas → without-rimsky.
+- [Cookbook](cookbook/README.md): the canonical patterns rimsky's primitives span — queue worker, reactive recompute, fan-in, capacity limit, convergence loop, event-driven node, claim handoff, sub-graph, local-binary executor (dev-loop dispatch through the host-agent proxy). Each is problem → rimsky shape → copyable template → gotchas → without-rimsky.
 
 ## Patterns
 
@@ -66,6 +66,5 @@ Higher-altitude system shapes (with explicit shipped-vs-aspirational status).
 
 - [README](README.md): corpus orientation and how the pieces fit.
 - [Comparison](comparison.md): rimsky versus alternatives.
-- [Roadmap](roadmap.md): shipped and planned direction.
 - [Licensing](licensing.md): the Apache-island / dual-licensed-orchestrator posture.
 - [llms-full.txt](agents/llms-full.txt): the concatenated full text (concept bodies + protocol guides) for single-file ingestion.

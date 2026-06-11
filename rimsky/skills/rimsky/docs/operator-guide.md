@@ -37,6 +37,37 @@ container), `=0` skips it.
 The control-API liveness route is `GET /health` (a shallow snapshot). There is no
 shipped dashboard health route in the published images.
 
+## Template registration and reference validation
+
+Template registration validates every reference the template carries — executors,
+claim producers (stores), named locks — against the running control-plane. Under
+the default mode the referenced services must be visible (provisioned and
+handshaked) at the moment `template register` runs; references whose targets are
+not yet visible cause the registration to be refused with a 400.
+
+The strictness is operator-controlled via `templates.ref_validation_mode` in
+`rimsky.yml` (or the `RIMSKY_REF_VALIDATION_MODE` env-var override):
+
+| Value | Behavior |
+| --- | --- |
+| `all` (default) | Every reference must be visible at registration; refuse otherwise. |
+| `available` | Skip refs whose target services are not yet provisioned (validate the ones that are visible). This is the previously-implicit always-on soft-fail heuristic, now explicit. |
+| `none` | Skip all reference validation at registration; rely entirely on the mandatory instantiation-time gate. |
+
+Bring-up order under the default `all`: provision services (start executors,
+stores, lock providers) before `template register`. If your deployment pipeline
+cannot guarantee that ordering — for example, the operator wants to register
+templates first and wire executors after — set
+`templates.ref_validation_mode: available` (or `none`) in `rimsky.yml`.
+
+A relaxed registration mode does **not** weaken instance creation:
+`POST /instances` runs a mandatory static-config gate regardless of how
+registration was configured. See
+[`agents/errors/instance_static_config_violation.md`](agents/errors/instance_static_config_violation.md)
+for the instantiation-time gate and
+[`agents/errors/executor_schema_unavailable.md`](agents/errors/executor_schema_unavailable.md)
+for the dispatch-time analog.
+
 ## Instance lifecycle: durable by default
 
 Instances are **durable by default**. There is no auto-terminate-on-drain: an
@@ -303,12 +334,27 @@ libraries under `lib/protocols/conformance/...`.
 
 Each exits 0 on all checks passing.
 
+## Upgrading from v0.6.0
+
+**`templates.ref_validation_mode` default flipped to `all` in v0.7.0.** Under
+v0.6.0 the registration-time reference check was the implicit always-on
+soft-fail heuristic — equivalent to mode `available` today. Deployments that
+relied on registering templates before provisioning their referenced executors
+now refuse to register under the v0.7.0 default. Two options:
+
+- Reorder bring-up: provision services before `template register`. The intended
+  order under `all`.
+- Set `templates.ref_validation_mode: available` (or `none`) in `rimsky.yml` to
+  preserve the v0.6.0 behavior.
+
+See [Template registration and reference validation](#template-registration-and-reference-validation)
+for the full mode table.
+
 ## Pre-v1 caveats
 
 - No Helm chart or Kubernetes manifests ship yet. Deploy from the published
   images (`rimskyai/rimsky*`); a reference config lives at
-  [`reference/config/rimsky.yml`](reference/config/rimsky.yml), and a chart is
-  on the roadmap but not published.
+  [`reference/config/rimsky.yml`](reference/config/rimsky.yml).
 - The unified image (`rimsky-all-in-one`, built `FROM` the multi-role `rimsky`
   image) defaults to SQLite at `/var/lib/rimsky/state.db`. Replicas > 1 break
   (independent SQLite databases). Run the combined `rimsky` image per role with

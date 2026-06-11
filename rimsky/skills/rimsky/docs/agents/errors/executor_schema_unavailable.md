@@ -27,3 +27,4 @@ Confirm the executor is reachable and has completed its handshake: the superviso
 - [`../../concepts/discovery-cache.md`](../../concepts/discovery-cache.md)
 - [`../../concepts/executor.md`](../../concepts/executor.md)
 - [`attribute_validation_failed_at_dispatch.md`](attribute_validation_failed_at_dispatch.md)
+- [`../../operator-guide.md#template-registration-and-reference-validation`](../../operator-guide.md#template-registration-and-reference-validation) — the registration-time `templates.ref_validation_mode` knob; the registration-time analog of this dispatch-time gap.

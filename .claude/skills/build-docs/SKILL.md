@@ -131,7 +131,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/reference/rest-api.md` | rimsky `lib/control/controlapi/actions.go` | Mechanical (`rimsky-docs-rest-ref`); never hand-edit. |
 | `rimsky/skills/rimsky/docs/reference/cli.md` | the `rimsky` CLI's `help` output | Mechanical (`rimsky-docs-cli-ref`); never hand-edit. |
 | `rimsky/skills/rimsky/docs/operator-guide.md` | code + design | Generated/derived; refine (reconciled by the **config-examples** surface, alongside the worked configs). |
-| `rimsky/skills/rimsky/docs/comparison.md`, `rimsky/skills/rimsky/docs/roadmap.md`, `rimsky/skills/rimsky/docs/licensing.md`, `rimsky/skills/rimsky/docs/patterns/*.md` | code + design | Generated/derived narrative; refine (the **narrative** surface). State a feature's aspirational/partial status up front; keep version-gated status labels current. |
+| `rimsky/skills/rimsky/docs/comparison.md`, `rimsky/skills/rimsky/docs/licensing.md`, `rimsky/skills/rimsky/docs/patterns/*.md` | code + design | Generated/derived narrative; refine (the **narrative** surface). State a feature's aspirational/partial status up front; keep version-gated status labels current. |
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `rimsky/skills/rimsky/docs/examples/` | rimsky `examples/` module (Apache) | Mechanical (`rimsky-docs-vendor-examples`); vendored snapshot pinned to the reconciled tag — never hand-edit. Fix in rimsky-core's `examples/`. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
@@ -172,10 +172,13 @@ that skill for the entry format and the attention-table layout.
   loop is the separate **`/refine-docs`** skill, which this skill invokes at its
   review stage.
 
-There is no single-surface or delta-only mode. Every run reconciles the whole
-surface from the current source. The model is **create if missing, refine if
-present, idempotent** — running twice against unchanged source changes nothing.
-To re-run just the review → fix → converge loop afterward, use `/refine-docs`.
+Every run reconciles the whole surface from the current source. The model is
+**create if missing, refine if present, idempotent** — running twice against
+unchanged source changes nothing. A preflight delta survey (step 0.4) records
+what changed in rimsky between the previous `reconciledAgainst` and the new
+target tag, so the per-surface reconciles foreground those changes; the
+reconcile itself stays whole-surface. To re-run just the review → fix → converge
+loop afterward, use `/refine-docs`.
 
 ## Process
 
@@ -232,6 +235,19 @@ To re-run just the review → fix → converge loop afterward, use `/refine-docs
    reconcile subagents, the orchestrator, and the review/refine loop — appends
    `decision` / `flag` / `round` entries to it; step 6 renders it.
 
+4. **Survey deltas since the previous `reconciledAgainst`.** Read the previous
+   `reconciledAgainst` from `rimsky/.claude-plugin/plugin.json`. If it equals
+   `$RIMSKY_TAG`, the delta is empty; skip. If it differs, diff the rimsky
+   source tree between the two tags — config-loader structs, CLI help, REST API
+   actions, concept docs, error-class definitions — and record the source-side
+   changes as a `## Deltas since <previous>` section in the journal, per
+   artifact, naming the doc surfaces that should reflect each. The per-surface
+   reconciles read this section so the reconcile, while still whole-surface,
+   foregrounds what specifically changed — not just what currently is. This
+   pays for itself most under default-flips on existing keys: a knob whose
+   value changed but whose schema stayed the same is invisible to source-state-
+   only reconciles.
+
 
 ### 1. Reconcile every surface (parallel subagents)
 
@@ -240,6 +256,12 @@ surfaces run in parallel — send them in a single message with multiple `Agent`
 calls. Each subagent reconciles its whole surface (create-if-missing /
 refine-if-present) and returns a per-surface change list plus any items it
 flagged as unresolvable from this repo.
+
+Before dispatching, the orchestrator pulls any deltas recorded in preflight
+step 0.4 that are relevant to each subagent's surface and includes them in the
+subagent's prompt as specific checks — so a delta against, e.g., the config
+loader struct is foregrounded for the `config-examples` subagent regardless of
+whether the resulting docs state already matches.
 
 A subagent edits **only files in its own surface**. Drift it notices in another
 surface is a `flag` for the orchestrator, **not** an edit — the surfaces run in
@@ -277,7 +299,7 @@ Surfaces:
   `SKILL.md` and `docs/agents/llms.txt`, the `plugin.json` `reconciledAgainst`
   stamp, and any prose statement of the reconciled-against rimsky version)
 - narrative (the higher-altitude derived prose: `docs/comparison.md`,
-  `docs/roadmap.md`, `docs/licensing.md`, and `docs/patterns/*.md`)
+  `docs/licensing.md`, and `docs/patterns/*.md`)
 
 ### 2. Mechanical generation
 
@@ -557,11 +579,16 @@ not), reasoning kept as tight prose, source-anchored.
 > `rimsky/skills/rimsky/docs/operator-guide.md` against rimsky's config schema
 > and the bundled services.
 >
-> Do not build or run rimsky here. Your job is correctness: every config key is
-> a real key the loader accepts, the values are valid and copyable, the configs
-> match the published image names / ports, and every doc link resolves into the
-> published surface. Where a config references a removed compose-stack hostname
-> or port, neutralize it to a deployment-agnostic example.
+> Do not build or run rimsky here. Your job is correctness in both directions.
+> **Docs → source**: every config key the docs name is a real key the loader
+> accepts, the values are valid and copyable, the configs match the published
+> image names / ports, and every doc link resolves into the published surface.
+> Where a config references a removed compose-stack hostname or port,
+> neutralize it to a deployment-agnostic example.
+> **Source → docs**: enumerate every operator-tunable key from rimsky's config
+> loader structs and verify each appears in `operator-guide.md`. A key that is
+> missing from operator-facing prose is a `flag` — silent absence is the
+> failure mode this guards against.
 >
 > Return: configs and guidance reconciled, and any config key or value that does
 > not match the schema or the services (as `flag` entries).
@@ -659,7 +686,6 @@ not), reasoning kept as tight prose, source-anchored.
 
 > Reconcile the higher-altitude **derived narrative** docs against rimsky source.
 > Surfaces: `rimsky/skills/rimsky/docs/comparison.md` (rimsky vs. alternatives),
-> `rimsky/skills/rimsky/docs/roadmap.md` (planned / aspirational direction),
 > `rimsky/skills/rimsky/docs/licensing.md` (license posture), and
 > `rimsky/skills/rimsky/docs/patterns/*.md` (higher-altitude system shapes — some
 > aspirational or only partially supported).

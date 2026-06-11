@@ -48,5 +48,6 @@ Do not work around this by registering against a different (looser) schema and h
 
 - [`../../concepts/template.md`](../../concepts/template.md)
 - [`../../concepts/instance.md`](../../concepts/instance.md)
+- [`../../operator-guide.md#template-registration-and-reference-validation`](../../operator-guide.md#template-registration-and-reference-validation) — the operator-side `templates.ref_validation_mode` knob and `available` / `none` relaxation modes.
 - [`../../concepts/attribute.md`](../../concepts/attribute.md)
 - [`attribute_validation_failed_at_dispatch.md`](attribute_validation_failed_at_dispatch.md) — the dispatch-time pass for substitution-sourced values.

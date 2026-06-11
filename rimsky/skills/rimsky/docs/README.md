@@ -31,7 +31,6 @@ here.
 Guides (hand-maintained):
 
 - `comparison.md` — rimsky vs. other orchestrators; fit evaluation.
-- `roadmap.md` — what shipped, what's in active design, declared non-goals.
 - `operator-guide.md` — cross-cutting operator knobs (config, blob backend,
   metrics, diagnostic endpoints).
 - `licensing.md` — repo licensing notice.
