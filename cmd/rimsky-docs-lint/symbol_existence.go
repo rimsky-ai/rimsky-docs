@@ -59,6 +59,16 @@ var verifiedInternalSymbols = []string{
 	// external frameworks cited by comparison.md (LangGraph public API)
 	"StateGraph", "InMemorySaver", "SqliteSaver", "PostgresSaver", "StateSnapshot",
 	"SetBackend", // lib/services/sensors/sensor-object-store/sensor.go::SensorService.SetBackend
+	// v0.9.0 additions
+	"StartControlAPI",    // lib/control/config/controlapi.go::StartControlAPI — control-API role entry
+	"StartSupervisor",    // lib/control/launch/supervisor.go::StartSupervisor — supervisor role entry; also validates Executors at startup
+	"PolicyFallbackClass", // lib/runtime/on_error.go::OnErrorArgs.PolicyFallbackClass — second error_types: key tried after exact match; surfaced in agents/errors/acquire_unavailable.md
+	"OnError",            // lib/runtime/on_error.go::OnError — runtime error-policy entry point referenced from agents/errors/acquire_unavailable.md
+	"RunPublisherSubscriptionReconciler", // lib/runtime/publishers.go::RunPublisherSubscriptionReconciler — the unbounded per-tick Subscribe reconciler; surfaced in protocols/publisher.md
+	"ServeErr",           // lib/runtime/callback.go::CallbackServer.ServeErr + lib/control/config/supervisor.go::CallbackServeErr — fatal-serve-error capability surfaced by the role handles in v0.9.0
+	"ClassedError",       // lib/services/stores/filesystem/store/errors.go::ClassedError + lib/services/stores/postgres/store/staging.go::ClassedError — wire-side classed-error carrier
+	"ErrorClass",         // lib/runtime/peer/errors.go::ProducerCallError.ErrorClass + widespread struct field — error_class on errors decoded from google.rpc.ErrorInfo
+	"ProducerCallError",  // lib/runtime/peer/errors.go::ProducerCallError — typed producer-call error the supervisor's error-policy chain reads
 }
 
 // runSymbolExistence verifies that every multi-word CamelCase symbol a

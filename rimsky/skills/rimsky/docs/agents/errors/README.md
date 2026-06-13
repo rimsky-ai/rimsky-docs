@@ -14,9 +14,14 @@ Each page's frontmatter carries `surfaced_to:` — the audience that first obser
 | `claim-producer` | A claim-producer implementer (same idea, for the ClaimProducer protocol) |
 | `lifecycle-subscriber` | A lifecycle-subscriber implementer |
 
+## Producer-declared error vocabularies
+
+Producer-side error classes (`fs/root_unavailable`, `pg/claim_unavailable`, etc.) are not invented by rimsky — they live in the producer's own `Capabilities()` response, on `proto:claim_producer.proto::CapabilitiesResponse.declared_error_classes` (added in rimsky v0.9.0). A leaf surfaces on `google.rpc.ErrorInfo.Reason` for a faulted producer verb, OR on `Unavailable.error_class` for an acquisition refusal. The template validator's `error_types:` range-check accepts a key if it matches any declared plain leaf or matches a declared `<prefix>/*` pattern; an `error_types:` key attributable to no declared vocabulary surfaces as an advisory warning at template registration, never a hard rejection. The errors catalog mirrors what each producer declares — when a producer advertises a new leaf, it gets a page here. Mirrors `proto:executor_observability.proto::ObservabilityCapabilities.declared_error_classes` for the executor surface.
+
 ## Index
 
 - [`acquire_unavailable.md`](acquire_unavailable.md) — claim producer's `Open` returned `Unavailable`; routed through the node's `error_types: { acquire/unavailable: ... }` chain (or a producer-declared leaf when the producer named one, e.g. `pg/claim_unavailable`).
+- [`fs_root_unavailable.md`](fs_root_unavailable.md) — bundled `store-filesystem` producer rejected a verb (`Open` / `Commit` / `Abandon` / `Release`) because its configured backing root is missing or not writable; operator-misconfiguration case (`fs/root_unavailable`).
 - [`orphaned_claim_lost_race.md`](orphaned_claim_lost_race.md) — supervisor lost ownership of a claim mid-execution.
 - [`capability_envelope_mismatch.md`](capability_envelope_mismatch.md) — operator-declared envelope is not a subset of producer-advertised envelope.
 - [`tag_shape_rejected.md`](tag_shape_rejected.md) — a tag identifier in the `sha256-<64-hex>` shape was rejected.

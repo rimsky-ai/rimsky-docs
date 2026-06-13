@@ -170,12 +170,12 @@ indistinguishable from a non-held terminal; the held resolution is rimsky-side
 machinery.
 
 Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional
-fields, both inert to rimsky:
+fields that rimsky now reads off the wire on the base-protocol `Commit`:
 
 | Field | Meaning |
 | --- | --- |
-| `version_id` | Declared for `DataProcessing`-capable producers, but in v0.8.0 rimsky does **not** read it off the wire: the runtime's `Commit` client discards the response body, and the persisted `rimsky_claim_handles.version_id` is sourced from the `CommitCandidate` step instead. Setting it has no effect today; leave it empty. |
-| `producer_metadata` | Declared for a future fan-out writeback surface, but in v0.8.0 rimsky does **not** read it off the wire — the same discarded `Commit` response. Setting it has no effect today; leave it empty. |
+| `version_id` | Optional canonical version identifier **any** producer may stamp — not gated on `DataProcessing`. Opaque to rimsky; persisted on `rimsky_claim_handles.version_id` and on the lineage row for `record_kind: claim_terminal`. A non-empty base-`Commit` `version_id` **wins over** a staged `DataProcessing.CommitCandidate.version_id` for the same handle (the base verb is the finalizing call). Leave empty if the producer has no canonical version to surface. <!-- @source: lib/runtime/terminal_decision.go::ResolveClaimHandleTerminal --> |
+| `producer_metadata` | Optional producer-supplied bytes. Inert in rimsky per `@blessed-invariant 20` for the bytes themselves. At fan-out parent terminal the bytes are base64-encoded (the writeback row is JSON) and surfaced in the parent run's writeback under the `producer_metadata` key, keyed by the child's **partition key**. Empty / non-fan-out → no writeback effect. <!-- @source: lib/runtime/child_execution.go::recordChildProducerMetadata --> |
 
 ## `Abandon` — consumer failed
 
@@ -228,6 +228,7 @@ cached for the process's lifetime. `CapabilitiesResponse` returns:
 | `supports_split_scope` / `supports_scopes_conflict` | The optional-RPC flags. Advertise `true` only when you implement the matching RPC. |
 | `protocols` | The mix-in service protocols this binary also speaks alongside `claim_producer` (e.g. `data_processing`, `validation`, `lifecycle_subscriber`). A binary that implements `LifecycleSubscriber` lists `lifecycle_subscriber` here. |
 | `validation_supported_roles` | When `validation` is in `protocols`, the role discriminators this service will validate (`executor` / `claim_producer` / `lifecycle_subscriber` / `sensor`). For a claim-producer peer advertising the `validation` mix-in, rimsky learns the **live** list by running a fresh `ClaimProducer.Capabilities` handshake at startup (the operator-declared YAML carries only the write-semantics envelope, never roles); a handshake failure fails rimsky startup. <!-- @source: lib/control/config/publishers.go --> |
+| `declared_error_classes` | The producer's declared error-class vocabulary — both the `Unavailable.error_class` arm of `Open` and the `google.rpc.ErrorInfo.Reason` stamped on faulted producer verbs. Patterns ending in `*` are prefix leaves (e.g. `pg/claim_unavailable/*`); exact strings are fixed leaves. The template-registration validator's range-check of operator `error_types:` keys accepts a key if it exactly matches a declared plain leaf OR matches a declared `<prefix>/*` pattern by prefix. Empty/absent means "producer does not declare" — legal; keys attributable to no declared vocabulary surface as advisory warnings, never hard rejections. Mirrors `ObservabilityCapabilities.declared_error_classes` on the executor surface; the two vocabularies are independent (the producer half covers the claim-producer verbs, the executor half covers `Execute.Error.error_class`). |
 
 The valid `WriteSemantics` values are `sync`, `staged_async`, `blocking_async`, and
 `read_only` (the proto enum `WRITE_SEMANTICS_*`; `WRITE_SEMANTICS_UNKNOWN` is the
@@ -343,10 +344,19 @@ tests.
   not a production starting point.
 - **Official services (AGPL)** — the concrete-paths `filesystem` store and the
   regional-access / items-queue / atomic-staging-schema `postgres` store, under
-  `lib/services/stores/{filesystem,postgres}`. The postgres store demonstrates
-  the SQL-substrate atomic-staging lifecycle (per-claim staging schema reserved
-  at `Open`, atomic swap on `Commit`, drop on `Abandon`) plus the `pg/swap_failed`
-  declared-error-class emit site. These are AGPL runnable products; study their
+  `lib/services/stores/{filesystem,postgres}`. Both demonstrate the
+  `declared_error_classes` capability: the filesystem store advertises a single
+  class `fs/root_unavailable`, raised by every producer verb (`Open` / `Commit`
+  / `Abandon` / `Release`) when its configured backing root is missing or not
+  writable at verb time, so the operator-misconfiguration case crosses the wire
+  as the store's own class rather than an anonymous gRPC failure
+  (`*ClassedError` → `google.rpc.ErrorInfo.Reason`).
+  <!-- @source: lib/services/stores/filesystem/store/errors.go::RootUnavailableClass -->
+  The postgres store additionally demonstrates the SQL-substrate atomic-staging
+  lifecycle (per-claim staging schema reserved at `Open`, atomic swap on
+  `Commit`, drop on `Abandon`) plus the `pg/swap_failed` declared-error-class
+  emit site, and surfaces `pg/claim_unavailable` on the `Unavailable.error_class`
+  arm of `Open`. These are AGPL runnable products; study their
   `config-example.yml` and server packages for patterns, but build your own
   producer from the Apache wire contract and the copyable skeleton above rather
   than copying AGPL service code.

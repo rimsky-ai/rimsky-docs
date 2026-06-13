@@ -10,11 +10,11 @@
 
 ## What it is
 
-Four advisory-lock primitives on the persistence-layer advisory-locker interface: scheduler-tick, migration, per-name (in-tx), and per-scope (in-tx). Postgres uses native session/transaction advisory locks; SQLite degrades to an in-process mutex / no-op.
+Four advisory-lock primitives on the persistence-layer advisory-locker interface: scheduler-tick, migration, per-name (in-tx), and per-scope (in-tx). Postgres uses native session/transaction advisory locks. Under SQLite the scheduler-tick and migration locks are file-lock-based (lock files derived from the database path), holding exclusion across processes that share the database file on one host; the per-name and per-scope in-tx locks are no-ops because the immediate-mode transaction's writer-slot hold subsumes them and is itself cross-process.
 
 ## Purpose
 
-Cross-process coordination through Postgres (or an in-process mutex in single-process dev). The scheduler-tick lock makes the tick safely multi-replica; the migration lock serializes migrate runs; the per-name and per-scope advisory locks close the READ COMMITTED window in the acquisition tx.
+Cross-process coordination — through Postgres advisory locks, or under SQLite through file locks alongside the database file. The scheduler-tick lock makes the tick safely multi-replica; the migration lock serializes migrate runs; the per-name and per-scope advisory locks close the READ COMMITTED window in the acquisition tx.
 
 ## Boundaries
 
@@ -22,8 +22,9 @@ Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and mi
 
 ## Invariants
 
-- Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or an in-process mutex (SQLite) (`@blessed-invariant 7`).
-- Migration uses a session-level advisory lock held for the duration of the batch (`@blessed-invariant 8`).
+- Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or a non-blocking exclusive file lock (SQLite) — in both backends the exclusion holds across OS processes (`@blessed-invariant 7`).
+- For the scheduler-tick lock, an error from the lock attempt is treated as lock-held: the sweep pass is skipped, never run unlocked. The sweeps are periodic recovery, so a one-interval delay is benign, while running unlocked permits the concurrent sweeping the lock exists to prevent.
+- Migration uses a blocking exclusion held for the duration of the batch — a session-level advisory lock (Postgres) or an exclusive file lock (SQLite), cross-process in both backends (`@blessed-invariant 8`).
 - Per-name and per-scope advisory locks are transaction-scoped, released at COMMIT/ROLLBACK.
 - All multi-lock acquisitions walk a deterministic order keyed by lock kind then sort key (`@blessed-invariant 3`).
 - Two pinned int64 keys are documented as "never reuse" at the definition site.
@@ -224,7 +225,7 @@ Per-entry match counters persist on the instance row's match-count map. The supe
 
 ## What it is
 
-The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph. It delegates to the unified claim-handle terminal-resolution engine. Runs after every node terminal in a held subgraph: locks the claim-handle row, checks whether all of that handle's holder rows are non-active, computes aggregate outcome, fires the verb, **promotes** the handle to a committed or abandoned state claimant-guarded against the supervisor that held it. Carve-out paths (the shared abandon helper used in pre-dispatch and verify-before-run bail) continue to delete the row directly because those rows never went through Promote.
+The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph. It delegates to the unified claim-handle terminal-resolution engine. Runs after every node terminal in a held subgraph: locks the claim-handle row, checks whether all of that handle's holder rows are non-active, computes aggregate outcome, fires the verb, **promotes** the handle to a committed or abandoned state claimant-guarded against the supervisor that held it. The verify-before-run ownership bail routes through the same engine with its own source kind, under which the engine deletes (rather than promotes) the row claimant-guarded — a bailed acquisition is unwound, not resolved, so its row never reaches a resolved state. The single carve-out outside the engine is the pre-dispatch acquire-unavailable path, whose rows were already removed by the acquisition transaction's rollback; only the shared abandon helper fires there.
 
 ## Purpose
 
@@ -232,7 +233,7 @@ A held claim outlives its acquirer; somebody has to decide when to release it. T
 
 ## Boundaries
 
-Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fire delete of the handle row. Does NOT own: how each holder reaches its terminal (see `error-policy` for retry/pass/give_up and the successful-executor-terminal handler for clean completions), the verb's producer-side effect (see `claim-producer`), the active-terminal (non-held) branch that also routes through the same unified resolution engine (see `terminal-resolution` for the unified spine). Adjacent: `claim-handle` (including its `### Held variant` subsection — the dropped held-claim concept's content lives there), `claim-producer`, `parked-state` (continues to fire across park), `terminal-resolution`, `error-policy`.
+Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fire delete of the handle row. Does NOT own: how each holder reaches its terminal (see `error-policy` for retry/pass/give_up and the successful-executor-terminal handler for clean completions), the verb's producer-side effect (see `claim-producer`), the active-terminal (non-held) branch that also routes through the same unified resolution engine (see `terminal-resolution` for the unified spine). Adjacent: `claim-handle` (including its `### Held variant` subsection), `claim-producer`, `parked-state` (continues to fire across park), `terminal-resolution`, `error-policy`.
 
 ## Invariants
 
@@ -240,9 +241,9 @@ Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fi
 - Aggregate-outcome rule: any-failed → Abandon; all-completed → Commit.
 - The producer verb fires before the surrounding rimsky tx commits — the verb-then-tx-fail leak path is mitigated by requiring terminal verbs to be idempotent in the claim id.
 - State transition of the claim-handle row uses **two guard shapes** (`@blessed-invariant 4`):
-  - Active-row mutations (Promote, heartbeat-extend, carve-out delete in the abandon helper) are claimant-guarded by matching the holder-supervisor id against the acting supervisor.
+  - Active-row mutations (Promote, heartbeat-extend, the ownership-bail delete inside the unified engine) are claimant-guarded by matching the holder-supervisor id against the acting supervisor.
   - Non-active-row deletions (retention sweep, asset Release path) are absence-guarded: the row's holder-supervisor id is null by construction (Promote nulled it); the row-discovery query filter substitutes for the per-row claimant check.
-- The unified resolution engine is the audited post-dispatch entry point for error-policy `pass`/`error` resolutions on already-opened claims. Two carve-outs route through the shared abandon helper instead of the unified engine: (a) the pre-dispatch acquire-unavailable `pass`/`error` path, where the claim-handle rows are already gone (rolled back by the acquisition tx); and (b) the post-commit verify-before-run race-detection bail path, where the cleanup is a per-acquired-claim Abandon plus its own claimant-guarded delete. Those rows never went through Promote, so they take the delete-direct path; the unified engine's Promote path is the standard.
+- The unified resolution engine is the audited entry point for resolving already-opened claims; its source kinds are active-terminal, held-terminal, and ownership-bail (the post-commit verify-before-run race-detection bail, under which the engine fires the per-acquired-claim Abandon and then deletes the row claimant-guarded instead of promoting it). One carve-out routes through the shared abandon helper instead of the unified engine: the pre-dispatch acquire-unavailable path, where the claim-handle rows are already gone (rolled back by the acquisition tx), so there is no row transition to fold.
 
 
 ---
@@ -277,7 +278,7 @@ The control-api offers five backfill operations on an instance: create a backfil
 
 ## What it is
 
-The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory dev-only backend.
+The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory backend legal only in the single-process deployment mode.
 
 ## Purpose
 
@@ -290,7 +291,7 @@ Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledg
 ## Invariants
 
 - Blob content is inert in rimsky (`@blessed-invariant 21`). It is read only at the substitution path-walk leaf and at the persistence-layer fetch on read.
-- The in-memory backend is rejected at startup unless the process is running in the single-process unified role; the per-process binaries cannot share an in-process map.
+- The in-memory backend is legal only in the single-process deployment mode — all roles running in one process, where one in-process map is genuinely shared, cross-role blob reads work, and the orphan-blob sweep reaps spilled blobs. It is startup-rejected in any per-role process, because separate processes cannot share an in-process map.
 - Handles are self-describing strings carrying a backend prefix (inline, Postgres large-object, filesystem, in-memory); current single-backend-per-process means cross-prefix reads fail.
 - Orphan blobs go to a persisted orphan-blob ledger and are swept after a retention window.
 
@@ -324,7 +325,7 @@ Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `con
 
 ## Invariants
 
-- Only the supervisor writes hit rows (`@blessed-invariant` candidate).
+- Only the supervisor writes hit rows.
 - Resume is idempotent on `hit_id`: replays return the original outcome unchanged.
 - `signal_type` is rejected on `before_dispatch` breakpoints at registration.
 - `mode=pause + overflow_policy=drop_oldest` is rejected at registration (pause-mode hits cannot be silently dropped).
@@ -441,14 +442,45 @@ The cascade walker consults two edge maps — the subscription-edge map and the 
 - Cascade always happens in a frame.
 - The walk + per-node behaviors are scheduler actions; they are NOT configurable via the per-emit `frame: in | next` discipline.
 - Settled-color is informational. The functional equivalent of suppressing downstream auto-fire on a failed sender is expressed receiver-side via subscribers' `when:` predicates or via not subscribing to `terminal/error/*` at all.
+- Staleness propagation — whether by invalidation walk or by sender settlement — does not by itself confer dispatch eligibility. Eligibility is the dispatch-time predicate per `concept:wait-set`, and the all-in-flight-upstreams-resolve-first guarantee is propagation-path-independent: a stale receiver does not dispatch while any subscribed upstream has an in-flight run in the same frame, no matter which path made it stale.
 
 ## Common pitfalls
 
 - **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map. The two share a name and nothing else.
 - Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
 - Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` if it wants downstream subscribers that filter on `payload.changed` to suppress.
-- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; the scheduler decides which stale nodes are eligible for dispatch (wait-set empty for the current frame, claims and locks acquirable).
+- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; dispatch eligibility is decided at dispatch time by the two-condition predicate per `concept:wait-set` — no undrained wait-set rows for the run in the current frame AND no subscribed upstream with an in-flight run in the same frame — with claims and locks still to be acquired.
 - Treating `terminal/error/*` subscribers as automatically downstream-firing. Under the subscriber-driven cascade model, a subscriber filtering on `terminal/error/*` fires only if it has declared the subscription; the sender's color does not fire downstream nodes by itself. A node that wants to halt propagation on errors simply omits the subscription; a node that wants to act on every error subscribes broadly.
+
+
+---
+
+# Child execution
+
+## Definition
+
+Child execution is the run-side primitive by which a parent node-run dispatches one or more child executions into their own execution contexts and settles on their aggregate outcome. It is a primitive pair:
+
+- **Dispatch-children** takes N≥1 partition descriptors (partition key, optional sub-claim handle, inert payload) plus an aggregation policy and a child graph name, and dispatches one child execution per partition into its own child execution context rooted at the parent run.
+- **Settle-children** fires on every child terminal: it records the child's outcome, applies the aggregation policy (carry-verbatim, or the strict / threshold / best-effort / first family), and — when the policy settles the parent — closes the child execution context(s), writes the parent settlement, and fires the parent-settlement cascade from inside settlement.
+
+Delegation and fan-out are invocation patterns over this primitive (see `concept:delegation`, `concept:fan-out`): delegation is one partition with the carry-verbatim policy and an absorbed entry; fan-out is N partitions with an author-specified policy and one sub-claim per partition. The run-side shape is one shape.
+
+## Purpose
+
+Own the shared shape that delegation and fan-out are surfaces of, so that there is exactly one dispatch path and exactly one settlement path on the run side. A defect fixed in the primitive is fixed for every invocation pattern; an invariant enforced in the primitive cannot be skipped by any pattern.
+
+## Boundaries
+
+Owns the dispatch primitive (N≥1 children into child execution contexts) and the settlement primitive (record child outcome → apply aggregation policy → close child contexts → settle parent, with the parent-settlement cascade fired from inside settlement). The execution contexts themselves and their tree structure are owned by `concept:run-scope`. Template surfaces are owned by `concept:delegation` and `concept:fan-out`. Sub-claim acquisition is owned by `concept:claim-tree` — the dispatch primitive accepts already-acquired sub-claims as input and never calls the producer's split itself. Adjacent: `concept:run-scope`, `concept:delegation`, `concept:fan-out`, `concept:claim-tree`, `concept:node-run`, `concept:cascade`.
+
+## Invariants
+
+- Settlement is the only run-side path that closes child execution contexts (instance termination is the administrative exception, per `concept:run-scope`).
+- The carry-verbatim aggregation policy requires exactly one child, enforced at template validation; a declaration with multiple children under carry-verbatim is a template-validation error.
+- Entry absorption is a property of the invoking pattern, not of child execution — the dispatch primitive carries it as an input flag and does not compute it.
+- The parent-settlement cascade cannot be skipped by any settlement caller: the cascade bridge fires inside the settlement primitive, not alongside it at call sites.
+- The settlement's outcome carry — writing the aggregated or carried-verbatim outcome back to the parent — is atomic with closing the child execution context (`@blessed-invariant: exit-node-writeback`).
 
 
 ---
@@ -515,7 +547,7 @@ State transitions are claimant-guarded via the promote operation: the update set
 
 Row deletion has two shapes:
 
-- **Active-row deletion** (the abandon-on-acquire carve-outs): claimant-guarded — the delete predicate matches both the row id and the holding supervisor.
+- **Active-row deletion** (the verify-before-run ownership bail, performed inside the unified resolution engine under its ownership-bail source): claimant-guarded — the delete predicate matches both the row id and the holding supervisor.
 - **Non-active-row deletion** (retention sweep, asset Release path): absence-guarded — the row has a null holder-supervisor reference by construction, so no per-row claimant guard is meaningful. Serialized across replicas via the scheduler-tick advisory lock (for the retention sweep) or via the operator-driven asset-release endpoint (for the asset Release path).
 
 ## Purpose
@@ -528,7 +560,7 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag
 
 ## Invariants
 
-- Every active-row mutation (promote, heartbeat-extend, the carve-out delete paths on abandon) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
+- Every active-row mutation (promote, heartbeat-extend, the ownership-bail delete) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
 - Non-active-row deletion (retention sweep, asset Release path) is absence-guarded: the row has a null holder-supervisor reference by construction; the row-discovery query filter (committed-durable rows for Release; committed-or-abandoned rows for the retention sweep) substitutes for the per-row claimant check.
 - The holder-supervisor reference is set on active rows (per the first CHECK constraint), null on terminal rows (per the second CHECK constraint).
 - The node-run reference nulls on the parent's deletion (rather than cascading) so terminal handles survive their parent's deletion until either the retention sweep reaps them or (for durable-committed) the asset Release path fires.
@@ -654,7 +686,7 @@ Owns: the conflict-check comparison, the schema column, inertness discipline at 
 ## Invariants
 
 - Claim scope comparison is byte-equality. Empty byte streams never conflict.
-- Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics (spec §2.5). Rimsky relies on this; does not verify it.
+- Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics. Rimsky relies on this; does not verify it.
 - The standard filesystem producer is concrete-paths only (canonicalizes by requiring absolute paths so byte-equality holds).
 - Claim scope content is inert in rimsky (`@blessed-invariant 20`).
 
@@ -710,7 +742,7 @@ Claims carry three orthogonal extensions:
 
 ## Boundaries
 
-Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection — the dropped held-claim concept's content lives there), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
+Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
 
 ## Invariants
 
@@ -729,7 +761,7 @@ A `rimsky conformance <protocol>` subcommand family — one subcommand per proto
 
 - Executor conformance — exercises an executor against its execute RPC. Configurable transport (gRPC or HTTP+JSON), a require-stub-mode flag, scenario include/skip filters, and observability/lifecycle check flags. The registered scenarios (one each) cover the happy path, async handoff, cancel, heartbeats, terminal-is-last, stream-close-without-terminal, malformed userdata, attributes serialization, and unknown-ack-id.
 - Stub-mode probe — its own subcommand; protocol-agnostic. Issues one execute RPC carrying a stub-probe userdata flag and asserts the completion event carries the stub attributes-delta map shape. Spins up a callback receiver so async-handoff executors can complete the probe via the callback path.
-- Claim-producer conformance over gRPC — runs the standard battery: capabilities, non-empty envelope, first-open (a single open returns available plus a known realized-write-semantics in the advertised envelope), second-open (a second identical open), uniformity (byte-equal scope ⇒ identical realized write semantics — spec §2.5), plus the split-scope and scopes-conflict checks (or their skipped variants).
+- Claim-producer conformance over gRPC — runs the standard battery: capabilities, non-empty envelope, first-open (a single open returns available plus a known realized-write-semantics in the advertised envelope), second-open (a second identical open), uniformity (byte-equal scope ⇒ identical realized write semantics), plus the split-scope and scopes-conflict checks (or their skipped variants).
 - Blob-backend conformance via in-process construction — six checks (round-trip 1KB, round-trip 10MB, range read, delete-then-read-returns-not-found, idempotent delete, concurrent writes). The subcommand adapts each concrete backend (memory / filesystem / pg-largeobject) to the conformance library's reduced backend interface so the in-process suite stays protocols-purity-clean.
 - DataProcessing-mix-in conformance — capabilities plus per-materialization begin→commit plus list-versions / list-partitions / get-version-schema smoke tests plus concurrent-writes idempotency.
 - Publisher-protocol conformance — capabilities plus subscribe, list-subscriptions, idempotent-subscribe, message-push (in-process receiver), unsubscribe, and idempotent-unsubscribe.
@@ -828,23 +860,23 @@ Owns: the seven RPCs above, the producer-candidate-handle lifecycle on sub-claim
 
 ## Definition
 
-Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit. Identity is asymmetric:
+Delegation is an invocation pattern over `concept:child-execution`: a node carrying `delegate: <graph-name>` instead of `executor:` dispatches the named sub-graph as exactly one child execution — one child, the carry-verbatim aggregation policy, entry absorbed. The calling node IS the sub-graph's entry:
 
-- **The entry node is absorbed into the calling node.** At canonicalization, the calling node's persisted node row inherits the entry node's executor and the entry node's sub-graph-internal declarations (claims/holds/userdata) merged with what the calling node declared externally. The entry node does NOT get its own node row — it IS the calling node. Same row, same executor, same parent run. The calling node's run remains in the parent RunScope (per `concept:run-scope`). The sub-graph's other internal nodes (exit + any intermediates) run in a **sub-graph RunScope** whose parent run is the calling node's run, whose parent run-scope is the calling node's RunScope, and whose graph name is the delegate target.
-- **The exit node is NOT absorbed.** It has its own persisted node row (shared declaratively across invocations of this sub-graph in this instance) and runs inside the sub-graph RunScope. The carry-rule fires at exit's leaf-run terminal: the supervisor copies exit's writeback to the calling node's parent-run writeback in the same transaction, and atomically closes the sub-graph RunScope (stamping its closed-at timestamp).
+- **The entry node is absorbed into the calling node.** At canonicalization, the calling node's persisted node row inherits the entry node's executor and the entry node's sub-graph-internal declarations (claims/holds/userdata) merged with what the calling node declared externally. The entry node does NOT get its own node row — it IS the calling node. Same row, same executor, same parent run. The calling node's run remains in the parent execution context (per `concept:run-scope`); the sub-graph's other internal nodes (exit + any intermediates) run in the child execution context that the dispatch primitive allocates.
+- **The exit node is NOT absorbed.** It has its own persisted node row (shared declaratively across invocations of this sub-graph in this instance) and runs inside the child execution context. At exit's terminal, settlement carries exit's writeback verbatim to the calling node's parent-run writeback and closes the child context — the carry-verbatim shape of `concept:child-execution` settlement.
 
-So entry absorption is structural; exit carry-up is conceptual.
+So entry absorption is structural; exit carry-up is the carry-verbatim settlement policy.
 
 ## Boundaries
 
-Owns: the calling-node ↔ sub-graph relationship, entry absorption at canonicalization, the exit-node writeback carry-rule, the per-invocation run-tree shape, the `running → running` transition reason for a sub-graph-internal cascade firing (see `concept:transition-reason`). Does NOT own: sub-graph template-DSL (see `concept:sub-graph`), per-run state aggregation (see `concept:node-run`), cascade-boundary opacity (see `concept:cascade`). Adjacent: `concept:sub-graph`, `concept:node`, `concept:node-run`, `concept:cascade`.
+Owns: the `delegate:` template surface, entry absorption at canonicalization (the genuine asymmetry versus fan-out), and the `running → running` transition reason for a sub-graph-internal cascade firing (see `concept:transition-reason`). Does NOT own: the dispatch and settlement shape, context closure, or the carry's atomicity — those belong to `concept:child-execution`; sub-graph template-DSL (see `concept:sub-graph`); per-run state aggregation (see `concept:node-run`); cascade-boundary opacity (see `concept:cascade`). Adjacent: `concept:child-execution`, `concept:sub-graph`, `concept:node`, `concept:node-run`, `concept:cascade`.
 
 ## Invariants
 
 - A node has either `executor:` or `delegate:`, not both. Both → reject `node_executor_and_delegate`.
 - The delegate target MUST be a sub-graph (must have `entry:` + `exit:`) declared in the template's `graphs:` block. Missing graph or `main` target → reject.
 - Entry absorption is computed at canonicalization deterministically; the calling node's `executor:` field is overwritten with the entry's executor (and conflict-rejected if the calling node also declared `executor:` per the rule above).
-- The exit-writeback carry-rule is mandatory: at exit's terminal, the carry-rule runs in the same transaction that records exit's terminal. Per `@blessed-invariant 23`.
+- Delegation always dispatches exactly one child under the carry-verbatim policy; carry-verbatim's one-child requirement and the carry's atomicity with child-context closure are invariants of `concept:child-execution` (`@blessed-invariant: exit-node-writeback`).
 - Subscription edges from internal nodes referencing the entry alias resolve to the calling node per-invocation at the cascade walker level; this is what makes the absorption work across invocations.
 
 
@@ -914,9 +946,9 @@ Clients (CLI, MCP) check the top-level `dry_run` flag to render the response dis
 
 ## What it is
 
-The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `discard_claims_then_retry`. The runtime resolves the error class through the policy chain at terminal-error dispatch. Cap: every dispatch tracks a consecutive-retries-without-progress counter on the dispatch row; when it exceeds the effective cap (a per-node `max_retries_without_progress` setting or a deployment-level scheduler default), the runtime forces `Error { error_class: "retry_loop_no_progress" }`.
+The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `discard_claims_then_retry`. The runtime resolves the error class through the policy chain at terminal-error dispatch. Cap: every dispatch tracks a consecutive-retries-without-progress counter on the dispatch row; when it exceeds the effective cap (a per-node `max_retries_without_progress` setting or a supervisor-level default), the runtime forces `Error { error_class: "retry_loop_no_progress" }`.
 
-`error_types:` is the **single** decision surface for runtime error routing: every error variant arrives via `Error{error_class}` and is dispatched through the policy chain. The `acquire/*` class-name prefix is reserved for runtime acquisition failures (e.g. `acquire/unavailable` when a required claim handle cannot be opened); operators wanting retry-on-acquire declare it via `error_types: { "acquire/unavailable": { policy: [...] } }`. Without an explicit declaration the chain falls through to `give_up("unknown_error_class")` — fail-fast is the default; retry is opt-in.
+`error_types:` is the **single** decision surface for runtime error routing: every error variant arrives via `Error{error_class}` and is dispatched through the policy chain. The `acquire/*` class-name prefix is reserved for runtime acquisition failures (e.g. `acquire/unavailable` when a required claim handle cannot be opened, `acquire/producer_error` when a producer verb faults without naming a class); operators wanting retry-on-acquire declare it via `error_types: { "acquire/unavailable": { policy: [...] } }`. A producer may name a more specific class on an acquisition failure (declared in its capabilities vocabulary); the policy lookup for acquisition failures then falls back exact producer class → `acquire/*` family → unknown-class default, so a template declaring only the generic family still catches classified failures. Without any matching declaration the chain falls through to `give_up("unknown_error_class")` — fail-fast is the default; retry is opt-in.
 
 ## Three-name relationship
 
@@ -927,6 +959,8 @@ Three vocabulary surfaces describe the same mechanism — distinguish them by co
 - **Implementation** — the runtime policy-chain resolver, entered from the terminal-error dispatch.
 
 The four runtime actions are `pass`, `give_up`, `retry`, and `discard_claims_then_retry`. Names outside this 4-value vocabulary (for example `invalidate`, `discard_then_retry`, `resume_then_retry`) reject at template-validation time through the generic 4-value range-check applied to the `error_types:` block at registration.
+
+`error_types:` keys (the error-class strings themselves) are range-checked at registration against the union of the declared vocabularies a key may legitimately come from: the node's executor's declared error classes, the `acquire/*` synthetic family (plus the other runtime-synthesized classes), and the declared error classes of every claim producer reachable from the node's claims block (producers advertise their vocabulary in the capabilities handshake; declaring nothing remains legal). A key attributable to no declared vocabulary registers as an advisory warning, never a hard rejection — the validator must accept whatever the runtime is able to route, and undeclared peer vocabularies must not lock operators out of their own routing.
 
 ## Purpose
 
@@ -946,11 +980,11 @@ Adjacent: `signal` (settling_signal_type changes reset the retry counter), `fram
 ## Invariants
 
 - The `consecutive_retries_no_progress` counter resets on any `settling_signal_type` change between consecutive retries (the retry-cap gate compares the most recent two terminals' canonical signal type-paths; identical signals across N retries trigger the cap).
-- Per-node `max_retries_without_progress = 0` disables the cap; `nil` falls back to deployment default (100); `N > 0` uses N.
+- Per-node `max_retries_without_progress = 0` disables the cap; `nil` falls back to the supervisor default (100); `N > 0` uses N.
 - `discard_claims_then_retry` releases held claim handles (fires the producer's abandon verb on each store) before retry; the regular `retry` preserves them by default.
 - `pass` settles the run with a fresh color and advances the policy chain's action index so a subsequent same-class error in the same dispatch does not `pass` again.
 - `give_up` settles the run with a failed color.
-- `acquire/<reason>` is a reserved class-name prefix for runtime acquisition failures; operators may declare `error_types:` keys under this prefix. Absent a declared entry, acquisition failure routes through node evaluation with no matching policy → `give_up("unknown_error_class")` (fail-fast; retry is opt-in).
+- `acquire/<reason>` is a reserved class-name prefix for runtime acquisition failures; operators may declare `error_types:` keys under this prefix. The acquisition-failure policy lookup resolves in fallback order: the exact producer-declared class first (when the producer named one on the failure), then the `acquire/*` synthetic family class for that failure kind (`acquire/unavailable` for unavailable claims, `acquire/producer_error` for unclassified producer faults), then the unknown-class default — `give_up("unknown_error_class")` (fail-fast; retry is opt-in). An exact-class entry always wins over the family entry. The fallback affects policy lookup only; the emitted signal carries the most specific class.
 - A terminal-verdict metric tagged with `error_class="retry_loop_no_progress"` increments when the cap forces a failure.
 
 
@@ -975,7 +1009,7 @@ Owns: the audit-log schema, the CRUD path, the read pattern feeding `cascade-gra
 - The `kind` value is typed at rimsky's app boundary: operational kinds via the proto-declared `OperationalKind` enum (see `decision:event-log-kind-enum`); signal-class kinds via the parsed signal type-path. The persistence column stays `TEXT` for marshaling flexibility — no `CHECK` constraint, because the enum at the app boundary IS the gate (unknown strings at the unmarshal boundary are defensive errors, not control-flow inputs).
 - The `payload` is rimsky's own JSON — readable by rimsky for the dashboard and audit consumers. NOT bound by `@blessed-invariant 21` (which governs the named-event ledger).
 - Audit rows are reaped under the shared trailing trace-retention window (the same per-instance window that bounds frames and node_runs), in addition to cascade-removal on instance delete; within the window the log is append-only.
-- **Writes are never *silently* dropped; under a healthy backing store they are durable.** The log is the canonical forensic record. The per-request auth-audit write (`auth.access_attempted`) is **synchronous in the request path** — written inline after the handler returns (so `response_status` and `duration_ms` are known) and before the gate returns, not through a best-effort queue that drops under load. Under a healthy store every intended row is persisted before the request completes. The honest limit of the current implementation: the synchronous write is bounded by a short deadline, and a write that fails or exceeds it is **surfaced (logged at error), not retried or buffered** — so a backing-store outage or stall can lose that row (with an operator-visible error, never a silent discard), and a degraded store spends request-path latency rather than dropping. So the guarantee is *never silently dropped* and *durable under normal operation* — not *always persisted under all conditions*. Operational event rows (node transitions, lock/work events) are written synchronously inside the supervisor's transactions, so they are durable as part of the mutation that produced them.
+- **Writes are never *silently* dropped; under a healthy backing store they are durable.** The log is the canonical forensic record. The per-request auth-audit write (`auth.access_attempted`) is **synchronous in the request path** — written inline after the handler returns (so `response_status` and `duration_ms` are known) and before the gate returns, not through a best-effort queue that drops under load. Under a healthy store every intended row is persisted before the request completes. The honest limit: the synchronous write is bounded by a short deadline, and a write that fails or exceeds it is **surfaced (logged at error), not retried or buffered** — so a backing-store outage or stall can lose that row (with an operator-visible error, never a silent discard), and a degraded store spends request-path latency rather than dropping. So the guarantee is *never silently dropped* and *durable under normal operation* — not *always persisted under all conditions*. Operational event rows (node transitions, lock/work events) are written synchronously inside the supervisor's transactions, so they are durable as part of the mutation that produced them.
 
 ## Auth event kinds
 
@@ -1021,13 +1055,13 @@ The bundled SQL-based reference store registers this protocol alongside `concept
 
 ## Definition
 
-Fan-out is a node-level decision to partition a held claim into sub-claims and dispatch one work unit per sub-claim. Always tied to claim partitioning: the node holds a parent claim, the producer's partition-split operation takes the parent claim handle plus the partition request and returns N sub-scope descriptors, rimsky opens N sub-claim handles (in the parent-acquisition transaction), and dispatches one child leaf run per sub-claim. Each child runs in its own fan-out partition RunScope (per `concept:run-scope`), with parent-run id = the fan-out parent's run, parent-run-scope id = the fan-out parent's RunScope, and a per-child partition key.
+Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition, with an author-specified aggregation policy. The node holds a parent claim, the producer's partition-split operation takes the parent claim handle plus the partition request and returns N sub-scope descriptors, rimsky opens N sub-claim handles (in the parent-acquisition transaction, per `concept:claim-tree`), and hands the already-acquired sub-claims to the dispatch primitive — one child per partition, each keyed by its partition key, each carrying its sub-claim handle. Settlement aggregates the children's outcomes under the author's policy and settles the parent, per `concept:child-execution`.
 
 Declared in templates via `fan_out: { claim, partition_request, parallelism?, error_policy }` on the node spec.
 
 ## Boundaries
 
-Owns: the per-node fan-out declaration, the partition-split mechanics at parent-acquisition, child leaf-run dispatch keyed by partition key, the per-child producer-candidate handle for data-processing-capable producers (see `concept:data-processing`), the split-driven RunScope creation at parent acquisition. Does NOT own: state aggregation (see `concept:node-run` state-aggregation table), the `error_policy` semantics (see `concept:node-run`, error-policy alternatives `strict | threshold | best_effort | first`), claim conflict (see `concept:claim`, `concept:claim-handle`), RunScope semantics in general (see `concept:run-scope`). Adjacent: `concept:claim`, `concept:claim-handle`, `concept:data-processing`, `concept:node-run`, `concept:backfill`, `concept:run-scope`.
+Owns: the `fan_out:` template surface, partition cardinality (N is producer-decided via the split), the partition-split mechanics at parent-acquisition, the per-partition sub-claim asymmetry (the genuine asymmetry versus delegation), and the per-child producer-candidate handle for data-processing-capable producers (see `concept:data-processing`). Does NOT own: the dispatch and settlement shape, child-context closure, or the parent-settlement cascade — those belong to `concept:child-execution`; state aggregation (see `concept:node-run` state-aggregation table); the `error_policy` semantics (see `concept:node-run`, error-policy alternatives `strict | threshold | best_effort | first`); claim conflict (see `concept:claim`, `concept:claim-handle`); execution-context semantics in general (see `concept:run-scope`). Adjacent: `concept:child-execution`, `concept:claim`, `concept:claim-handle`, `concept:claim-tree`, `concept:data-processing`, `concept:node-run`, `concept:backfill`, `concept:run-scope`.
 
 ## Invariants
 
@@ -1036,7 +1070,7 @@ Owns: the per-node fan-out declaration, the partition-split mechanics at parent-
 - The `partition_request` field is opaque to rimsky's split logic — rimsky does not parse its meaning — but it is **resolved through substitution at acquisition**, not passed verbatim. Before the partition-split operation runs, fan-out acquisition runs the node's `partition_request` through the substitution engine with the triggering message's payload in scope, then hands the substituted bytes to the split. This is what lets the same node accept normal invocations and backfill messages uniformly: the field is typically authored as a substitution directive (`{{trigger.message.payload.partition_request_override | <template-default>}}`) that binds the triggering message's override when one is present and falls back to the template default otherwise. The fallback grammar is `<directive> | <literal>` (the literal being `null` / `true` / `false` / a number / a quoted string) — there is no `default:` keyword.
 - Sub-claim atomicity per `@blessed-invariant 10`: the rimsky-side acquisition transaction inserts the parent claim-handle row AND all sub-claim handle rows AND records all producer-returned addresses, or none of these.
 - For data-processing-capable producers, the candidate-begin step fires at sub-claim acquisition (in the same transaction); the producer-candidate handle persists on the sub-claim row and threads into the leaf executor's dispatched request.
-- Each child runs in its own fan-out partition RunScope (per `concept:run-scope`): `parent_run_id = fan-out parent's run id`, `parent_run_scope_id = fan-out parent's RunScope id`, `partition_key = <partition_key>`. The child's leaf run lives in this RunScope.
+- Sub-claim acquisition happens upstream of dispatch: the dispatch primitive receives already-acquired sub-claims and never calls the producer's split (per `concept:child-execution`).
 
 
 ---
@@ -1235,7 +1269,7 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 - An instance is terminal exactly when its terminal timestamp is set. The force-terminate control action is the production mechanism that sets it, abandoning any in-flight node-runs (transitioning them to failed) and closing the instance's main `concept:run-scope` in the same teardown, so a terminated instance never retains an open main run-scope. Terminal is not removal: the instance key is freed for reuse only by the subsequent row delete, which is permitted only once the instance is terminal.
 - An instance is durable by default: it self-terminates only when created with `terminate_after_run = true`, and then only after its next frame ends (strict 'run at most once more' semantics). The default (`terminate_after_run = false`) never self-terminates.
 - Termination is independent of `concept:sensor` / `concept:publisher-subscription` and of node presence — the termination decision reads nothing about subscriptions or nodes.
-- Instantiation is the mandatory static-config validation gate: `POST /instances` validates each node's statically-knowable attribute config (value constraints included) against every referenced service's schema and rejects create on any static misconfiguration. All referenced services exist at instantiation (the bound-on-demand host-agent proxy is itself a present service), so whatever a relaxed registration mode skipped is enforced here. Substitution-sourced values, knowable only once a node acquires its inputs, stay validated at dispatch (`@blessed-invariant 12`, validate-twice — that pass becomes defense-in-depth for the static part).
+- Instantiation is the mandatory static-config validation gate: `POST /instances` validates each node's statically-knowable attribute config (value constraints included) against every referenced service's schema and rejects create on any static misconfiguration. All referenced services exist at instantiation (the bound-on-demand host-agent proxy is itself a present service), so whatever a relaxed registration mode skipped is enforced here. Substitution-sourced values, knowable only once a node acquires its inputs, stay validated at dispatch (`@blessed-invariant 12`, validate-twice — that pass serves as defense-in-depth for the static part).
 
 
 ---
@@ -1277,7 +1311,7 @@ Some peers need to react to control-plane state transitions — the archetype th
 
 The protocol relays the **control-plane / instance lifecycle** — template register / deploy / undeploy / deregister, instance created / terminated, and run-scope terminal — and deliberately does NOT carry node-cascade events (individual node-run transitions such as a node parking). Node-cascade transitions live in `concept:signal` / `concept:event-log`; their omission here is an intentional boundary, not an arbitrary subset of the lifecycle. A subscriber that needs to observe node-level state changes consumes those concepts, not this protocol.
 
-Owns: the seven event types, the synchronous fan-out timing, the opt-in subscription mechanism, the idempotency table. Does NOT own: the underlying state transitions (those happen in `concept:control-api` for template/instance events and in the `concept:supervisor` for run-scope-terminal events), the producer-side reaction (lives in the subscriber). The supervisor process is now also a lifecycle-event firer (in addition to control-api): it maintains its own subscriber registry and fires the run-scope-terminal event synchronously when it closes a run scope. Adjacent: `claim-producer`, `template`, `instance`, `control-api`, `supervisor`, `host-agent-proxy`, `signal`, `event-log`.
+Owns: the seven event types, the synchronous fan-out timing, the opt-in subscription mechanism, the idempotency table. Does NOT own: the underlying state transitions (those happen in `concept:control-api` for template/instance events and in the `concept:supervisor` for run-scope-terminal events), the producer-side reaction (lives in the subscriber). Lifecycle events fire from two firers: the supervisor and control-api. The supervisor maintains its own subscriber registry and fires the run-scope-terminal event synchronously when it closes a run scope. Adjacent: `claim-producer`, `template`, `instance`, `control-api`, `supervisor`, `host-agent-proxy`, `signal`, `event-log`.
 
 ## Invariants
 
@@ -1296,7 +1330,7 @@ Owns: the seven event types, the synchronous fan-out timing, the opt-in subscrip
 An append-only record in the lineage projection (see `concept:lineage`). Two kinds:
 
 - **`leaf_run`** — one per leaf-run terminal. Captures the computational unit: run_id, node alias, child_key, parent_run_id, frame trigger metadata, substitution refs, held claims, executor + template metadata, terminal kind and last_outcome.
-- **`claim_terminal`** — one per claim-handle terminal (commit, natural abandon, force-cancelled abandon). Captures the data-promotion unit: claim_handle_id, version_id (when data-processing-capable), producer name, claim_scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. The projection covers every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled abandon flows alongside commits.
+- **`claim_terminal`** — one per claim-handle terminal (commit, natural abandon, force-cancelled abandon). Captures the data-promotion unit: claim_handle_id, version_id (when the producer stamps one — on the base Commit response or via the data-processing commit-candidate path), producer name, claim_scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. The projection covers every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled abandon flows alongside commits.
 
 ## Boundaries
 
@@ -1603,9 +1637,9 @@ This concept describes the **receiver-side** template-DSL subscription declared 
 
 ## What it is
 
-A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload. Sender-side filters (`node:` selects a specific upstream node-type, `instance: true` is cross-cutting) and the frame modifier (`frame: in | next`) carry forward unchanged. Subscriptions are declared per node under `subscribes:` in the template DSL.
+A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload. Sender-side filters (`node:` selects a specific upstream node-type, `instance: true` is cross-cutting) and the frame modifier (`frame: in | next`) apply. Subscriptions are declared per node under `subscribes:` in the template DSL.
 
-The auto-subscribe rule from substitution refs in a node's attribute schema (`{{nodes.X.attribute.Y}}` or `{{nodes.X.event.Y}}`) carries forward — no orphan reads. The implicit subscriptions become `type: attribute/Y/changed` (or `type: attribute/*` for the bare `{{nodes.X.attribute}}` whole-pull form) and `type: event/Y` respectively.
+The auto-subscribe rule from substitution refs in a node's attribute schema (`{{nodes.X.attribute.Y}}` or `{{nodes.X.event.Y}}`) applies — no orphan reads. The implicit subscriptions become `type: attribute/Y/changed` (or `type: attribute/*` for the bare `{{nodes.X.attribute}}` whole-pull form) and `type: event/Y` respectively.
 
 ## Purpose
 
@@ -1615,7 +1649,7 @@ Decouple reactive coupling from compound `dependencies:` declarations. Read acce
 - Cascade coupling lives in subscriptions (explicit + implicit).
 - Eligibility gating lives in `concept:wait-set`.
 
-This retires the overloaded `dependencies:` bundle and the send-side `invalidate.targets` slot on lifecycle handlers + error-policy actions; cascade flow is impactee-declared.
+Cascade flow is impactee-declared.
 
 ## Boundaries
 
@@ -1635,7 +1669,7 @@ Does NOT own:
 - Subscription `type:` and `when:` are validated at registration against the canonical taxonomy (`concept:signal`) and the resolved payload schema.
 - Substitution refs auto-subscribe — no orphan reads.
 - The `frame:` modifier defaults to `in` for per-node subscriptions and `next` for cross-cutting (`instance: true`).
-- **Self-subscription is first-class in both `frame: in` and `frame: next` shapes** — the "drain my own queue" idiom has two equally-valid spellings. `frame: next` opens a fresh frame for the same node-instance on every matching commit (one frame per queue item, clean `frame.start` / `frame.end` markers per iteration). `frame: in` keeps iteration inside the current frame (one long-running frame, supervisor picks up each new pending run as it lands). The cascade walker's insert-then-drain-in-same-tx pattern makes `frame: in` safe: the new pending self-run's wait-set blocker (keyed on the just-committed run) is drained at the end of the terminal-complete handler in the same transaction, before the supervisor sees it. The cascade stale-mark does not touch the per-instance node row's `state` — it only inserts a new run row and re-stamps `frame_id` — so the just-committed `state=fresh` survives intact. Both shapes are the receiver-side replacement for the retired send-side `on_executor_complete: { invalidate: { targets: [self] } }` pattern; the canonical form is `{ node: <self-type>, type: terminal/success, when: payload.changed, frame: <in|next> }`.
+- **Self-subscription is first-class in both `frame: in` and `frame: next` shapes** — the "drain my own queue" idiom has two equally-valid spellings. `frame: next` opens a fresh frame for the same node-instance on every matching commit (one frame per queue item, clean `frame.start` / `frame.end` markers per iteration). `frame: in` keeps iteration inside the current frame (one long-running frame, supervisor picks up each new pending run as it lands). The cascade walker's insert-then-drain-in-same-tx pattern makes `frame: in` safe: the new pending self-run's wait-set blocker (keyed on the just-committed run) is drained at the end of the terminal-complete handler in the same transaction, before the supervisor sees it. The cascade stale-mark does not touch the per-instance node row's `state` — it only inserts a new run row and re-stamps `frame_id` — so the just-committed `state=fresh` survives intact. The canonical form is `{ node: <self-type>, type: terminal/success, when: payload.changed, frame: <in|next> }`.
 
 
 ---
@@ -1768,7 +1802,7 @@ The grant comprises four pieces: the grant-entry types and their parser, the wil
 
 ## Purpose
 
-The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode`, `scope` today; e.g. `rate_limit` later) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
+The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope` today) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
 
 ## Boundaries
 
@@ -1792,7 +1826,7 @@ A `scope` selector restricts the entry to requests whose target resource satisfi
 
 ## Invariants
 
-- **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule (it was only ever meaningful for resolving a per-entry mode).
+- **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule.
 - **Scoped entries are least-privilege.** A `scope`-bearing entry allows ONLY requests whose target resource satisfies the selector; an out-of-scope request of the same action is denied (403) unless another entry independently allows it.
 - **Grant mode is a floor.** The matched entry's `mode` (default `execute`) is the most permissive mode the request may run at; the dry-run flag may restrict further but never escalate (see `concept:dry-run`).
 - **Forward-compatible parser.** Unknown JSON fields on grant entries are preserved (round-tripped through marshal) so future fields aren't lost.
@@ -1811,9 +1845,9 @@ The per-row-type accessor umbrella is the bundle returned by the database interf
 
 Each row kind has its own singular per-row accessor sub-interface — one per persisted ledger (templates and their tags, instances, lifecycle-idempotency rows, nodes, claim-handles, node attributes, claim-holders, events, schedules, supervisor rows, frames, blob-orphans, node-events). The accessor-bag methods that hand these back stay plural; the singular-accessor-vs-plural-bag split mirrors Go-stdlib convention for one-row-of-many APIs.
 
-Two impls: a Postgres adapter (production) and an SQLite adapter (dev). Alongside the per-row accessors, the umbrella exposes an advisory locker and a queue facility; a single shared migration runner keeps migrations from forking across adapters.
+Two impls: a Postgres adapter (the default outside the all-in-one deployment) and an SQLite adapter (the all-in-one default; safe for processes sharing one local database file). Alongside the per-row accessors, the umbrella exposes an advisory locker and a queue facility; a single shared migration runner keeps migrations from forking across adapters.
 
-The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface and stays as-is. "Driver" is correctly used there to name the adapter shape.
+The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface. "Driver" names the adapter shape.
 
 Row-struct convention: row structs stay singular even though the persisted tables are plural — the node, frame, claim-handle, and node-run row structs map to the corresponding pluralized node, frame, claim-handle, and node-run ledgers.
 
@@ -1827,7 +1861,7 @@ Owns: the top-level database container interface, the per-row-type accessor umbr
 
 ## Invariants
 
-- SQLite is dev-only — multi-host requires Postgres. Documented but NOT gate-rejected.
+- The SQLite driver is safe for multiple rimsky processes sharing one local database file: its read-then-write operations are transactional (immediate-mode transactions hold the writer slot), so cross-process atomicity holds. Separate database files per process and network filesystems are unsupported and undetectable from inside a process. There is no startup gate — the platform defaults to Postgres outside the all-in-one deployment, and an operator overriding to SQLite is presumed to have chosen deliberately.
 - The memory blob backend IS gate-rejected outside the unified single-process role.
 - The raw-Postgres-driver isolation rule restricts direct driver use to the Postgres adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.
@@ -1849,11 +1883,11 @@ Named `publisher-subscription` rather than `subscription` because `concept:node-
 
 ## Purpose
 
-To express "publisher X is committed to publish messages for instance Y on kind Z." The row is the source of truth for which publishers should be active at any time; rimsky reconciles publisher-side state against this row set at supervisor startup via a resync pass.
+To express "publisher X is committed to publish messages for instance Y on kind Z." The row set is desired state: it is the source of truth for which publishers should be active at any time, and rimsky reconciles publisher-side state against it — a reconciliation worker continuously drives unmounted rows toward active, and a startup resync pass re-drives rows the publisher dropped. The instance surface exposes per-subscription state so an operator can observe mounting progress instead of inferring it from instance creation succeeding.
 
 ## Boundaries
 
-Owns: the persisted publisher-subscription row, the (publisher_name, id) primary key, the lifecycle state field (`active` | `failed` | `stopped`), the inline routing fields (`target_node`, `message_kind`), and the resolved-config blob.
+Owns: the persisted publisher-subscription row, the (publisher_name, id) primary key, the lifecycle state field (`mounting` | `active` | `failed` | `stopped`), the failure-reason field carried by failed rows, the inline routing fields (`target_node`, `message_kind`), and the resolved-config blob.
 
 Does NOT own: the publisher's substrate state, the messages emitted (those are `concept:message`), or the publisher-side persistence of subscription state (each publisher owns its own state schema; see `concept:sensor`).
 
@@ -1864,8 +1898,8 @@ Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of pub
 - Primary key is `(publisher_name, id)` — operators can scan one publisher's subscriptions efficiently.
 - `target_node` is `NOT NULL`. Publishers without a target_node fail at template registration.
 - `message_kind` defaults to `"invalidate"` when the publisher-spec omits it.
-- `state` is one of `active`, `failed`, `stopped`. Transitions: `active → failed` on Subscribe RPC failure (operator-recoverable via resync); `active → stopped` on Unsubscribe success; `failed → active` on resync re-Subscribe.
-- The publisher capability check on the message-emit endpoint validates `(id, instance_id, state='active')` — three-way match. Cross-instance subscription IDs are rejected with 403.
+- `state` is one of `mounting`, `active`, `failed`, `stopped`. Rows are created in `mounting` — instance creation never performs (or blocks on, or fails because of) the publisher Subscribe handshake. A reconciliation worker drives the Subscribe handshake for mounting rows with backoff and no attempt cap, flipping the row to `active` on success; `failed` is reserved for non-retryable errors (a publisher name not present in the registry, a config blob that fails resolution) and carries a reason; `stopped` on unsubscribe. Startup resync re-drives `mounting` rows; it also recovers a `failed` row whose failure was an unregistered publisher name once that name is registered, flipping it back to `mounting` — other `failed` classes stay failed.
+- The publisher capability check on the message-emit endpoint validates `(id, instance_id, state)` — three-way match, accepting `active` and `mounting` (a fast publisher can emit its first message before the reconciler records the flip to active; rejecting it would drop a legitimate observation). `failed` and `stopped` rows are rejected. Cross-instance subscription IDs are rejected with 403.
 - @blessed-invariant: rimsky-side subscription rows are inert with respect to the publisher's substrate. The row exists; the publisher's internal state is the publisher's concern.
 
 
@@ -1878,6 +1912,8 @@ Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of pub
 A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the generic operator message-emit endpoint with `sender_kind: "publisher"` and a `publisher_subscription_id` capability token.
 
 Publishers are peer-services in the same trust perimeter as executors and claim-producers: out-of-process, gRPC-addressed at startup via the publishers block of the unified config (see `concept:rimsky-yml`), and exclusively responsible for their own state and HA posture.
+
+A publisher service is a provider of broadcasters: one service process serves many instances, and each subscription provisions a logical, per-instance broadcaster within it, parameterized by the instance's resolved config — the per-instance analogue of how an executor provides per-node-run execution.
 
 ## Purpose
 
@@ -1896,7 +1932,7 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 - Publishers are advertised under the top-level publishers block of the unified config (see `concept:rimsky-yml`). Their declared protocol list must include `"publisher"`.
 - The subscribe verb carries inline routing fields (`target_node`, `message_kind`); there is no `on_change` substruct. The publisher persists these fields and copies them onto each emitted message envelope.
 - Emit-time messages set `sender_kind: "publisher"` and `publisher_subscription_id`. Rimsky derives `sender` from the publisher-subscription row's `publisher_name`; the request's `sender` is ignored for trust.
-- Rimsky retries the subscribe verb up to 3 times with exponential backoff (200ms → ~560ms → ~1.6s, ±25% jitter) before flipping the publisher-subscription row to `state='failed'`.
+- A reconciliation worker drives the subscribe verb for `mounting` subscriptions with backoff and no attempt cap; the `failed` state is reserved for non-retryable errors (per `concept:publisher-subscription`).
 - Replicas are not coordinated by rimsky. Single-replica is the v1 contract per `concept:replica`.
 - @blessed-invariant: messages are inert in rimsky. Payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.
 
@@ -1908,6 +1944,8 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 ## Definition
 
 A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer. Replicas are a deployment-tier concern; rimsky's runtime does not model replicas as a first-class concept. When operators scale a binary horizontally, rimsky-level behavior at scale=N is the union of N independent processes; replica-aware coordination (mutex per work-item, leader election, sticky routing) is not a service rimsky provides.
+
+The all-in-one deployment runs all three roles (scheduler, supervisor, control-api) in a single process — one replica of one process serving every role surface. Per-role replicas are the split deployment's shape, where each role runs as its own process and scales independently.
 
 ## Purpose
 
@@ -1970,7 +2008,7 @@ Owns: the file shape, validations at startup (write-semantics-allowed subset, bl
 
 Thin HTTP+JSON client over the control-api. The CLI entrypoint is small; a client-builder layer assembles requests and the control-api serves them. Every CLI verb is one or more HTTP calls. Verb groups: `template`, `tag`, `instance`, `node`, `admin`, `messages`, `backfill`, `asset`, `lineage`, `parked`, `compose`, `dev`, `ctx`, `auth` (with verbs `init | login | create-key | list | show | revoke | rotate | status`), and `agent` (with verbs `start | status | stop`). The `agent` group is not a thin HTTP client — the same `rimsky` binary doubles as the `concept:host-agent` daemon when invoked as `rimsky agent start`.
 
-The binary name is `rimsky`; no alias shim or compat symlink is shipped.
+The binary name is `rimsky`.
 
 ## Purpose
 
@@ -1988,7 +2026,7 @@ Owns: command-line UX, request building, the `compose:` prefix reservation disci
 - **API key resolution**: every verb takes `--key=<token>` and falls back to an API-key environment variable. `auth status` and `auth init` tolerate a missing key (anonymous-mode bootstrap path); other verbs send the key as a Bearer token and surface 401 when missing.
 - **`auth init` is special.** It posts a key-creation request without a Bearer token (anonymous-mode bootstrap) and refuses to run when any active key exists — the server's anonymous-mode predicate is the authoritative gate; the CLI's pre-check is a UX nicety.
 - **`rimsky run` template + param + service flags.** A template is supplied by either a positional `<file>` argument or `--template <name>` (mutually exclusive). Params are supplied by `--params <json>` and/or repeatable `--param k=v` (mixable, later-wins). `--service <name>=<path>` binds a late-bound service.
-- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated by `auth login` and consumed by the `concept:host-agent` for outbound authentication. Existing context configs without the field continue to load.
+- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated by `auth login` and consumed by the `concept:host-agent` for outbound authentication. The api-key field is optional on a context config.
 
 ## Subcommand groups
 
@@ -2353,19 +2391,16 @@ Owns: the spec bytes, the canonical hash, the lifecycle states, the registration
 
 ## What it is
 
-The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions: (1) what canonical signal type-path to emit (and therefore what resolution color to stamp on the run row, which carries the last-outcome projection through Pass 5), (2) what to do with the node-run row (delete vs retry-enqueue), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the persisted claim-handle rows claimant-guarded. Four stages stitched across the runtime. The same four-stage spine handles the executor error outcome and runtime acquisition failure uniformly — acquisition-failure routes through the operator's `error_types:` chain via synthetic-class `acquire/*` (see `concept:error-policy`).
+The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions: (1) what canonical signal type-path to emit (and therefore what resolution color to stamp on the run row, which carries the last-outcome projection through Pass 5), (2) what to do with the node-run row (delete vs retry-enqueue), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the persisted claim-handle rows claimant-guarded. Four stages stitched across the runtime. The same four-stage spine handles the executor error outcome and runtime acquisition failure uniformly — acquisition-failure routes through the operator's `error_types:` chain via the producer-declared class else the synthetic acquisition class (see `concept:error-policy`).
 
 > **Vocabulary note.** "Terminal" is not a wire-protocol term. The wire layer carries a single stream-close event with one of four outcome variants (success, error, park, await-async-callback); the executor closes the stream immediately after that event. The word "terminal" is reserved for two narrower senses: (a) the state-machine sense — `concept:node-run` terminal states (`fresh`, `failed`) and the unified claim-handle resolution decision-engine entry point; and (b) this concept's name as the convergence-spine umbrella. The internal terminal-kind classification is a supervisor-internal categorization, not a wire shape.
 
 1. **Wire to internal terminal kind** — the executor-stream reader maps each stream-close outcome variant to an internal terminal-event of kind `Complete | Errored | Park | Infra`. Named events emitted before stream-close accumulate onto the terminal event and persist before the verdict is applied.
-2. **Dispatch on terminal kind** — the terminal-application step routes the four kinds (`Complete`, `Errored`, `Infra`, `Park`) to their per-kind handlers and increments a per-class terminal-verdict counter. Acquisition failure (pre-dispatch) routes through the acquire-unavailable handler into the same Stage-3 entry point via synthetic class `acquire/unavailable`.
-3. **Resolution** — produces the canonical `(signal, dispatch_disposition, color)` resolution tuple per `concept:error-policy`. Runs the operator's `error_types:` chain when the terminal kind is `Errored` or when the synthetic `acquire/*` class is in play. For `Complete` / `Park` / await-async-callback / `Infra` the resolution is fixed by the terminal kind — no operator-configurable policy chain.
-4. **Claim-handle resolution** — the lock-release step walks the dispatch's acquired locks. A named-lock acquisition → claimant-guarded handle delete only. A non-held claim → the unified claim-handle resolution directly, with an active-terminal source. A held claim → mark the persisted claim-holder row + check-and-fire; if the holding subgraph is complete, that engine computes the aggregate outcome (any failed → Abandon; else Commit) and calls the unified claim-handle resolution with a held-terminal source. The unified claim-handle resolution fires the producer verb and deletes the persisted claim-handle row claimant-guarded — the single audited site for both call paths.
+2. **Dispatch on terminal kind** — the terminal-application step routes the four kinds (`Complete`, `Errored`, `Infra`, `Park`) to their per-kind handlers and increments a per-class terminal-verdict counter. Acquisition failure (pre-dispatch) routes through the acquire-unavailable handler into the same Stage-3 entry point via the producer-declared class else the synthetic acquisition class.
+3. **Resolution** — produces the canonical `(signal, dispatch_disposition, color)` resolution tuple per `concept:error-policy`. Runs the operator's `error_types:` chain when the terminal kind is `Errored` or when an acquisition-failure class (the producer-declared class else the synthetic acquisition class) is in play. For `Complete` / `Park` / await-async-callback / `Infra` the resolution is fixed by the terminal kind — no operator-configurable policy chain.
+4. **Claim-handle resolution** — the lock-release step walks the dispatch's acquired locks. A named-lock acquisition → claimant-guarded handle delete only. A non-held claim → the unified claim-handle resolution directly, with an active-terminal source. A held claim → mark the persisted claim-holder row + check-and-fire; if the holding subgraph is complete, that engine computes the aggregate outcome (any failed → Abandon; else Commit) and calls the unified claim-handle resolution with a held-terminal source. The verify-before-run bail (the supervisor discovers post-commit that another supervisor stole the dispatch and unwinds the acquisition it just opened) also calls the unified claim-handle resolution, with an ownership-bail source — under that source the engine fires Abandon and deletes the handle row claimant-guarded, emitting no signal (admin path). The unified claim-handle resolution fires the producer verb and resolves the persisted claim-handle row claimant-guarded — the single audited verb-then-delete site for all three sources.
 
-Two upstream siblings sit outside the unified engine but share the same abandon-opened-claim helper:
-
-- The acquire-unavailable handler runs *before* dispatch when the acquisition attempt returns the unavailable sentinel. It Abandons already-Open'd partial claims via the helper and routes through the error path with synthetic class `acquire/unavailable` for state-machine + queue mutation. The carve-out exists because the acquisition tx has already rolled back — the persisted claim-handle rows are gone, so there is no claimant-guarded delete to fold into the unified engine.
-- The verify-before-run bail path runs *after* the acquisition tx committed but before the executor was dispatched. Its per-claim Abandon (via the helper) is followed by a claimant-guarded handle delete owned by the caller, outside the unified engine's verb-then-delete tx sequence.
+One carve-out sits outside the unified engine but shares the same abandon-opened-claim helper: the acquire-unavailable handler. It runs *before* dispatch, when the acquisition attempt returns the unavailable sentinel. It Abandons already-Open'd partial claims via the helper and routes through the error path with the producer-declared class else the synthetic acquisition class for state-machine + queue mutation. The carve-out exists because the acquisition tx has already rolled back — the persisted claim-handle rows are gone, so there is no claimant-guarded delete to fold into the unified engine, and folding it anyway would force the engine to grow a no-rows mode that dilutes its single audited verb-then-delete promise.
 
 ### Terminal kind → emitted signal → producer verb
 
@@ -2376,8 +2411,8 @@ Two upstream siblings sit outside the unified engine but share the same abandon-
 | `Infra` | `terminal/infra/<reason>` | `Abandon` | mark failed + check |
 | `Park` | `terminal/park/snooze` or `terminal/park/await_callback` | none — claims retained | none — claims retained |
 | await-async-callback (transient) | `transient/await_async` | none — no settling verb on first pass | none — callback's eventual terminal drives verb emission |
-| Acquisition failure (pre-dispatch) | `terminal/error/acquire/unavailable` | `Abandon` partial-acquired (via helper) | n/a |
-| Verify-before-run race (orphaned-claim bail) | (no signal — admin path) | `Abandon` (via helper) | n/a |
+| Acquisition failure (pre-dispatch) | `terminal/error/<producer-declared class, else the synthetic acquisition class>` | `Abandon` partial-acquired (via helper — the single carve-out outside the unified engine) | n/a |
+| Verify-before-run race (orphaned-claim bail) | (no signal — admin path) | `Abandon` (via the unified engine, ownership-bail source: verb then claimant-guarded delete) | n/a |
 
 ## Purpose
 
@@ -2391,7 +2426,8 @@ Owns: the four-stage flow as one coherent narrative, the kind→signal-type-path
 
 - Exactly one stream-close event closes the executor stream (carried on the executor protocol's execute method); the executor MUST close the stream immediately after.
 - Every kind except `Park` and await-async-callback flows through the terminal-application step and ends in the lock-release step for the dispatch's acquired locks.
-- The unified claim-handle resolution is the single audited site that fires the producer `Commit` / `Abandon` verb *and* deletes the persisted claim-handle row claimant-guarded (`@blessed-invariant 4`). Both the active-terminal and held-terminal paths converge here.
+- The unified claim-handle resolution is the single audited site that fires the producer `Commit` / `Abandon` verb *and* resolves the persisted claim-handle row claimant-guarded (`@blessed-invariant 4`). Its source kinds are active-terminal, held-terminal, and ownership-bail — all three converge here. The ownership-bail source deletes the row (the acquisition is unwound, not resolved) and emits no signal; the verb always fires before the row transition.
+- The acquire-unavailable handler is the single carve-out outside the unified claim-handle resolution: its acquisition transaction has already rolled back, so no claim-handle rows exist and only the shared abandon-opened-claim helper fires against the producer's partial opens.
 - The retry-loop cap at Stage 3 short-circuits before policy lookup. A per-class `pass` action in `error_types:` settles the run as fresh and ends the dispatch without retry — bypassing the cap by design.
 - The await-async-callback outcome re-enters the spine through the callback path; the final terminal event produced there feeds back into the terminal-application step.
 
@@ -2469,7 +2505,7 @@ Owns: the validate RPC surface, the role discriminator + per-role context types,
 
 The wait-set is a per-frame persisted ledger that records "receiver R is waiting for sender S in frame F under (topic_kind, subscription_scope, topic_filter)." Cascade walks insert rows when a sender transitions out of a settled state (pessimistic invalidate); the settled-state drain bulk-marks rows as drained when the sender resolves (fresh / failed / parked) by stamping a drain timestamp rather than deleting the row.
 
-The wait-set drives dispatch eligibility: a stale node is dispatch-eligible iff no undrained rows exist for it in the current frame. Drained rows remain queryable for the substitution-context builder.
+The wait-set feeds dispatch eligibility, which is a two-condition predicate: a stale run is dispatch-eligible iff no undrained wait-set rows exist for it in the current frame AND no subscribed upstream has an in-flight run in the same frame. Drained rows remain queryable for the substitution-context builder.
 
 ## Purpose
 
@@ -2482,7 +2518,7 @@ Wait-set insertion is gated by walk-time CEL filter evaluation: a cascade-walk m
 Owns:
 - The per-frame ledger schema and PK invariant.
 - The insert-on-cascade-walk rule.
-- The bulk-delete-on-settle rule.
+- The bulk-drain-on-settle rule (stamping a drain timestamp; rows are never deleted on settle).
 - The eligibility predicate used by the ready-for-dispatch query.
 
 Does NOT own:
@@ -2493,7 +2529,8 @@ Does NOT own:
 ## Invariants
 
 - Rows live only within their frame's scope (cascade-deleted with the owning frame per `concept:frame`).
-- Drain stamps the drain timestamp on rows whose sender matches the settling sender. Drained rows remain queryable for the substitution-context builder. Eligibility predicate: a stale run is dispatch-eligible iff no undrained rows exist for it in the current frame.
+- Drain stamps the drain timestamp on rows whose sender matches the settling sender. Drained rows remain queryable for the substitution-context builder. Eligibility predicate (two conditions): a stale run is dispatch-eligible iff no undrained wait-set rows exist for it in the current frame AND no subscribed upstream has an in-flight run in the same frame.
+- A stale run is not dispatch-eligible while any subscribed upstream has an in-flight run in the same frame, regardless of which propagation path made the receiver stale; the eligibility predicate enforces this independent of wait-set seeding. Self-subscription is exempt: a node's own in-flight run never gates its own dispatch.
 - Bulk-drain on sender resolution covers every topic kind uniformly.
 - The primary key `(frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)` ensures duplicate inserts within the same transaction collapse to a no-op. The drain-timestamp field is a non-PK lifecycle marker; the substitution-context builder reads the drained attribute rows for a receiver.
 
@@ -2711,12 +2748,12 @@ indistinguishable from a non-held terminal; the held resolution is rimsky-side
 machinery.
 
 Idempotent in `claim_id` (obligation 3). `CommitResponse` carries two optional
-fields, both inert to rimsky:
+fields that rimsky now reads off the wire on the base-protocol `Commit`:
 
 | Field | Meaning |
 | --- | --- |
-| `version_id` | Declared for `DataProcessing`-capable producers, but in v0.8.0 rimsky does **not** read it off the wire: the runtime's `Commit` client discards the response body, and the persisted `rimsky_claim_handles.version_id` is sourced from the `CommitCandidate` step instead. Setting it has no effect today; leave it empty. |
-| `producer_metadata` | Declared for a future fan-out writeback surface, but in v0.8.0 rimsky does **not** read it off the wire — the same discarded `Commit` response. Setting it has no effect today; leave it empty. |
+| `version_id` | Optional canonical version identifier **any** producer may stamp — not gated on `DataProcessing`. Opaque to rimsky; persisted on `rimsky_claim_handles.version_id` and on the lineage row for `record_kind: claim_terminal`. A non-empty base-`Commit` `version_id` **wins over** a staged `DataProcessing.CommitCandidate.version_id` for the same handle (the base verb is the finalizing call). Leave empty if the producer has no canonical version to surface. <!-- @source: lib/runtime/terminal_decision.go::ResolveClaimHandleTerminal --> |
+| `producer_metadata` | Optional producer-supplied bytes. Inert in rimsky per `@blessed-invariant 20` for the bytes themselves. At fan-out parent terminal the bytes are base64-encoded (the writeback row is JSON) and surfaced in the parent run's writeback under the `producer_metadata` key, keyed by the child's **partition key**. Empty / non-fan-out → no writeback effect. <!-- @source: lib/runtime/child_execution.go::recordChildProducerMetadata --> |
 
 ## `Abandon` — consumer failed
 
@@ -2769,6 +2806,7 @@ cached for the process's lifetime. `CapabilitiesResponse` returns:
 | `supports_split_scope` / `supports_scopes_conflict` | The optional-RPC flags. Advertise `true` only when you implement the matching RPC. |
 | `protocols` | The mix-in service protocols this binary also speaks alongside `claim_producer` (e.g. `data_processing`, `validation`, `lifecycle_subscriber`). A binary that implements `LifecycleSubscriber` lists `lifecycle_subscriber` here. |
 | `validation_supported_roles` | When `validation` is in `protocols`, the role discriminators this service will validate (`executor` / `claim_producer` / `lifecycle_subscriber` / `sensor`). For a claim-producer peer advertising the `validation` mix-in, rimsky learns the **live** list by running a fresh `ClaimProducer.Capabilities` handshake at startup (the operator-declared YAML carries only the write-semantics envelope, never roles); a handshake failure fails rimsky startup. <!-- @source: lib/control/config/publishers.go --> |
+| `declared_error_classes` | The producer's declared error-class vocabulary — both the `Unavailable.error_class` arm of `Open` and the `google.rpc.ErrorInfo.Reason` stamped on faulted producer verbs. Patterns ending in `*` are prefix leaves (e.g. `pg/claim_unavailable/*`); exact strings are fixed leaves. The template-registration validator's range-check of operator `error_types:` keys accepts a key if it exactly matches a declared plain leaf OR matches a declared `<prefix>/*` pattern by prefix. Empty/absent means "producer does not declare" — legal; keys attributable to no declared vocabulary surface as advisory warnings, never hard rejections. Mirrors `ObservabilityCapabilities.declared_error_classes` on the executor surface; the two vocabularies are independent (the producer half covers the claim-producer verbs, the executor half covers `Execute.Error.error_class`). |
 
 The valid `WriteSemantics` values are `sync`, `staged_async`, `blocking_async`, and
 `read_only` (the proto enum `WRITE_SEMANTICS_*`; `WRITE_SEMANTICS_UNKNOWN` is the
@@ -2884,10 +2922,19 @@ tests.
   not a production starting point.
 - **Official services (AGPL)** — the concrete-paths `filesystem` store and the
   regional-access / items-queue / atomic-staging-schema `postgres` store, under
-  `lib/services/stores/{filesystem,postgres}`. The postgres store demonstrates
-  the SQL-substrate atomic-staging lifecycle (per-claim staging schema reserved
-  at `Open`, atomic swap on `Commit`, drop on `Abandon`) plus the `pg/swap_failed`
-  declared-error-class emit site. These are AGPL runnable products; study their
+  `lib/services/stores/{filesystem,postgres}`. Both demonstrate the
+  `declared_error_classes` capability: the filesystem store advertises a single
+  class `fs/root_unavailable`, raised by every producer verb (`Open` / `Commit`
+  / `Abandon` / `Release`) when its configured backing root is missing or not
+  writable at verb time, so the operator-misconfiguration case crosses the wire
+  as the store's own class rather than an anonymous gRPC failure
+  (`*ClassedError` → `google.rpc.ErrorInfo.Reason`).
+  <!-- @source: lib/services/stores/filesystem/store/errors.go::RootUnavailableClass -->
+  The postgres store additionally demonstrates the SQL-substrate atomic-staging
+  lifecycle (per-claim staging schema reserved at `Open`, atomic swap on
+  `Commit`, drop on `Abandon`) plus the `pg/swap_failed` declared-error-class
+  emit site, and surfaces `pg/claim_unavailable` on the `Unavailable.error_class`
+  arm of `Open`. These are AGPL runnable products; study their
   `config-example.yml` and server packages for patterns, but build your own
   producer from the Apache wire contract and the copyable skeleton above rather
   than copying AGPL service code.
@@ -3050,6 +3097,7 @@ declares:
 | `expected_attributes_schema` | JSON Schema for the accepted attribute shape; empty ⇒ accept-any. Output properties are marked `readOnly: true`. |
 | `declared_events` | Event names the executor may emit via `NamedEvent`; empty ⇒ none. Cross-validated against template `subscribes: [{type: event/<name>}]` entries — references to undeclared events reject the registration. |
 | `declared_error_classes` | Error-class paths the executor may emit on `Error.error_class`. Patterns ending in `*` are prefix leaves (e.g. `http/server_error/*`); empty ⇒ skip the validator's range-check. Validated against operator `error_types:` keys. |
+| `validation_supported_roles` | Set when `"validation"` is in the executor's advertised `protocols` (e.g. `["executor"]`); the role discriminators this service will validate. Mirrors `PublisherCapabilities.validation_supported_roles` — the `Validation` service has no `Capabilities` verb, so each peer kind advertises its supported roles on its own capability handshake. For an executor advertising the `validation` mix-in, rimsky reads the live list from `ExecutorObservability.Capabilities` at startup (off the observability endpoint when `observability_endpoint:` is configured, otherwise off the dispatch endpoint); a handshake failure fails rimsky startup. <!-- @source: lib/control/config/publishers.go --> |
 
 ## Async callback
 
@@ -3155,6 +3203,7 @@ any TypeScript executor author would use. <!-- @source: lib/services/executors/c
 ---
 
 <!-- AUTOGENERATED by rimsky-docs-gopkg from rimsky lib/protocols/. Do not hand-edit. -->
+<!-- This reference reflects rimsky v0.9.0 — the `reconciledAgainst` release in .claude-plugin/plugin.json. -->
 
 # rimsky protocols module — Go package reference
 
@@ -3294,6 +3343,7 @@ type Capabilities struct {
 	SupportsScopesConflict   bool
 	Protocols                []string
 	ValidationSupportedRoles []string
+	DeclaredErrorClasses     []string
 }
 ```
 
@@ -3318,6 +3368,13 @@ alongside ClaimProducer (e.g. "data_processing", "validation",
 "validation" mix-in is advertised; lists the role discriminators the
 service is willing to validate ("executor" | "claim_producer" |
 "lifecycle_subscriber" | "sensor").
+
+DeclaredErrorClasses is the set of error-class paths the producer may
+name on acquisition-failure responses (OpenOutcome.UnavailableClass
+and gRPC ErrorInfo.Reason on faulted verbs). Patterns ending in `*`
+are prefix-pattern leaves; exact strings are fixed leaves. Empty is
+legal: a producer that declares nothing simply contributes no
+vocabulary to the template validator's `error_types:` range-check.
 
 #### `func (c Capabilities) AdvertisesProtocol(p string) bool`
 
@@ -3369,8 +3426,13 @@ type ClaimProducer interface {
 
 	// Commit signals that the consumer of the claim succeeded. The
 	// producer decides what to do with its own state per its own
-	// configuration.
-	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+	// configuration. The returned CommitResult mirrors the base-protocol
+	// CommitResponse wire message: producers MAY stamp a canonical
+	// version_id (persisted on the claim-handle row) and opaque
+	// producer_metadata bytes (surfaced in the fan-out parent's
+	// writeback at parent terminal). Both fields are optional; a
+	// producer with nothing to report returns the zero CommitResult.
+	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) (CommitResult, error)
 
 	// Abandon signals that the consumer of the claim failed. The
 	// producer decides what to do with its own state per its own
@@ -3480,6 +3542,23 @@ type ClaimSpec struct {
 ClaimSpec is the producer-bound claim primitive. Callers build one
 per acquisition; producers parse Selector and decide what it means
 (scoped access vs. configured pick policy).
+
+### type CommitResult
+
+```go
+type CommitResult struct {
+	VersionID        string
+	ProducerMetadata []byte
+}
+```
+
+CommitResult mirrors the base-protocol CommitResponse wire message.
+VersionID is the producer-returned canonical version identifier
+persisted on the claim-handle row's version_id column at Commit;
+ProducerMetadata is opaque producer-supplied bytes surfaced verbatim
+in the fan-out parent's writeback at parent terminal. Both are
+optional and inert in rimsky per blessed invariant 20 — never parsed,
+transformed, or logged.
 
 ### type Intent
 
@@ -3819,10 +3898,14 @@ Client wraps a generated gRPC ExecutorClient.
 
 #### `func NewGRPCClient(endpoint Endpoint) (Client, error)`
 
-NewGRPCClient dials endpoint over gRPC. v1 ships with insecure
-credentials by default.
+NewGRPCClient dials endpoint over gRPC. Plaintext by default;
+Endpoint.TLS "required" dials with verified TLS (system roots).
 
 @source: runtime/executor/client.go::NewGRPCClient
+@diverged: true
+@reason: the conformance harness keeps the protocols module's
+dependency budget (no lib/runtime import), so it maps TLS to
+credentials inline instead of using runtime/peer.TransportCredentials.
 
 ### type ClientPool
 
@@ -3832,7 +3915,11 @@ type ClientPool struct {
 }
 ```
 
-ClientPool caches Clients by (transport, URL). Thread-safe.
+ClientPool caches Clients by (transport, TLS mode, URL). Thread-safe.
+The TLS mode is part of the key so two entries sharing a URL with
+different `tls:` modes never silently share one client — a
+`tls: required` entry must never ride a plaintext connection created
+for a `tls: off` twin.
 
 @source: runtime/executor/client.go::ClientPool
 
@@ -3858,7 +3945,9 @@ dial via their own helper.
 type Endpoint struct {
 	Transport string // "grpc" | "http"
 	URL       string
-	TLS       string // "off" | "optional" | "required"
+	// TLS is the dial mode: "off" (plaintext, the default) or
+	// "required" (verified TLS against system roots).
+	TLS string
 }
 ```
 
@@ -4019,11 +4108,13 @@ the outcome oneof on StreamClose.
 Register adds a scenario to the global registry. Intended to be called from
 init() in each scenario file.
 
-#### `func RunLifecycleCheck(parent context.Context, endpoint string, timeout time.Duration) error`
+#### `func RunLifecycleCheck(parent context.Context, endpoint, tlsMode string, timeout time.Duration) error`
 
 RunLifecycleCheck dials the lifecycle peer at endpoint and runs the
-six-RPC probe. Returns nil when every RPC returns success; otherwise
-a wrapped error naming the offending verb.
+six-RPC probe. tlsMode follows Endpoint.TLS semantics ("required" →
+verified TLS against system roots; else plaintext). Returns nil when
+every RPC returns success; otherwise a wrapped error naming the
+offending verb.
 
 #### `func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, logf func(format string, args ...any)) error`
 
@@ -4299,20 +4390,19 @@ hashed spec persists).
 
 Package `publisherkit`
 
-Package publisher implements the shared publisher-side message-emit
+Package publisherkit implements the shared publisher-side message-emit
 retry-with-backoff helper used by every bundled sensor (sensor-cron,
 sensor-http, sensor-object-store, sensor-webhook) and any third-party
-publisher service that POSTs to rimsky's `POST /instances/{id}/messages`
-endpoint.
+publisher service that POSTs to rimsky's
+`POST /v1/instances/{id}/messages` endpoint.
 
-Spec
-.ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-§Publisher-side message-emit retry: publishers POSTing to
-rimsky's `POST /instances/{id}/messages` retry on 5xx + connection
-errors (~3 attempts, exp backoff 200ms → ~1.6s). 4xx is terminal
-and logged with the `publisher.message.rejected` key so operators
-can spot capability-revocation / route-misconfiguration without
-digging through per-sensor log noise.
+Retry policy: publishers POSTing to rimsky's
+`POST /v1/instances/{id}/messages` endpoint retry on 5xx + connection
+errors (3 attempts total, with sleeps of 200ms then ~566ms between
+attempts). 4xx is terminal and logged with the
+`publisher.message.rejected` key so operators can spot
+capability-revocation / route-misconfiguration without digging
+through per-sensor log noise.
 
 Lives in the protocols module so third-party publisher authors get the same
 retry-with-idempotency-header behavior as the bundled sensors.
@@ -4334,7 +4424,7 @@ passing in `slogAdapter{}` works directly.
 ```go
 type Request struct {
 	// URL is the fully-qualified rimsky messages endpoint, including
-	// the `/instances/{id}/messages` path.
+	// the `/v1/instances/{id}/messages` path.
 	URL string
 	// Envelope is the JSON-marshaled message body.
 	Envelope []byte
@@ -4375,8 +4465,9 @@ distinguish "rejected" from "transient failure exhausted retries".
 #### `func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, req Request) Result`
 
 Send POSTs `req.Envelope` to `req.URL` with the universal retry-
-with-backoff policy. Backoff base = 200ms; multiplier = 2.828
-(geometric ratio that lands attempt 3 at ~1.6s per spec).
+with-backoff policy. Backoff: 200ms after attempt 1, ~566ms after
+attempt 2 (geometric, ratio ≈ 2.83), so attempt 3 is issued ≈766ms
+of cumulative sleep after attempt 1.
 
 5xx + transport errors: retry up to 3 attempts total.
 4xx: log `publisher.message.rejected` at WARN and abandon
@@ -4815,7 +4906,7 @@ Probed once per service at startup; cached in rimsky's discovery cache. The
 | --- | --- | --- |
 | `supported_kinds` | `repeated PublisherKindCapability` | The kinds this binary supports. Each `PublisherKindCapability` carries a `kind` string and a `config_schema` (`bytes`) — the JSON Schema for the `resolved_config` accepted at `Subscribe` for that kind. `config_schema` is opaque to rimsky and surfaces to operator tooling. |
 | `protocols` | `repeated string` | Mix-in service protocols advertised (e.g. `"publisher"`, `"validation"`). The list must include `"publisher"`. |
-| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). **Caveat:** rimsky's startup validation-registry wiring does not yet read this field from publisher (or executor) peers — only claim-producer peers get the live `ClaimProducer.Capabilities` roles handshake; a publisher peer's supported-roles list is currently treated as empty. <!-- @source: lib/control/config/publishers.go --> |
+| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). For a publisher peer advertising the `validation` mix-in, rimsky reads the live list from a fresh `Publisher.Capabilities` handshake at startup (the operator-declared YAML carries only the kinds envelope, never roles); a handshake failure fails rimsky startup. The same live-handshake pattern applies to claim-producer and executor peers (via `ClaimProducer.Capabilities` and `ExecutorObservability.Capabilities` respectively). <!-- @source: lib/control/config/publishers.go --> |
 
 Full field reference: [`reference/publisher.md`](reference/publisher.md).
 
@@ -4840,12 +4931,37 @@ routing fields **inline** — there is no `on_change` / on-observation substruct
 `message_kind` alongside its subscription state; at fire time it constructs
 `{kind: message_kind, target: target_node, ...}` envelopes from these inline fields.
 
-Rimsky calls `Subscribe` up to **3 attempts total** (the initial call plus 2
-retries) with exponential backoff: ~560ms before attempt 2 and ~1.6s before
-attempt 3 (200ms base × ~2.828 per attempt, ±25% jitter; the bare 200ms base is
-never slept) before flipping the publisher-subscription
-row to `state='failed'`. A `failed` row is operator-recoverable: the startup
-resync pass re-issues `Subscribe`, transitioning `failed → active` on success.
+Rimsky drives `Subscribe` from two places, with **different retry shapes**:
+
+- **The reconciler (`RunPublisherSubscriptionReconciler`)** — the steady-state
+  driver. It has **no attempt budget**: each `mounting` row gets **one** `Subscribe`
+  attempt per ~5s tick, **forever**. A failed RPC leaves the row in observable
+  `mounting`; the next tick retries. The tick interval is the backoff. The row is
+  **never** flipped to `failed` on RPC failure. <!-- @source: lib/runtime/publishers.go::RunPublisherSubscriptionReconciler -->
+- **The startup resync sweep (`callSubscribeWithRetry`)** — a one-shot pass that
+  re-drives expected-but-publisher-missing rows. It uses a bounded **3-attempt**
+  helper (the initial call plus 2 retries) with exponential backoff: ~560ms before
+  attempt 2 and ~1.6s before attempt 3 (200ms base × 2.8^n per attempt, ±25%
+  jitter; no sleep precedes attempt 1). **Exhaustion is log-only** — the row keeps
+  its state and the reconciler (or the next startup resync) remains its driver.
+  <!-- @source: lib/runtime/publishers.go::callSubscribeWithRetry -->
+
+`state='failed'` is **not** an RPC-exhaustion outcome. It is reserved for two
+non-retryable classes, stamped directly on insert by the instance-create path:
+- **Unknown publisher** — the template names a publisher absent from the registry.
+- **Config-resolve failure** — the publisher config blob cannot be resolved
+  against the instance's params.
+
+<!-- @source: lib/runtime/publishers.go::StartPublisherSubscriptionsForInstance -->
+
+A `failed` row is operator-recoverable **only** for the unknown-publisher class:
+when the operator adds the missing publisher to the registry and restarts the
+control-api, the startup resync's `recoverUnknownPublisherFailures` leg
+CAS-flips qualifying rows `failed → mounting`, and the reconciler then drives
+them `mounting → active`. Config-resolve failures are **never** re-driven
+automatically — the template's config is fixed once registered, so no
+registry change can make a malformed blob resolvable.
+<!-- @source: lib/runtime/publishers.go::recoverUnknownPublisherFailures -->
 
 ## `Unsubscribe` — stop a publisher-subscription
 

@@ -68,10 +68,16 @@ messages, and not agent↔human chat (that is `citation-grammar.md`).
   prerequisites · stepwise commands, **each step stating its expected observable
   output** · `Gotchas`. Executed verbatim against the published images by the
   build gate — every command must be copy-runnable from a clean state.
-- **Diagnosis session** (`cookbook/debug-*.md`): `Symptom` · the command
-  sequence with example outputs (real payloads, refreshed by the build gate) ·
-  a decision tree · links into the error catalog for every leaf. Executed
-  against a live deployment by the build gate.
+- **Troubleshooting walkthrough** (`cookbook/troubleshoot-*.md`): `Symptom` ·
+  the command sequence with example outputs (real payloads, refreshed by the
+  build gate) · a decision tree · links into the error catalog for every leaf.
+  The audience is **post-symptom** — an operator/agent who already holds the
+  failure and is consulting the corpus to resolve it. The build gate verifies
+  this contract by source-cross-check against a live stack (every command,
+  route, payload field, and catalog leaf resolves against the reconciled
+  release), not by inducing the symptom: the inducible cases live in the
+  walkthrough's own narrative, but the gate's correctness anchor is the
+  published-API surface, not symptom reproducibility.
 - **Catalog** (`services/`, `images/`, `reference/`): tables first; prose only for
   cross-cutting rules.
 - **Pattern** (`patterns/`): assertion-first — lead with the real surface, not the

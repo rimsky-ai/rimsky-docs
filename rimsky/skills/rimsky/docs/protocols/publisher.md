@@ -82,7 +82,7 @@ Probed once per service at startup; cached in rimsky's discovery cache. The
 | --- | --- | --- |
 | `supported_kinds` | `repeated PublisherKindCapability` | The kinds this binary supports. Each `PublisherKindCapability` carries a `kind` string and a `config_schema` (`bytes`) — the JSON Schema for the `resolved_config` accepted at `Subscribe` for that kind. `config_schema` is opaque to rimsky and surfaces to operator tooling. |
 | `protocols` | `repeated string` | Mix-in service protocols advertised (e.g. `"publisher"`, `"validation"`). The list must include `"publisher"`. |
-| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). **Caveat:** rimsky's startup validation-registry wiring does not yet read this field from publisher (or executor) peers — only claim-producer peers get the live `ClaimProducer.Capabilities` roles handshake; a publisher peer's supported-roles list is currently treated as empty. <!-- @source: lib/control/config/publishers.go --> |
+| `validation_supported_roles` | `repeated string` | Set when `"validation"` is in `protocols` (e.g. `["publisher"]`). For a publisher peer advertising the `validation` mix-in, rimsky reads the live list from a fresh `Publisher.Capabilities` handshake at startup (the operator-declared YAML carries only the kinds envelope, never roles); a handshake failure fails rimsky startup. The same live-handshake pattern applies to claim-producer and executor peers (via `ClaimProducer.Capabilities` and `ExecutorObservability.Capabilities` respectively). <!-- @source: lib/control/config/publishers.go --> |
 
 Full field reference: [`reference/publisher.md`](reference/publisher.md).
 
@@ -107,12 +107,39 @@ routing fields **inline** — there is no `on_change` / on-observation substruct
 `message_kind` alongside its subscription state; at fire time it constructs
 `{kind: message_kind, target: target_node, ...}` envelopes from these inline fields.
 
-Rimsky calls `Subscribe` up to **3 attempts total** (the initial call plus 2
-retries) with exponential backoff: ~560ms before attempt 2 and ~1.6s before
-attempt 3 (200ms base × ~2.828 per attempt, ±25% jitter; the bare 200ms base is
-never slept) before flipping the publisher-subscription
-row to `state='failed'`. A `failed` row is operator-recoverable: the startup
-resync pass re-issues `Subscribe`, transitioning `failed → active` on success.
+Rimsky drives `Subscribe` from two places, with **different retry shapes**:
+
+- **The reconciler (`RunPublisherSubscriptionReconciler`)** — the steady-state
+  driver. It has **no attempt budget**: each `mounting` row gets **one** `Subscribe`
+  attempt per ~5s tick, **forever**. A failed RPC leaves the row in observable
+  `mounting`; the next tick retries. The tick interval is the backoff. The row is
+  **never** flipped to `failed` on RPC failure. <!-- @source: lib/runtime/publishers.go::RunPublisherSubscriptionReconciler -->
+- **The startup resync sweep (`callSubscribeWithRetry`)** — a one-shot pass that
+  re-drives expected-but-publisher-missing rows. It uses a bounded **3-attempt**
+  helper (the initial call plus 2 retries) with exponential backoff: ~560ms before
+  attempt 2 and ~1.6s before attempt 3 (200ms base × 2.8^n per attempt, ±25%
+  jitter; no sleep precedes attempt 1). **Exhaustion is log-only** — the row keeps
+  its state and the reconciler (or the next startup resync) remains its driver.
+  <!-- @source: lib/runtime/publishers.go::callSubscribeWithRetry -->
+
+`state='failed'` is **not** an RPC-exhaustion outcome. It is reserved for two
+non-retryable classes, stamped directly on insert by the instance-create path:
+- **Unknown publisher** — the template names a publisher absent from the registry.
+- **Config-resolve failure** — the publisher config blob cannot be resolved
+  against the instance's params.
+
+<!-- @source: lib/runtime/publishers.go::StartPublisherSubscriptionsForInstance -->
+
+A `failed` row is operator-recoverable **only** for the unknown-publisher class:
+when the operator adds the missing publisher to the registry and restarts the
+control-api, the startup resync's `recoverUnknownPublisherFailures` leg
+CAS-flips qualifying rows `failed → mounting` and appends them to the same
+resync sweep's expected-row pass, which drives them via the bounded 3-attempt
+`callSubscribeWithRetry`. The reconciler picks them up on its next ~5s tick
+only if the in-pass attempts exhaust. Config-resolve failures are **never**
+re-driven automatically — the template's config is fixed once registered, so
+no registry change can make a malformed blob resolvable.
+<!-- @source: lib/runtime/publishers.go::recoverUnknownPublisherFailures -->
 
 ## `Unsubscribe` — stop a publisher-subscription
 

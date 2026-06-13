@@ -107,7 +107,11 @@ frames with a [parked](../concepts/parked-state.md) node, and a node
 blocked on a saturated named lock does not park — its per-candidate
 acquisition tx rolls back and it stays `stale` in the queue (see the
 gotcha below), so it never appears as a held frame. Nor does Prometheus:
-the named-lock acquisition path increments no counter in v0.8.0.
+the named-lock acquisition path increments only the
+`rimsky_named_lock_acquisitions_total` counter (new in v0.9.0, labelled
+distinct from producer-claim acquisitions, bounded cardinality), not a
+per-lock saturation gauge — saturation is still observed via
+acquisition-event absence on the event log, not a metric.
 
 ## Gotchas
 

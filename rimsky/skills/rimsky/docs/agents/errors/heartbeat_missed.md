@@ -18,7 +18,7 @@ curl "http://localhost:8080/v1/events?instance_id=<instance_id>&kind=transient/h
 What this is **not**:
 
 - Not an `error_class` and not routed through the node's `error_types:` policy chain — it is an audit-only signal plus an automatic recovery re-enqueue. There is nothing to declare in a template for it.
-- Not the fixed-string `heartbeat_lost` audit row — that event was retired alongside the signal-taxonomy decoupling and is gone as of the reconciled v0.8.0. (The `heartbeat_lost` `OperationalKind` still exists in `events.proto` but nothing emits it; the string survives only as the `running → stale` state-transition reason.)
+- Not the fixed-string `heartbeat_lost` audit row — that event was retired alongside the signal-taxonomy decoupling and is gone. (The `heartbeat_lost` `OperationalKind` still exists in `events.proto` but nothing emits it; the string survives only as the `running → stale` state-transition reason.)
 - Not the orphaned-claim sweep — claim-ownership loss at the supervisor level (cutoff 5 × the supervisor `heartbeat_interval`) is a separate mechanism; see [`orphaned_claim_lost_race.md`](orphaned_claim_lost_race.md).
 
 ## When it happens

@@ -31,7 +31,10 @@ Rimsky is a **reactive node-graph orchestrator** with:
 - **Out-of-process service protocols** (claim producers, executors,
   lifecycle subscribers) speaking gRPC over Postgres-mediated state.
 - **Three independent runtime processes** (scheduler, supervisor,
-  control-api) that communicate only through Postgres.
+  control-api) that communicate only through Postgres. The canonical
+  split-role topology is exercised end-to-end in the bundled
+  three-container harness; a zero-config all-in-one image runs all
+  three roles in one OS process for local development.
 
 The shape it's most directly comparable to: **Airflow / Dagster /
 Prefect / Temporal**. Streaming engines (Beam, Flink, Spark), pure
@@ -370,8 +373,8 @@ primitive. None of the comparators have a direct equivalent.
 - **dbt**: Lineage graph from model dependencies; `dbt docs`
   generates a queryable view.
 - **rimsky**: Cascade graph plus events log (event kinds are a typed
-  `OperationalKind` proto enum as of v0.8.0, queryable at
-  `GET /v1/events`). Structural lineage is the cascade graph. Content
+  `OperationalKind` proto enum, queryable at `GET /v1/events`).
+  Structural lineage is the cascade graph. Content
   lineage (what specific values produced this value) is present via
   the lineage projection — `claim_terminal` records, queryable at
   `GET /v1/lineage/claims/{claim_handle_id}` and

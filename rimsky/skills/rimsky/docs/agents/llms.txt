@@ -13,6 +13,7 @@ This is a self-contained, agent-facing corpus: every link below resolves within 
 How to implement a service that speaks one of rimsky's wire protocols. The guides are the practical "how to build this" narrative; the field-level wire shapes live in the generated reference under `protocols/reference/`.
 
 - [Protocols overview](protocols/README.md): the HTTP+JSON encoding convention, the optional `@rimsky-ai/protocols` npm package and Go helper packages, and links to the generated wire reference (`protocols/reference/`).
+- [Conformance](concepts/conformance.md): the `rimsky conformance <protocol>` subcommand family (executor, claim-producer, blob-backend, data-processing, publisher, validation) — what each suite checks, how to run it against your service endpoint, and how Go authors invoke the underlying library from tests.
 - [ClaimProducer](protocols/claim-producer.md): implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
 - [Executor](protocols/executor.md): implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol.
 - [LifecycleSubscriber](protocols/lifecycle-subscriber.md): implement a lifecycle subscriber (seven hooks — six template/instance state-transition hooks plus `OnRunScopeTerminal`).

@@ -17,9 +17,31 @@ folded into one canonical representative. The patterns combine — a queue
 worker that loops is the queue recipe plus the loop recipe; a reactive
 graph behind a capacity limit is two recipes composed.
 
+## Journey walkthroughs
+
+Three end-to-end journeys ground the recipes in a runnable deployment. They are
+**executable verbatim** against the v0.9.0 published images and are exempt from
+the parsimony reduction below — they teach the deployment + diagnosis loop, not
+a single primitive.
+
+- **[Zero to deployed](zero-to-deployed.md)** — from an empty host with Docker
+  to a node driven to terminal. The all-in-one image (`rimskyai/rimsky-all-in-one:v0.9.0`)
+  is the spine; a variant section pins the three-role split
+  (`rimskyai/rimsky:v0.9.0` × 3).
+- **[Troubleshoot a stuck-stale node](troubleshoot-stuck-stale.md)** — narrated
+  diagnosis of the `Status: stale` symptom: `GET /v1/admin/diagnostics/wait-sets`
+  → decision tree → which error-catalog page resolves each leaf.
+- **[Troubleshoot an unreleased claim](troubleshoot-unreleased-claim.md)** — the
+  holding-subgraph-not-advancing symptom: `GET /v1/admin/diagnostics/held-frames`
+  → orphan-reaper / heartbeat diagnosis → leaves including the new
+  `fs/root_unavailable` (filesystem-store backing root missing) and
+  `executor_blocked`.
+
 ## The recipes
 
-All recipes run against a rimsky deployment — stand one up from the published images (see the [operator guide](../operator-guide.md)).
+All recipes run against a rimsky deployment — see [zero to deployed](zero-to-deployed.md)
+or the [operator guide](../operator-guide.md). All references below to image
+tags assume **v0.9.0**.
 
 The `rimsky` CLI has **no built-in default endpoint**. Every verb resolves
 the control-API endpoint as `--endpoint` flag > `RIMSKY_CONTROL_API` env >
@@ -36,10 +58,11 @@ control API — `http://localhost:8080` in the reference deploy.
   — subscriber-driven cascade: a downstream node auto-subscribes to an
   upstream attribute and recomputes only the affected nodes on change.
 - **[Fire a node only after all its upstreams settle](fan-in.md)** —
-  serialize the upstreams and subscribe to the last link's terminal
-  (or use fan-out for homogeneous units); subscribing one node to N
-  parallel siblings is **not** a barrier — it fires once per frame, as
-  soon as the first sibling settles.
+  subscribe one node to N parallel siblings; v0.9.0's upstream-gating
+  predicate holds it until every in-flight subscribed upstream in the
+  frame has settled (a real all-N barrier, new in v0.9.0). Pre-v0.9.0
+  the variants are: serialize the upstreams and subscribe to the last
+  link's terminal, or use fan-out for homogeneous units.
 - **[Cap concurrency with a counting semaphore](capacity-limit.md)** — a
   named lock as a deployment-wide capacity counter (`model-budget`,
   limit 50).

@@ -77,10 +77,13 @@ For higher-altitude system shapes see `docs/patterns/` (`domain-stores.md`,
   generated `rimsky.yml` / template schema. This is the definitive surface for
   every key you can set on a node, claim, or graph.
 - **Implementing a protocol service** (only if a bundled service doesn't suffice):
-  the guides under `docs/protocols/` — `executor.md`, `claim-producer.md`,
-  `lifecycle-subscriber.md`, `publisher.md` — plus the generated wire reference
-  `docs/protocols/reference/` and the optional Go helper packages
-  `docs/protocols/go-packages.md`. Conformance: `docs/concepts/conformance.md`.
+  start at `docs/protocols/README.md` — the protocol-overview anchor (HTTP+JSON
+  encoding convention, helper-package pointers, links into the generated wire
+  reference) — then the per-protocol guides under `docs/protocols/` —
+  `executor.md`, `claim-producer.md`, `lifecycle-subscriber.md`, `publisher.md`
+  — plus the generated wire reference `docs/protocols/reference/` and the
+  optional Go helper packages `docs/protocols/go-packages.md`. Conformance:
+  `docs/concepts/conformance.md`.
   Copyable Apache-licensed Go server skeletons — one per protocol the consumer
   implements (executor, claim-producer, lifecycle-subscriber, publisher, plus
   the registration-time mix-ins validation and data-processing, an
@@ -126,9 +129,11 @@ Then pull in only what your problem touches:
   `claim-scope.md`, `claim-producer.md`, `claim-tree.md`, `claim-lifetime.md`,
   `claim-co-holdership.md`, `named-lock.md`, `advisory-lock.md`
 - **Fan-out / sub-workflows:** `fan-out.md`, `sub-graph.md`, `cascade-graph.md`,
-  `backfill.md`
+  `backfill.md`, `child-execution.md` (the unified dispatch+settlement primitive
+  delegation and fan-out share)
 - **External triggers / messaging:** `sensor.md`, `signal.md`, `message.md`,
-  `named-event.md`, `publisher.md`, `node-subscription.md`
+  `named-event.md`, `publisher.md`, `publisher-subscription.md` (the operator-
+  visible `mounting → active` mounting state), `node-subscription.md`
 - **Failure / retries / lifecycle:** `error-policy.md`, `wait-set.md`,
   `parked-state.md`, `terminal-resolution.md`, `orphan-reaper.md`
 - **State / config / observability:** `attribute.md`, `tag.md`, `rimsky-yml.md`,

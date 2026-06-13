@@ -149,6 +149,7 @@ declares:
 | `expected_attributes_schema` | JSON Schema for the accepted attribute shape; empty ⇒ accept-any. Output properties are marked `readOnly: true`. |
 | `declared_events` | Event names the executor may emit via `NamedEvent`; empty ⇒ none. Cross-validated against template `subscribes: [{type: event/<name>}]` entries — references to undeclared events reject the registration. |
 | `declared_error_classes` | Error-class paths the executor may emit on `Error.error_class`. Patterns ending in `*` are prefix leaves (e.g. `http/server_error/*`); empty ⇒ skip the validator's range-check. Validated against operator `error_types:` keys. |
+| `validation_supported_roles` | Set when `"validation"` is in the executor's advertised `protocols` (e.g. `["executor"]`); the role discriminators this service will validate. Mirrors `PublisherCapabilities.validation_supported_roles` — the `Validation` service has no `Capabilities` verb, so each peer kind advertises its supported roles on its own capability handshake. For an executor advertising the `validation` mix-in, rimsky reads the live list from `ExecutorObservability.Capabilities` at startup (off the observability endpoint when `observability_endpoint:` is configured, otherwise off the dispatch endpoint); a handshake failure fails rimsky startup. <!-- @source: lib/control/config/publishers.go --> |
 
 ## Async callback
 

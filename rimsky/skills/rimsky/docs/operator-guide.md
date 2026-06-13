@@ -35,16 +35,18 @@ ignored.
 | `persistence.sqlite.path` | string | — | SQLite database file path. |
 | `persistence.blob.*` | block | `backend: inline` | See [Persistence: blob backend](#persistence-blob-backend). |
 | `claim_producers.<name>.endpoint` | gRPC endpoint | — (required) | `grpc://host:port` or bare `host:port`; `http://`, `https://`, `tcp://`, `unix://` are rejected at startup. |
+| `claim_producers.<name>.tls` | `off` \| `required` | `off` | See [Peer TLS](#peer-tls). |
 | `claim_producers.<name>.protocols` | list | `[claim_producer]` | Must include `claim_producer`. Valid values: `claim_producer`, `executor`, `publisher`, `lifecycle_subscriber`, `validation`, `data_processing`. |
 | `claim_producers.<name>.write_semantics_allowed` | list | — (required, non-empty) | Operator-permitted subset of the producer-advertised set. Values: `sync`, `staged_async`, `blocking_async`, `read_only`. To learn a producer's advertised set, declare a guess and read the startup mismatch error — it names both sets (`operator declared [...], producer advertised [...]`); for the bundled postgres store the advertised set is exactly its own config's `write_semantics` value (default `staged_async` when omitted). |
 | `claim_producers.<name>.observability_endpoint` | endpoint | reuse `endpoint` | Override for the observability handshake only. |
 | `named_locks.<name>.limit` | int | — | Counting-semaphore limit for the named lock. |
 | `executors.<name>.transport` | `grpc` \| `http` | — (required) | `grpc`: `endpoint` is the gRPC dispatch target (`host:port`). `http`: the supervisor drives the executor through its HTTP+JSON bridge instead — `endpoint` is the bridge **base URL** (e.g. `http://http-node:9092` — http-node's bridge defaults to its gRPC port + 1); the supervisor POSTs `<endpoint>/v1/Execute` and reads an NDJSON `ExecuteEvent` stream. Use `http` only for bridge-only peers; the reference stack uses `grpc`. |
 | `executors.<name>.endpoint` | endpoint | — (required) | e.g. `claude-agent:9090` (grpc) or `http://http-node:9092` (http). |
-| `executors.<name>.tls` | `off` \| `optional` \| `required` | empty (optional) | Recorded but **not yet enforced** — pre-v1, all executor connections are insecure plaintext regardless of this value; TLS enforcement is post-v1. Omitting it is fine. Unquoted `off` parses as the string `"off"` (the loader's YAML library does not treat `off` as a boolean); no quoting needed. |
+| `executors.<name>.tls` | `off` \| `required` | `off` | See [Peer TLS](#peer-tls). |
 | `executors.<name>.protocols` | list | `[executor]` | Must include `executor`. |
 | `executors.<name>.observability_endpoint` | endpoint | reuse `endpoint` | |
 | `publishers.<name>.endpoint` | endpoint | — | Publisher gRPC endpoint. |
+| `publishers.<name>.tls` | `off` \| `required` | `off` | See [Peer TLS](#peer-tls). |
 | `publishers.<name>.protocols` | list | `[publisher]` | Must include `publisher`. |
 | `publishers.<name>.observability_endpoint` | endpoint | reuse `endpoint` | |
 | `max_park_duration.<reason>` | Go duration | none | See [Parked-duration caps](#parked-duration-caps). Keys: `await_callback`, `snooze` only. |
@@ -93,6 +95,31 @@ only `claim_producers:` (plus `validation`-mix-in peers) must be live before
 the three core processes start; executors and publishers may come up
 afterward — but under the default `templates.ref_validation_mode: all` they
 must be visible before `template register` runs.
+
+## Peer TLS
+
+Each peer block (`claim_producers:`, `executors:`, `publishers:`) takes a
+per-entry `tls:` key that controls how rimsky dials that peer. It is a
+**closed two-value enum**:
+
+| Value | Behavior |
+| --- | --- |
+| `off` (default; empty → `off`) | Plaintext gRPC / HTTP. |
+| `required` | Verified TLS against system roots. A gRPC dial uses gRPC's TLS credentials; an HTTP-bridge dial uses Go's default `http.Transport` TLS. There is no peer-pinned root pool — system-root verification only. |
+
+Anything else — including the retired `optional` — is **rejected at startup**
+with an error naming the entry and the accepted values (so a security-shaped
+key is never accepted-and-ignored). The same enum applies to all three
+peer kinds.
+
+Transport-specific guard for executors with `transport: http`: `tls: required`
+**requires** an `https://` endpoint. A `tls: required` + `http://` combination
+fails `StartControlAPI` / `StartSupervisor` startup naming the entry (both
+processes validate the executors block), never silently downgrading on the wire.
+
+Unquoted `off` parses as the string `"off"` because the loader binds the
+`tls:` field to a Go `string`; the YAML library would only interpret `off` as
+the boolean `false` against a `bool` target. No quoting needed.
 
 ## Control API: the `/v1/` route prefix
 
@@ -530,6 +557,25 @@ libraries under `lib/protocols/conformance/...`.
 | `rimsky conformance probe` | The protocol-agnostic stub-mode probe. |
 
 Each exits 0 on all checks passing.
+
+## Upgrading from v0.8.0
+
+**Per-peer `tls:` is first-class in v0.9.0** (across `claim_producers:`,
+`executors:`, `publishers:`). Accepted values are exactly `off` and `required`
+(empty → `off`); the previously-permissive `optional` is now **rejected at
+startup** with an error naming the entry. `required` brings up verified TLS
+against system roots — it is no longer a recorded-but-unenforced annotation.
+Sweep configs for `tls: optional` before upgrading; rewrite as `off` (the
+prior effective behavior) or `required` (genuine TLS). HTTP-bridge executors
+with `tls: required` must also carry an `https://` endpoint — see
+[Peer TLS](#peer-tls).
+
+**The control-API role surfaces `ServeErr()` in v0.9.0.** The all-in-one
+`rimsky-entrypoint` and the role main wires (`cmd/rimsky-control-api`) now
+exit non-zero when the HTTP serve loop dies after start, instead of running
+on degraded. Operator-visible only in that a previously-silent control-api
+HTTP-server crash is now a container-restart event; no config change is
+needed.
 
 ## Upgrading from v0.7.0
 

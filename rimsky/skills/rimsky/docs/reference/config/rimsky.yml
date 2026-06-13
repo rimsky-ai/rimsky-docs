@@ -98,6 +98,11 @@ executors:
   # `observability_endpoint:` only when an executor splits its gRPC
   # observability service onto a different port from the dispatch
   # service.
+  #
+  # tls: is the closed enum off | required (empty → off). `required`
+  # brings up verified TLS against system roots — first-class as of
+  # v0.9.0. Anything else, including the retired `optional`, is
+  # rejected at startup.
   claude-agent:
     transport: grpc
     endpoint: "claude-agent:9090"

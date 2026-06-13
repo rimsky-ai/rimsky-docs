@@ -4,69 +4,57 @@
 
 You have N upstream nodes — say 3 verifier checks — and you want a
 downstream node to fire **once**, after **all N** have reached
-`terminal/success`. The classic AND-join. The plain reading is "a
-receiver subscribes to N upstreams' `terminal/success`; rimsky waits
-for all N."
-
-**Status note, up front: that plain reading is wrong in v0.8.0.**
-Subscribing one node to N parallel siblings does **not** hold its
-dispatch until all N settle. It guarantees the receiver fires at most
-**once per [frame](../concepts/frame.md)**, and makes it
-dispatch-eligible as soon as the **first** subscribed upstream settles
-— whether the other N−1 have settled by then is a scheduling race.
-There is no template-declared N-input barrier. This recipe gives the
-two shapes that DO deliver "once, after everything," and spells out
-what the multi-subscription topology gives instead.
+`terminal/success`. The classic AND-join: "a receiver subscribes to N
+upstreams' `terminal/success`; rimsky waits for all N."
 
 ## Rimsky shape
 
-What the [wait-set](../concepts/wait-set.md) actually gates, traced to
-the v0.8.0 runtime:
+In v0.9.0 the plain reading **works**: a multi-subscribed receiver is
+held until every in-flight subscribed upstream in the same frame has
+settled. The mechanism, traced through
+[wait-set](../concepts/wait-set.md):
 
-- **Dispatch predicate.** A pending run is dispatch-eligible iff it has
-  **no undrained wait-set rows** in its frame (the supervisor's
-  candidate-selection query; see [wait-set](../concepts/wait-set.md)).
-- **Settlement walk is one level, insert-then-drain.** When a sender
-  settles, the cascade walk visits only the **direct** subscribers
-  matched by the emitted [signal](../concepts/signal.md) — no recursion
-  into their subscribers. The receiver's run row is created at that
-  moment, and the wait-set row inserted for it is keyed on the settling
-  sender — so the **same transaction's** settled-state drain clears it.
-  Net effect: a subscription edge orders the receiver after **that one
-  sender's** settlement; it does not accumulate a gate across the
-  sender's still-running siblings.
+- **Dispatch predicate (v0.9.0).** A pending run is dispatch-eligible
+  iff it has no undrained wait-set rows in its frame **and** no
+  subscribed upstream has an in-flight run in the same frame — the
+  v0.9.0 upstream-gating tighten propagation-path-independent (release
+  notes: "Upstream gating tightens dispatch eligibility"). The second
+  half is what makes a parallel-sibling fan-in a real barrier.
 - **Once per frame.** A receiver that already has a run row in the
   frame is not re-seeded by later terminals in the same frame
   (self-subscriptions excepted — see
   [convergence-loop](convergence-loop.md)). So a multi-subscribed
-  receiver fires exactly once per cascade wave — just not necessarily
-  *after* all its upstreams.
-- **Undrained rows come from recovery paths, not templates.** Wait-set
-  rows that actually hold a receiver back are inserted only when a
-  sender transitions back into in-flight **while the frame runs**: an
-  error-policy retry, a heartbeat-lost re-enqueue, a parked wake, or an
-  in-frame re-invalidation of an in-flight sender. That is a safety
-  property (a receiver won't race a sender that is being re-run), not a
-  construction primitive you can declare.
+  receiver fires exactly once per cascade wave — *and now also strictly
+  after* all its upstreams.
+- **Settlement walk is one level, insert-then-drain.** When a sender
+  settles, the cascade walk visits the direct subscribers matched by
+  the emitted [signal](../concepts/signal.md). The receiver's run row
+  is created at that moment; the wait-set row inserted for it is keyed
+  on the settling sender and cleared in the same transaction. The new
+  upstream-gating predicate then keeps the receiver parked until every
+  *other* in-flight subscribed upstream in the frame has also resolved.
 
-Two shapes give a real all-N "fires once, after everything":
+Two equally valid shapes, then, both deliver "once, after everything":
 
-1. **Serialize the upstreams; subscribe to the chain's terminal.** Run
+1. **Subscribe in parallel; let the upstream-gating predicate
+   rendezvous.** Each check subscribes to a trigger; the join subscribes
+   to all N checks directly. v0.9.0 holds the join until every in-flight
+   check resolves. Parallel and minimal. This is the new template
+   below.
+2. **Serialize the upstreams; subscribe to the chain's terminal.** Run
    the checks as a chain (`check_a → check_b → check_c`) and subscribe
    the join to the **last** node's `terminal/success` only. The last
    terminal IS the "all are done" signal — the rest are its transitive
-   ancestors, and each link's dispatch is correctly ordered after its
-   predecessor by the settlement walk. Deterministic; costs the
-   parallelism. This is the template below.
-2. **Homogeneous units: use [fan-out](../concepts/fan-out.md).** When
+   ancestors. Deterministic and works on every release; costs the
+   parallelism.
+3. **Homogeneous units: use [fan-out](../concepts/fan-out.md).** When
    the N units are the same work over N partitions, declare `fan_out:`
    on one node. The parent's run settles only after **all** partition
    children resolve (state aggregation per
    [node-run](../concepts/node-run.md)), and a downstream subscriber to
-   the parent's terminal fires once, after that rendezvous. This is the
-   only parallel all-N barrier in v0.8.0. It requires the named claim's
-   producer to support split-scope (see
-   [fan-out](../concepts/fan-out.md)) — it is not a plain-YAML shape.
+   the parent's terminal fires once, after that rendezvous. Requires
+   the named claim's producer to support split-scope (see
+   [fan-out](../concepts/fan-out.md)) — not a plain-YAML shape.
 
 Primitives: **node-subscription** (the ordering edges), **signal**
 (each upstream's `terminal/success`),
@@ -81,8 +69,9 @@ defaults below close every dispatch with a clean success). Stand rimsky
 up from the published images (see the
 [operator guide](../operator-guide.md)).
 
-The serialized shape: one trigger, the three checks as a chain, one
-joiner subscribed to the **last** check only.
+The parallel shape: one trigger, three checks each subscribed to the
+trigger, one joiner subscribed to **all three** checks. The v0.9.0
+upstream-gating predicate is the barrier.
 
 Save as `fan-in.yml`:
 
@@ -114,7 +103,7 @@ nodes:
   - type: check_b
     executor: http-node
     subscribes:
-      - { node: check_a, type: terminal/success }
+      - { node: trigger, type: terminal/success }
     attributes:
       schema:
         type: object
@@ -125,7 +114,7 @@ nodes:
   - type: check_c
     executor: http-node
     subscribes:
-      - { node: check_b, type: terminal/success }
+      - { node: trigger, type: terminal/success }
     attributes:
       schema:
         type: object
@@ -135,11 +124,12 @@ nodes:
 
   - type: join
     executor: http-node
-    # Subscribe to the LAST link only. check_c's terminal/success
-    # already implies check_a and check_b settled (they are its
-    # transitive ancestors in the cascade). Subscribing join to all
-    # three would NOT add a barrier — see Gotchas.
+    # Subscribe to all three checks. v0.9.0's upstream-gating predicate
+    # holds the join until every in-flight subscribed upstream in the
+    # frame has settled — a real all-N barrier, not a race.
     subscribes:
+      - { node: check_a, type: terminal/success }
+      - { node: check_b, type: terminal/success }
       - { node: check_c, type: terminal/success }
     attributes:
       schema:
@@ -165,12 +155,15 @@ requires template state 'deployed'") — `register` alone leaves it
 undeployed.
 
 `trigger` has no upstream, so it is a root and dispatches once at
-instance creation — the first wave runs immediately, in order:
-`trigger → check_a → check_b → check_c → join`. To drive another wave
-on the live instance, invalidate the trigger. There is no
-`rimsky node invalidate` verb — invalidation is the admin verb and
-takes the bare *node id* (it calls `POST /v1/nodes/{id}/invalidate`;
-the alternative admin HTTP route keys instance + node:
+instance creation — the first wave runs immediately. `trigger` settles
+and seeds all three checks (`check_a`, `check_b`, `check_c`); they
+dispatch in parallel. Their terminals each seed `join`'s run row, but
+the upstream-gating predicate keeps `join` parked until every in-flight
+check has settled. To drive another wave on the live instance,
+invalidate the trigger. There is no `rimsky node invalidate` verb —
+invalidation is the admin verb and takes the bare *node id* (it calls
+`POST /v1/nodes/{id}/invalidate`; the alternative admin HTTP route keys
+instance + node:
 `POST /v1/admin/instances/{instance}/nodes/{node_id}/invalidate`). Read
 the node id off the nodes listing:
 
@@ -180,11 +173,11 @@ curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
 rimsky admin invalidate <trigger-node-id> --reason "new wave"
 ```
 
-Each settlement walks the next link: `trigger`'s terminal seeds
-`check_a`; `check_a`'s seeds `check_b`; and so on. `join`'s run row
-does not exist until `check_c` settles, so it cannot dispatch earlier —
-every node settles `fresh`, and `join` ran once, strictly after all
-three checks:
+`join`'s dispatch waits behind the still-in-flight checks: even though
+its run row is seeded at the first check's terminal, the upstream-gating
+predicate keeps it parked until none of the three checks is in-flight.
+Every node settles `fresh`, and `join` ran exactly once, strictly after
+all three checks:
 
 ```sh
 curl -s http://localhost:8080/v1/instances/<instance_id>/nodes \
@@ -205,33 +198,15 @@ curl -s "http://localhost:8080/v1/events?instance_id=<instance_id>&node_id=<join
 
 ## Gotchas
 
-**Multi-subscribing the join is not a barrier.** This holds for both
-tempting topologies:
-
-```yaml
-# Parallel siblings (check_a/b/c each subscribe to trigger):
-- type: join
-  subscribes:
-    - { node: check_a, type: terminal/success }
-    - { node: check_b, type: terminal/success }
-    - { node: check_c, type: terminal/success }
-```
-
-One trigger wave invalidates all three checks together, and they
-dispatch in parallel — but `join`'s run row is created at the **first**
-check's terminal, with its only wait-set row drained in that same
-transaction. `join` is dispatch-eligible from that moment; whether the
-supervisor claims it before or after the other checks settle is a race,
-so what `join` observes from `check_b`/`check_c` is timing-dependent.
-The once-per-frame guard then suppresses re-seeding at the later
-checks' terminals: `join` fires exactly once per wave, and it does
-**not** re-fire when the stragglers settle. Same story when the three
-checks form a serial chain and `join` subscribes to all three links:
-`join` becomes eligible as soon as `check_a` settles, fires once
-(racing `check_b`/`check_c`), and never re-fires at their terminals.
-The fix in both cases is structural: serialize and subscribe to the
-last link only (the template above), or use
-[fan-out](../concepts/fan-out.md) when the units are homogeneous.
+**The upstream-gating predicate landed in v0.9.0.** Pre-v0.9.0 the
+parallel-sibling shape was a race: `join`'s run row was created at the
+first check's terminal and was immediately dispatch-eligible, so what
+`join` saw from the still-in-flight checks was timing-dependent. v0.9.0
+ties dispatch eligibility to "no subscribed upstream is in-flight in
+the same frame" regardless of how staleness propagated, which makes
+this recipe's multi-subscription shape a real barrier. On a v0.8.0 or
+earlier deployment, use the serialized variant (chain `check_a →
+check_b → check_c`, `join` subscribes to `check_c` only) or fan-out.
 
 **Attribute reads are subscriptions too.** Every
 `{{nodes.X.attribute.Y}}` `source:` directive in the join's schema
@@ -270,10 +245,9 @@ fiddly under partial failure (a retried upstream double-counts; a
 crashed worker mid-increment loses the count). Airflow's trigger
 rules (`all_success`, `all_done`) and Dagster's automatic join over
 parallel ops encode the count plus the persistence; LangGraph's
-`add_conditional_edges` is the explicit-edge-logic flavor. Rimsky has
-no per-edge equivalent of `all_success` today: the all-N condition is
-either structural (the chain's last terminal implies the rest) or a
-counted rendezvous rimsky manages for you (fan-out's parent settles
-only after all partition children resolve). The wait-set supplies the
-persistence and the once-per-wave dedup; it does not supply a
-declared-N barrier.
+`add_conditional_edges` is the explicit-edge-logic flavor. In v0.9.0
+rimsky's upstream-gating predicate gives the same all-N "wait for
+every in-flight subscribed upstream" guarantee without a counter, plus
+the once-per-frame dedup and the recovery-path safety: an in-frame
+retry or heartbeat-lost re-enqueue of an already-settled upstream
+re-parks `join` until that retried run settles too.

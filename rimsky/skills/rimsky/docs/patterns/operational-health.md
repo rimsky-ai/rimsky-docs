@@ -11,17 +11,20 @@ deprecated_terms: []
 
 # Operational health
 
-> **Status (v0.8.0).** Fully supported. The lifecycle-subscriber protocol, the
+> **Status (v0.9.0).** Fully supported. The lifecycle-subscriber protocol, the
 > `/v1/admin/diagnostics/*` JSON endpoints, the admin-invalidate route, the
 > Prometheus `/metrics` surface, and the `sensor-cron` publisher all ship and
-> are exercised by the bundled stack. Two v0.8.0 changes touch this page:
-> every control-API route (including health) now mounts under a `/v1/` prefix
-> — repoint pollers, probes, and load-balancer health checks — and event-log
-> kinds are now a typed `OperationalKind` proto enum, so `GET /v1/events`
-> rejects unknown `?kind=` values with a 400 instead of returning empty. A
-> polished dashboard / lineage-query UI is not yet shipped (the observability
-> backplane is in place) — operators compose Prometheus + their own dashboards
-> over the JSON and metrics surfaces.
+> are exercised by the bundled stack. The control-API mounts every route
+> (including health) under a `/v1/` prefix, and event-log kinds are a typed
+> `OperationalKind` proto enum so `GET /v1/events` rejects unknown `?kind=`
+> values with a 400 instead of returning empty. v0.9.0 adds two pieces that
+> matter here: the `work_completed` event now fires at terminal application
+> (pairs with the existing `work_started`, also tx-atomic on
+> heartbeat-loss-abandoned dispatch) and a labelled
+> `rimsky_named_lock_acquisitions_total` counter is distinct from
+> producer-claim acquisitions. A polished dashboard / lineage-query UI is not
+> yet shipped (the observability backplane is in place) — operators compose
+> Prometheus + their own dashboards over the JSON and metrics surfaces.
 
 Rimsky exposes operator health signals as JSON over HTTP plus Prometheus metrics.
 This page maps those surfaces — lifecycle subscribers, watchdog graphs,
@@ -96,7 +99,7 @@ external monitors:
 | `GET /v1/admin/diagnostics/parked-nodes` | Parked nodes with reasons and resume timestamps. Optional `?reason=<name>` filter. (Also mounted as `GET /v1/diagnostics/parked`.) |
 | `GET /v1/admin/diagnostics/wait-sets` | Wait-set rows currently blocking dispatch — what each frame is waiting on (sender run, topic, drained state). Useful for diagnosing "the cascade looks like it should fire but the node isn't running." |
 | `GET /v1/events` | Paginated read of the append-only event log; filterable by `instance_id`, `node_id`, `kind`, `since`, `until`. `?kind=` is validated against the typed `OperationalKind` enum — a snake_case operational name (e.g. `state_transition`, `claim_acquired`) or a canonical slash-delimited signal type-path (`terminal/*`, `transient/*`, …); an unknown kind returns 400 listing the valid values. |
-| `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled). **Not** under the control API's `/v1/` tree — it is its own listener with a bare `/metrics` path. Covers dispatches by terminal class, claim acquisitions by producer, node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
+| `GET /metrics` | Prometheus text format on the per-process `RIMSKY_METRICS_PORT` (default disabled; in single-process all-in-one mode each role gets its own port, overridable per role with `RIMSKY_METRICS_PORT_<ROLE>`). **Not** under the control API's `/v1/` tree — it is its own listener with a bare `/metrics` path. Covers dispatches by terminal class, claim acquisitions by producer, named-lock acquisitions by lock name and intent (`rimsky_named_lock_acquisitions_total` — labelled distinct from producer-claim acquisitions), node-state gauges, parked-by-reason gauges, dispatch-latency histograms, and held-frame counts. |
 
 ### Admin invalidate
 

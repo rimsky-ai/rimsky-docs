@@ -142,7 +142,7 @@ a fresh spawn). When you are done, stop the agent (`rimsky agent stop`).
   one binary on one gRPC port; if you want it to front *both* the
   executor and claim-producer protocols for late-bound services, declare
   it twice in `rimsky.yml` (once under `executors:`, once under
-  `claim_producers:`) with the same endpoint. In v0.8.0 the proxy
+  `claim_producers:`) with the same endpoint. In v0.9.0 the proxy
   fronts all five supervisor-facing protocols — executor,
   claim-producer, publisher, validation, data-processing — by one
   uniform spawn/forward mechanism; none ships as a registered-but-

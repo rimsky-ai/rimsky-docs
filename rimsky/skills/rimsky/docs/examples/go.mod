@@ -3,7 +3,7 @@ module github.com/rimsky-ai/rimsky-core/examples
 go 1.25.0
 
 require (
-	github.com/rimsky-ai/rimsky-core/lib/protocols v0.8.0
+	github.com/rimsky-ai/rimsky-core/lib/protocols v0.9.0
 	github.com/rimsky-ai/rimsky-core/lib/services v0.0.0-20260608101034-6e4f17cfc316
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11

@@ -79,6 +79,13 @@ filesystem path, a queue row) and enforce the claim lifecycle. See the
 - **Ports:** gRPC `9100`, HTTP `9110` (reference-config values; the Dockerfile
   `EXPOSE`s `9100 9110`). Admin port is opened only when a pick policy is
   configured.
+- **Declared error classes** (advertised via
+  `CapabilitiesResponse.declared_error_classes` so a template using this store
+  can route the class through an `error_types:` policy and the registration
+  validator accepts the name):
+  | class | emitted when |
+  | --- | --- |
+  | `fs/root_unavailable` | the configured backing root is missing or not writable at verb time (wrong path, volume not mounted, mount gone read-only). Every producer verb (`Open` / `Release` / `Commit` / `Abandon`) refuses to attest against a vanished root, so the operator-misconfiguration case crosses the wire as the store's own class instead of an anonymous gRPC failure. |
 - **Dockerfile:** `lib/services/stores/filesystem/Dockerfile.filesystem`.
 
 ### store-postgres
@@ -107,6 +114,14 @@ filesystem path, a queue row) and enforce the claim lifecycle. See the
   | `enable_executor` | also register the Executor protocol (verifier pattern). |
 - **Ports:** gRPC `9101`, HTTP `9111`, admin `9121` (reference-config values; the
   Dockerfile `EXPOSE`s `9101 9111 9121`).
+- **Declared error classes** (advertised via
+  `CapabilitiesResponse.declared_error_classes` — the ClaimProducer surface
+  only; the Executor mix-in's vocabulary is the separate
+  `ExecutorObservability.Capabilities` surface):
+  | class | emitted when |
+  | --- | --- |
+  | `pg/claim_unavailable` | `Open` cannot grant the requested claim because the targeted scope is in-flight or exhausted (the `Unavailable.error_class` arm). |
+  | `pg/swap_failed` | the atomic-staging commit step lost the swap (the staged child no longer matches the parent the producer staged against) — surfaced as the `google.rpc.ErrorInfo` Reason on the faulted verb. |
 - **Dockerfile:** `lib/services/stores/postgres/Dockerfile.postgres`.
 - **Note:** the items table the pick policy targets is **operator-owned**. The
   store verifies the table's schema at startup and exits if it is missing — a
@@ -174,6 +189,15 @@ implementation guide](../protocols/executor.md).
   | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `error_class` | JSON field read from a parseable 4xx upstream error body to populate the emitted `error_class`. A per-node `attributes.error_class_field` overrides this for an individual dispatch; when the field is absent from the body, classification falls back to the stable `http/request_invalid/_unspecified` leaf. |
   | `RIMSKY_EXECUTOR_STUB_MODE` | `0` | `1` short-circuits the network path (returns canned success). |
 - **Ports:** gRPC `9091`, HTTP `9092` (Dockerfile `EXPOSE 9091 9092`).
+- **Rate-limit handling:** an upstream `429 Too Many Requests` that is **not**
+  listed in the dispatch's `expect_status` resolves to a terminal `StreamClose
+  Park` outcome with `reason = PARK_REASON_SNOOZE` and a `resume_at` populated
+  from the upstream's `Retry-After` header per RFC 9110 §10.2.3 (delta-seconds,
+  e.g. `7` → `now + 7s`; HTTP-date → that instant; absent or malformed header →
+  `now + 30s`). The supervisor's existing parked-node auto-wake sweep
+  re-dispatches the node at `resume_at` (`resume_reason = "deadline_elapsed"`).
+  A 429 the template **does** list in `expect_status` is a normal success per
+  the operator's declared contract.
 - **Dockerfile:** `lib/services/executors/http-node/Dockerfile.http-node`.
 
 ### claude-agent
@@ -252,11 +276,52 @@ implementation guide](../protocols/executor.md).
 
 ### verifier-shape-checks
 
-- **What it is:** a protocol-shape reference verifier executor. Beyond the
-  Executor protocol it also advertises template-registration-time validation, so
-  the control-api can cross-check the resolved attribute schema when a template
-  using it is registered.
-- **Protocol:** Executor + the `Validation` mix-in.
+- **What it is:** a protocol-shape reference verifier executor. Runs an array of
+  shape-check primitives (e.g. `no_nulls`, `pk_unique`, `row_count_absolute`)
+  over an in-memory `rows` payload and emits a Success or Error terminal based
+  on aggregate pass/fail. Beyond the Executor protocol it also advertises
+  template-registration-time validation, so the control-api can cross-check the
+  resolved attribute schema when a template using it is registered.
+- **Protocol:** Executor + the `Validation` mix-in (`role=executor` only) + the
+  minimum `ExecutorObservability` mix-in (`Capabilities` advertising the
+  vocabulary and a permissive-open attribute schema; no trace store —
+  `supports_trace_get` / `supports_trace_stream` are false).
+- **Attributes read:** `checks` (**required**, non-empty array of
+  `{kind, config, severity?}`), `rows` (array of objects to verify; missing
+  rows is acceptable — checks like `row_count_absolute` fire on empty input as
+  a pass/fail signal), `stub_probe`.
+- **Registered check kinds:** `no_nulls`, `nullable_fields_present`,
+  `pk_unique`, `row_count_ratio`, `row_count_absolute`, `value_in_set`,
+  `regex_match`, `numeric_range`. The runtime dispatcher rejects any other
+  `kind` at dispatch; the `Validation` mix-in warns
+  (`unknown_check_kind`) at template registration.
+- **Per-check severity:** each `checks[i]` may carry a `severity` of `error`
+  (default) or `warning`. An **error-severity** failure blocks the commit and
+  the dispatch terminates with `verifier/check_failed/<first-blocking-kind>`. A
+  **warning-severity** failure is non-blocking — the dispatch still
+  succeeds, and every warning is surfaced under
+  `Success.attributes_delta.verifier_warnings` (plus a
+  `verifier_warning_count` count) so the operator sees the soft signal. An
+  unknown severity string is rejected with `verifier/attribute_invalid` rather
+  than silently coerced.
+- **Declared error classes** (advertised via
+  `ObservabilityCapabilities.DeclaredErrorClasses`):
+  | class | emitted when |
+  | --- | --- |
+  | `verifier/attribute_invalid` | the attribute bag is missing required keys (`checks` absent or non-array), an entry is malformed, or a `severity` value is unknown. |
+  | `verifier/check_failed/*` | one or more error-severity shape checks failed; the suffix is the failing check's `kind` (e.g. `verifier/check_failed/pk_unique`, `verifier/check_failed/row_count_absolute`). Patterns ending in `*` are prefix patterns; the validator recognises `verifier/check_failed/*` as a wildcard for `error_types:` matching. |
+- **Validation findings** (emitted by the `Validation` mix-in at template
+  registration when `role=executor`):
+  | class | severity | emitted when |
+  | --- | --- | --- |
+  | `unsupported_role` | error | `role` is anything other than `executor`. |
+  | `missing_context` | error | `ValidateRequest.context.executor` is unset. |
+  | `invalid_attribute` | error | `attributes_schema` is not valid JSON. |
+  | `missing_checks` | error | the merged effective attribute schema declares no `checks` property via either `default:` or `source:` (and the property is not `readOnly`). |
+  | `empty_checks` | error | a static `default:` for `checks` is present but empty. |
+  | `malformed_check` | error | a `checks[i]` entry is not an object. |
+  | `missing_check_kind` | error | a `checks[i]` entry has no `kind`. |
+  | `unknown_check_kind` | warning | a `checks[i].kind` is not a registered shape check; the runtime will reject it at dispatch, but registration only warns so the template can still deploy alongside other valid checks. |
 - **Config** (env):
   | var | default | meaning |
   | --- | --- | --- |

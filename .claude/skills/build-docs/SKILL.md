@@ -139,7 +139,7 @@ and is not part of the published image set.
 | `rimsky/skills/rimsky/docs/glossary.md` | rimsky's `concepts.md` catalog | Mechanical; published verbatim by the glossary binary. Never hand-edit. |
 | `rimsky/skills/rimsky/docs/examples/` | rimsky `examples/` module (Apache) | Mechanical (`rimsky-docs-vendor-examples`); vendored snapshot pinned to the reconciled tag — never hand-edit. Fix in rimsky-core's `examples/`. |
 | `rimsky/skills/rimsky/docs/agents/llms-full.txt`, root `llms.txt` / `llms-full.txt` | the Go binaries | Mechanical; regenerate, never hand-edit. |
-| `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. Also owns the three **journey walkthroughs** (`zero-to-deployed.md`, `debug-stuck-stale.md`, `debug-unreleased-claim.md`) — required members, exempt from the parsimony reduction, executed as a gate in step 3c. |
+| `rimsky/skills/rimsky/docs/cookbook/*.md` | rimsky's primitives + concepts | Derived: the minimal canonical set of patterns rimsky's primitives span, reconciled against the concepts. Each recipe is shape → primitives → a copyable template → gotchas, runnable against a rimsky deployment. Skill-owned set — add canonical patterns, merge/retire redundant ones, refine the rest. Also owns the three **journey walkthroughs** (`zero-to-deployed.md`, `troubleshoot-stuck-stale.md`, `troubleshoot-unreleased-claim.md`) — required members, exempt from the parsimony reduction, executed as a gate in step 3c. |
 | `rimsky/skills/rimsky/docs/agents/llms.txt` | the files it links to | The agent entry index. Reconcile against the linked files — fix dead links and stale descriptions; keep it accurate. |
 | `rimsky/skills/rimsky/docs/agents/errors/`, `rimsky/skills/rimsky/docs/agents/examples/` | code error classes + template/instance examples | Reconcile against source: every error class the catalog should carry is present and accurately described; every example validates and runs against the current release. Fix drift and fill gaps; remove what no longer exists. |
 | `rimsky/skills/rimsky/docs/services/` | rimsky `lib/services/` + the reference config | Derive-and-verify catalog of the bundled services (config / ports / protocols / image). Refine against source. |
@@ -307,10 +307,14 @@ Surfaces:
 
 ### 2. Mechanical generation
 
-After the subagents finish, regenerate the mechanical artifacts:
+After the subagents finish, regenerate the mechanical artifacts. **Order
+matters**: `rimsky-docs-llms-full` concatenates the published `concepts/` and
+`protocols/` markdown into one canonical bundle, so it must run **last**, after
+`rimsky-docs-gopkg` (which writes `protocols/go-packages.md`) and after every
+generator that updates anything `llms-full.txt` includes. The others can run in
+any order — each reads from rimsky source.
 
 ```bash
-cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-llms-full
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-glossary
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-proto
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-gopkg
@@ -318,6 +322,8 @@ cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-template-ref
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-rest-ref
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-cli-ref
 cd cmd && RIMSKY_REPO="$RIMSKY_REPO" RIMSKY_TAG="$RIMSKY_TAG" go run ./rimsky-docs-vendor-examples -version="$RIMSKY_TAG"
+# llms-full runs LAST: it concatenates the now-current concepts/ and protocols/ markdown.
+cd cmd && RIMSKY_REPO="$RIMSKY_REPO" go run ./rimsky-docs-llms-full
 ```
 
 `rimsky-docs-llms-full` writes `rimsky/skills/rimsky/docs/agents/llms-full.txt` + the repo-root copy
@@ -387,21 +393,36 @@ recorded in the bug list (`.build-docs/` run scratch, promoted to rimsky-core
 when curated) — *not* fixed here. Skip it freely; a green gate (step 3 +
 step 3c + step 4) is what a run requires.
 
-### 3c. Execute the journey walkthroughs — the artifact gate
+### 3c. Verify the journey walkthroughs against the published images — the artifact gate
 
-The cookbook's journey walkthroughs (`zero-to-deployed.md` and the two debug
-sessions — see the cookbook surface template) are executable artifacts, and a
-walkthrough nobody executes rots silently. Unlike 3b, this step is a **gate**:
-follow each walkthrough exactly as written, against the **published images** at
-the `reconciledAgainst` release. Docker and those images are gate dependencies,
-alongside `protoc` and a buildable rimsky tree.
+The cookbook's journey walkthroughs (`zero-to-deployed.md` and the two
+troubleshooting walkthroughs — see the cookbook surface template) are executable
+artifacts, and a walkthrough nobody verifies rots silently. Unlike 3b, this step
+is a **gate**, against the **published images** at the `reconciledAgainst`
+release. Docker and those images are gate dependencies, alongside `protoc` and a
+buildable rimsky tree.
 
-- Run the deploy walkthrough's command sequence verbatim from a clean state to
-  its stated end, checking that each step's documented expected output actually
-  appears.
-- Drive each debug session's symptom into the deployed stack, run its command
-  sequence, and verify the documented outputs. Example payloads the doc carries
-  are refreshed from the live responses when they drift.
+Two walkthrough shapes, two verification contracts:
+
+- **Positive-flow (`zero-to-deployed.md`)** — execute verbatim. Follow the
+  walkthrough from a clean state to its stated end against a real running
+  stack, checking that each step's documented expected output actually
+  appears. The walkthrough's purpose is to drive a happy path to terminal,
+  and the only way to know it works is to drive it.
+- **Troubleshooting walkthroughs (`troubleshoot-*.md`)** —
+  source-cross-check against a live stack. The reader is post-symptom; the
+  walkthrough's purpose is to route a symptom to a resolution through the
+  published diagnostic API. The correctness anchor is the **published-API
+  surface**, not symptom reproducibility. Stand up the stack from the
+  published images and verify against it: every CLI verb and HTTP route the
+  walkthrough cites returns the documented payload shape (refresh stale
+  example payloads from the live response); every error-catalog leaf it
+  routes to exists; every decision-tree pivot is on a field the response
+  actually returns. If a walkthrough does name an inducible recipe for its
+  symptom (e.g. `executors: {}` + a node referencing a missing executor →
+  stuck-stale), drive it and walk the tree as well; if it doesn't, the
+  cross-check is the contract — do not synthesise a symptom the
+  walkthrough's reader will never encounter from the angle this doc covers.
 
 Verdict semantics — this gates the *docs*, not rimsky:
 
@@ -589,19 +610,23 @@ not), reasoning kept as tight prose, source-anchored.
 >      with one `http-node` executor node, instantiate it, and watch it settle.
 >      Every step states its expected observable output ("you should now see X
 >      in `rimsky instance status`").
->    - `debug-stuck-stale.md` — a narrated diagnosis of a node stuck stale:
->      symptom → the wait-set / frame diagnostics routes (with an example
->      response payload) → a decision tree → the error-catalog page that
->      resolves each leaf.
->    - `debug-unreleased-claim.md` — the same diagnosis shape for a claim that
->      is never released: orphan-reaper / heartbeat diagnosis.
+>    - `troubleshoot-stuck-stale.md` — a narrated diagnosis of a node stuck
+>      stale: symptom → the wait-set / frame diagnostics routes (with an
+>      example response payload) → a decision tree → the error-catalog page
+>      that resolves each leaf.
+>    - `troubleshoot-unreleased-claim.md` — the same diagnosis shape for a
+>      claim that is never released: orphan-reaper / heartbeat diagnosis.
 >    Anchors: the published images catalog (`rimsky/skills/rimsky/docs/images/`)
 >    and worked configs, the CLI and REST references for every command and
 >    route cited, and the error catalog
 >    (`rimsky/skills/rimsky/docs/agents/errors/`) for every decision-tree leaf.
->    These walkthroughs are **executed verbatim as a gate** (step 3c) against
->    the published images — write every command to be copy-runnable and every
->    expected output to be observable.
+>    These walkthroughs are **gated** at step 3c against the published images.
+>    `zero-to-deployed.md` is executed verbatim (the positive-flow contract);
+>    `troubleshoot-*.md` are source-cross-checked against a live stack — every
+>    CLI verb, HTTP route, payload field, and catalog leaf they cite must
+>    resolve and match what the live stack returns. Write every command to be
+>    copy-runnable, every payload shape exact, and every expected output
+>    observable.
 >
 > Return: the canonical pattern set (created / refined / merged / retired, with a
 > one-line rationale each), the journey walkthroughs created / reconciled, the
